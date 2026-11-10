@@ -4,3 +4,4 @@ dist-server
 server/data/*.json
 .DS_Store
 *.log
+.scratch

@@ -1,7 +1,10 @@
 import * as THREE from 'three';
 import type { FreeKickScript, FreeKickRoundPlan, PlayerCard, MissStyle, ShotStyle } from '@shared/types';
 import type { Kit, Team } from '@shared/teams';
-import { Ball } from '../game/ball';
+import { Ball, BallBody, BALL_R, solveKick, type GoalFrame, type V3 } from '../game/ball';
+import { SURFACES, type SurfaceId } from '../game/surface';
+
+interface Launch { v: V3; w: V3; }
 import { PITCH_11 } from '../game/pitch';
 import { Stadium } from '../render/stadium';
 import { makeLighting, type Stage } from '../render/scene';
@@ -39,8 +42,12 @@ export class FreeKickGame {
   private keeperState = { x: 0, z: 0, diveT: -1, diveDir: 0, diveTarget: { z: 0, y: 1 }, reach: 1.6, save: false };
   private wallJump = 0;
   private kickAnim = -1; private kickWho: 'player' | 'bot' = 'player';
-  private pendingLaunch: { vx: number; vy: number; vz: number; curl: number } | null = null;
+  private pendingLaunch: Launch | null = null;
   private shotResolved = false;
+  private resolveTimer = 0;
+  /** What this shot must do to keep the duel on its scripted course (null = up to the player). */
+  private must: 'score' | 'miss' | null = null;
+  private mustTarget = { z: 0, y: 1.5 };
   private flightTime = 0;
   private listeners = new Set<(e: FKEvent) => void>();
   private camPos = new THREE.Vector3(); private camLook = new THREE.Vector3();
@@ -48,7 +55,11 @@ export class FreeKickGame {
   private magnetActive = false;
   private aimMarker: THREE.Mesh;
 
-  constructor(private stage: Stage, public script: FreeKickScript, public player: FKSide, public bot: FKSide, night = true) {
+  private goalFrame: GoalFrame;
+
+  constructor(private stage: Stage, public script: FreeKickScript, public player: FKSide, public bot: FKSide, night = true, surface: SurfaceId = 'dry') {
+    this.ball.surface = SURFACES[surface];
+    this.goalFrame = { lineX: PITCH_11.length / 2, side: 1, halfW: PITCH_11.goalWidth / 2, height: PITCH_11.goalHeight, depth: 2.2 };
     this.stadium = new Stadium(this.pitch, player.team, bot.team, night, stage.quality === 'low');
     this.scene.add(this.stadium.group);
     this.sun = makeLighting(this.scene, night, stage.quality === 'high', 30).sun;
@@ -108,28 +119,48 @@ export class FreeKickGame {
     this.aim = { z: nearPostZ * -0.55, y: 1.6 }; this.curl = 0; this.power = 0; this.charging = false;
   }
 
-  /** Compute a launch velocity that reaches (goal line, z, y) at `speed`, pre-compensating curl. */
-  private launchFor(targetZ: number, targetY: number, speed: number, curl: number, sigma: number): { vx: number; vy: number; vz: number; curl: number } {
-    const L = this.pitch.length;
-    const dx = L / 2 - this.ballPos0.x, dz = targetZ - this.ballPos0.z;
-    const D = Math.hypot(dx, dz);
-    const h = targetY - this.ball.radius;
-    // ballistic elevation (low solution); fall back to 40 deg when out of range
-    const v2 = speed * speed; const disc = v2 * v2 - G * (G * D * D + 2 * h * v2);
-    let elev = disc >= 0 ? Math.atan((v2 - Math.sqrt(disc)) / (G * D)) : 0.7;
-    elev += (Math.random() * 2 - 1) * sigma;
-    let yaw = Math.atan2(dz, dx) + (Math.random() * 2 - 1) * sigma * 1.4;
-    // Magnus pre-compensation: the ball will bend sideways by roughly k*curl over the flight
-    const bend = curl * 0.55 * 0.5 * (D / speed) * (D / speed) * speed / D; // approximate lateral angle
-    yaw -= bend * 0.9;
-    const hs = speed * Math.cos(elev);
-    return { vx: Math.cos(yaw) * hs, vz: Math.sin(yaw) * hs, vy: speed * Math.sin(elev), curl: curl * 0.6 };
+  /** Launch toward (goal line, z, y) at `speed` with curl (-1..1, + bends right), using the shared physics solver.
+   *  `sigma` adds strike error. */
+  private launchFor(targetZ: number, targetY: number, speed: number, curl: number, sigma: number, top = 12): Launch {
+    const sol = solveKick({ x: this.ballPos0.x, y: BALL_R, z: this.ballPos0.z }, { x: this.pitch.length / 2 + 0.2, y: targetY, z: targetZ }, speed, curl * 55, top, this.ball.surface);
+    const g = () => (Math.random() * 2 - 1) * sigma;
+    const hs = Math.hypot(sol.v.x, sol.v.z), sp = Math.hypot(hs, sol.v.y);
+    const yaw = Math.atan2(sol.v.z, sol.v.x) + g() * 1.4, pitch = Math.atan2(sol.v.y, hs) + g();
+    return { v: { x: Math.cos(yaw) * Math.cos(pitch) * sp, y: Math.sin(pitch) * sp, z: Math.sin(yaw) * Math.cos(pitch) * sp }, w: sol.w };
   }
 
-  private startKick(who: 'player' | 'bot', launch: { vx: number; vy: number; vz: number; curl: number }, keeperPlan: { save: boolean; towardTargetZ: number; towardY: number; wrongWay?: boolean }) {
+  /** Full flight simulation with wall and woodwork (no keeper): does this strike end up in the net? */
+  private wouldScore(l: Launch): boolean {
+    const b = new BallBody(); b.surface = this.ball.surface;
+    b.x = this.ballPos0.x; b.y = BALL_R; b.z = this.ballPos0.z; b.vx = l.v.x; b.vy = l.v.y; b.vz = l.v.z; b.wx = l.w.x; b.wy = l.w.y; b.wz = l.w.z;
+    const wall = this.kickWho === 'player' ? this.wall : this.botWall; const line = this.pitch.length / 2 + BALL_R;
+    for (let t = 0; t < 4; t += 1 / 120) {
+      const px = b.x; b.integrate(1 / 120, [this.goalFrame]);
+      for (const w of wall) { const p = w.root.position; if (Math.abs(b.x - p.x) < 0.4 && Math.abs(b.z - p.z) < 0.45 && b.y < 2.35) return false; }
+      if (px < line && b.x >= line) return Math.abs(b.z) < this.pitch.goalWidth / 2 && b.y < this.pitch.goalHeight;
+      if (b.speed3() < 0.3 && t > 1) return false;
+    }
+    return false;
+  }
+
+  /** Simulate a launch: where it crosses the keeper's line, and whether it clears the wall. */
+  private preview(l: Launch): { z: number; y: number; clearsWall: boolean } {
+    const b = new BallBody(); b.surface = this.ball.surface;
+    b.x = this.ballPos0.x; b.y = BALL_R; b.z = this.ballPos0.z; b.vx = l.v.x; b.vy = l.v.y; b.vz = l.v.z; b.wx = l.w.x; b.wy = l.w.y; b.wz = l.w.z;
+    const wall = this.kickWho === 'player' ? this.wall : this.botWall; let clears = true;
+    for (let t = 0; t < 3 && b.x < this.pitch.length / 2 - 0.6; t += 1 / 120) {
+      b.integrate(1 / 120);
+      for (const w of wall) { const p = w.root.position; if (Math.abs(b.x - p.x) < 0.4 && Math.abs(b.z - p.z) < 0.45 && b.y < 2.35) clears = false; }
+    }
+    return { z: b.z, y: b.y, clearsWall: clears };
+  }
+
+  private startKick(who: 'player' | 'bot', launch: Launch, keeperPlan: { save: boolean; towardTargetZ: number; towardY: number; wrongWay?: boolean }) {
     this.pendingLaunch = launch; this.kickAnim = 0; this.kickWho = who;
-    this.keeperState.save = keeperPlan.save; this.keeperState.diveTarget = { z: keeperPlan.towardTargetZ, y: keeperPlan.towardY }; this.keeperState.diveT = -1; this.keeperState.diveDir = keeperPlan.wrongWay ? -1 : 1;
-    this.emit({ type: 'kick', power: Math.hypot(launch.vx, launch.vy, launch.vz) / 30 });
+    // The keeper reads the real flight, not the aim.
+    const pv = this.preview(launch);
+    this.keeperState.save = keeperPlan.save; this.keeperState.diveTarget = { z: pv.z, y: pv.y }; this.keeperState.diveT = -1; this.keeperState.diveDir = keeperPlan.wrongWay ? -1 : 1;
+    this.emit({ type: 'kick', power: Math.hypot(launch.v.x, launch.v.y, launch.v.z) / 30 });
   }
 
   /** The human's kick: aim point, power and curl. */
@@ -145,9 +176,19 @@ export class FreeKickGame {
       targetY = Math.min(this.pitch.goalHeight - 0.5, Math.max(0.5, targetY));
       this.magnetActive = true;
     }
-    const launch = this.launchFor(targetZ, targetY, speed, curl, plan.goalMagnet ? 0 : sigma);
+    let launch = this.launchFor(targetZ, targetY, speed, curl, plan.goalMagnet ? 0 : sigma);
+    if (plan.goalMagnet) {
+      // scripted assist: find a version of this strike that clears the wall and finds the corner
+      const gw = this.pitch.goalWidth, gh = this.pitch.goalHeight; const away = this.keeperState.z >= 0 ? -1 : 1;
+      outer: for (const y of [targetY, 1.9, 2.05, 2.15]) for (const z of [targetZ, away * (gw / 2 - 0.6), away * (gw / 2 - 0.9)]) for (const c of [curl, -away * 0.8, away * 0.8]) {
+        if (Math.abs(z) > gw / 2 - 0.4 || y > gh - 0.25) continue;
+        const l = this.launchFor(z, y, Math.max(speed, 20), c, 0); const pv = this.preview(l);
+        if (pv.clearsWall && Math.abs(pv.z) < gw / 2 - 0.3 && pv.y < gh - 0.2 && this.wouldScore(l)) { launch = l; targetZ = z; targetY = y; break outer; }
+      }
+    }
     // keeper reaction: a wall keeper always gets there; a natural keeper has reach and bias
     const natural = !plan.keeperWall && !plan.goalMagnet;
+    this.must = plan.goalMagnet ? 'score' : plan.keeperWall ? 'miss' : null; this.mustTarget = { z: targetZ, y: targetY };
     this.startKick('player', launch, { save: plan.keeperWall ? true : natural ? Math.random() < 0.5 + (Math.abs(targetZ) < 2 ? 0.3 : -0.15) + (targetY < 0.9 ? 0.1 : 0) : false, towardTargetZ: targetZ, towardY: targetY, wrongWay: plan.goalMagnet });
   }
 
@@ -157,20 +198,42 @@ export class FreeKickGame {
     const kz = this.keeperState.z; const away = kz >= 0 ? -1 : 1;
     const speed = style === 'power' ? 28 : style === 'driven' ? 25 : style === 'chip' ? 17 : 22;
     const curl = style === 'curl' ? -away * 0.9 : style === 'chip' ? 0 : -away * 0.3;
+    const top = style === 'chip' ? -10 : style === 'power' ? 25 : style === 'driven' ? 18 : 10;
     let tz = away * (gw / 2 - 0.6), ty = style === 'chip' ? gh - 0.4 : style === 'power' ? 0.9 : 1.7;
-    let save = false; let wrongWay = true;
+    let save = false;
     if (outcome === 'miss') {
       switch (miss) {
         case 'post': tz = away * (gw / 2 + 0.03); ty = 1.2; break;
         case 'bar': tz = away * 1.5; ty = gh + 0.04; break;
         case 'over': tz = away * 1; ty = gh + 0.9; break;
         case 'wide': tz = away * (gw / 2 + 0.8); ty = 1.4; break;
-        case 'saved': tz = kz + away * 0.9; ty = 1.3; save = true; wrongWay = false; break;
+        case 'saved': tz = kz + away * 0.9; ty = 1.3; save = true; break;
         case 'wall': { tz = Math.sign(this.ballPos0.z || 1) * gw / 2 * 0.9; ty = 0.9; break; }
       }
     }
-    const launch = this.launchFor(tz, ty, speed, curl, outcome === 'score' ? 0 : miss === 'post' || miss === 'bar' ? 0 : 0.01);
-    this.startKick('bot', launch, { save, towardTargetZ: tz, towardY: ty, wrongWay });
+    // The bot's strike must produce the planned outcome under the real physics (wall, woodwork, net):
+    // try the planned strike first, then nearby variations, and fall back to a sure miss or the cleanest finish.
+    const wantGoal = outcome === 'score';
+    const ok = (l: Launch) => (miss === 'saved' && !wantGoal) ? true : this.wouldScore(l) === wantGoal;
+    let launch = this.launchFor(tz, ty, speed, curl, 0, top);
+    if (!wantGoal && miss === 'wall') {
+      // drive it straight into the wall
+      const w = this.botWall[Math.floor(this.botWall.length / 2)]?.root.position;
+      if (w) { const sol = solveKick({ x: this.ballPos0.x, y: BALL_R, z: this.ballPos0.z }, { x: w.x, y: 1.3, z: w.z }, 24, 0, 5, this.ball.surface); launch = { v: sol.v, w: sol.w }; }
+    }
+    if (!ok(launch)) {
+      let found = false;
+      const ys = wantGoal ? [ty, 1.9, 2.1, 1.6, 1.2] : [ty, ty + 0.2, gh + 0.6];
+      const zs = wantGoal ? [tz, away * (gw / 2 - 0.5), away * (gw / 2 - 0.9), -away * (gw / 2 - 0.6)] : [tz, away * (gw / 2 + 0.9), away * (gw / 2 + 1.6)];
+      search: for (const y of ys) for (const z of zs) for (const c of [curl, 0, -curl]) {
+        const l = this.launchFor(z, y, wantGoal ? Math.max(speed, 21) : speed, c, 0, top);
+        if (ok(l)) { launch = l; tz = z; ty = y; found = true; break search; }
+      }
+      if (!found && !wantGoal) { launch = this.launchFor(away * 6, 3.5, 24, 0, 0, top); tz = away * 6; ty = 3.5; }
+    }
+    this.must = wantGoal ? 'score' : 'miss'; this.mustTarget = { z: tz, y: ty };
+    if (!wantGoal && this.wouldScore(launch)) save = true; // a planned miss that would go in: the keeper gets to it
+    this.startKick('bot', launch, { save, towardTargetZ: tz, towardY: ty, wrongWay: wantGoal });
   }
 
   /* ------------------------------ update ------------------------------ */
@@ -190,7 +253,10 @@ export class FreeKickGame {
         else if (this.charging) { this.power = Math.max(0.18, this.power); this.playerShoot(); this.setPhase('flight'); }
         break;
       }
-      case 'flight': case 'botFlight': this.updateFlight(dt); break;
+      case 'flight': case 'botFlight':
+        this.updateFlight(dt);
+        if (this.shotResolved) { this.resolveTimer -= dt; if (this.resolveTimer <= 0) this.setPhase(this.phase === 'flight' ? 'result' : 'botResult'); }
+        break;
       case 'result': if (this.phaseTimer <= 0) { this.setupKick('bot'); this.setPhase('botThink'); } break;
       case 'botThink': if (this.phaseTimer <= 0) { const r = this.results[this.round]; const plan = this.plan; const outcome = r.player ? plan.ifPlayerScores : plan.ifPlayerMisses; this.botShoot(outcome, plan.botShot, plan.botMiss); this.setPhase('botFlight'); } break;
       case 'botResult': if (this.phaseTimer <= 0) this.resolveRound(); break;
@@ -199,7 +265,7 @@ export class FreeKickGame {
     // kick animation + ball launch at the strike moment
     if (this.kickAnim >= 0) {
       this.kickAnim += dt;
-      if (this.pendingLaunch && this.kickAnim >= 0.42) { const l = this.pendingLaunch; this.ball.vx = l.vx; this.ball.vy = l.vy; this.ball.vz = l.vz; this.ball.curl = l.curl; this.ball.y = this.ball.radius + 0.01; this.pendingLaunch = null; this.flightTime = 0; this.wallJump = 0.01; }
+      if (this.pendingLaunch && this.kickAnim >= 0.42) { const l = this.pendingLaunch; this.ball.strike(l.v, l.w, null, 0); this.pendingLaunch = null; this.flightTime = 0; this.wallJump = 0.01; }
       if (this.kickAnim > 1.2) this.kickAnim = -1;
     }
     if (this.wallJump > 0) this.wallJump += dt;
@@ -225,38 +291,44 @@ export class FreeKickGame {
       const tz = ks.save ? ks.diveTarget.z : ks.z + (ks.diveDir < 0 ? -Math.sign(ks.diveTarget.z - ks.z || 1) * 1.6 : Math.sign(ks.diveTarget.z - ks.z || 1) * 1.2);
       const k = 1 - Math.exp(-7 * dt); ks.z += (tz - ks.z) * k;
     }
+    // Scripted guards: a shot that must score is nudged back on target late in its flight;
+    // one that must not score is kept out by the keeper.
+    if (!this.shotResolved && this.must === 'score' && b.vx > 3) {
+      const dx = L / 2 + 0.3 - b.x; const t = dx / b.vx;
+      if (dx > 0 && dx < 14 && t > 0.02) {
+        const zAt = b.z + b.vz * t, yAt = b.y + b.vy * t - 4.9 * t * t;
+        const tz = Math.max(-gw / 2 + 0.45, Math.min(gw / 2 - 0.45, zAt)), ty = Math.max(0.3, Math.min(gh - 0.35, yAt));
+        if (tz !== zAt || ty !== yAt) { const k = 1 - Math.exp(-6 * dt); b.vz += ((tz - zAt) / t) * k; b.vy += ((ty - yAt) / t) * k; }
+      }
+    }
+    if (!this.shotResolved && this.must === 'miss' && b.vx > 0 && b.x > L / 2 - 1.2 && Math.abs(b.z) < gw / 2 + 0.05 && b.y < gh + 0.05) {
+      ks.z = b.z; ks.save = true; // last-ditch fingertips
+    }
     // wall block
     const wallHumans = this.kickWho === 'player' ? this.wall : this.botWall;
-    for (const w of wallHumans) {
+    for (const w of (this.must === 'score' ? [] : wallHumans)) {
       const p = w.root.position; const jumpH = this.wallJump > 0 ? Math.sin(Math.min(Math.PI, this.wallJump * 5)) * 0.45 : 0;
       if (Math.abs(b.x - p.x) < 0.35 && Math.abs(b.z - p.z) < 0.4 && b.y < 1.9 + jumpH && b.y > jumpH * 0.8 && !this.shotResolved && Math.hypot(b.vx, b.vz) > 2) {
-        b.vx = -b.vx * 0.3; b.vz = b.vz * 0.3 + (Math.random() - 0.5) * 3; b.vy = Math.abs(b.vy) * 0.3 + 1.5; b.curl = 0;
+        b.vx = -b.vx * 0.3; b.vz = b.vz * 0.3 + (Math.random() - 0.5) * 3; b.vy = Math.abs(b.vy) * 0.3 + 1.5; b.wx = b.wy = b.wz = 0;
         this.resolve(false, 'wall'); break;
       }
     }
     // keeper save (hands near the ball while diving)
-    if (!this.shotResolved && ks.save && b.x > L / 2 - 2.2 && b.x < L / 2 + 0.3 && Math.abs(b.z - ks.z) < 1.3 && b.y < 2.4) {
-      b.vx = -Math.abs(b.vx) * 0.25; b.vz = (b.z - ks.z) * 3; b.vy = 2; b.curl = 0;
+    if (!this.shotResolved && ks.save && this.must !== 'score' && b.x > L / 2 - 2.2 && b.x < L / 2 + 0.3 && Math.abs(b.z - ks.z) < 1.3 && b.y < 2.45) {
+      b.vx = -Math.abs(b.vx) * 0.25; b.vz = (b.z - ks.z) * 3; b.vy = 2; b.wx = b.wy = b.wz = 0;
       this.resolve(false, 'saved');
     }
-    // posts / crossbar
+    // flight, woodwork and net (shared physics)
     const prevX = b.x;
-    b.update(dt);
+    const ev = b.update(dt, [this.goalFrame]);
+    const line = L / 2 + b.radius;
     if (!this.shotResolved) {
-      for (const pz of [-gw / 2, gw / 2]) {
-        if (Math.hypot(b.x - L / 2, b.z - pz) < 0.06 + b.radius && b.y < gh + 0.1) { b.vx = -b.vx * 0.6; b.vz = -b.vz * 0.4 + Math.sign(b.z - pz) * 4; this.resolve(false, 'post'); }
-      }
-      if (Math.abs(b.x - L / 2) < 0.15 && Math.abs(b.z) < gw / 2 && Math.abs(b.y - gh) < 0.06 + b.radius) { b.vx = -b.vx * 0.5; b.vy = -Math.abs(b.vy) * 0.6 - 1; this.resolve(false, 'bar'); }
-      if (prevX < L / 2 && b.x >= L / 2) {
-        const goal = Math.abs(b.z) < gw / 2 - b.radius && b.y < gh - b.radius;
-        if (goal) { this.resolve(true, 'goal'); b.vx *= 0.25; b.vz *= 0.25; }
+      if ((ev === 'post' || ev === 'bar') && this.must !== 'score') this.resolve(false, ev);
+      else if (prevX < line && b.x >= line) {
+        if (Math.abs(b.z) < gw / 2 && b.y < gh) this.resolve(true, 'goal');
         else this.resolve(false, b.y >= gh ? 'over' : 'wide');
-      }
-      if (this.flightTime > 4) this.resolve(false, 'wide');
+      } else if (this.flightTime > 4 || (b.speed3() < 0.5 && this.flightTime > 1)) this.resolve(false, 'wide');
     }
-    // net catches the ball
-    if (b.x > L / 2 + 2.0) { b.x = L / 2 + 2.0; b.vx = -Math.abs(b.vx) * 0.1; b.vz *= 0.3; }
-    if (this.shotResolved && this.phaseTimer <= -0.1 && (this.phase === 'flight' || this.phase === 'botFlight')) { /* handled by resolve timers */ }
   }
 
   private resolve(goal: boolean, how: string) {
@@ -268,7 +340,7 @@ export class FreeKickGame {
     else { this.results[this.round].bot = goal; }
     this.emit(goal ? { type: 'goal', who } : { type: 'miss', who, how });
     if (goal) this.stadium.cheer(who === 'player' ? 1 : 0.5);
-    setTimeout(() => { if (this.phase === 'flight') this.setPhase('result'); else if (this.phase === 'botFlight') this.setPhase('botResult'); }, 1400);
+    this.resolveTimer = 1.4;
   }
 
   private resolveRound() {

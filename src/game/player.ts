@@ -1,25 +1,41 @@
 import type { PlayerCard } from '@shared/types';
 import { v2, type V2 } from './pitch';
 
-export type ActionType = 'kick' | 'tackle' | 'slide' | 'dive' | 'fallen' | 'throw' | 'celebrate';
+export type ActionType = 'kick' | 'tackle' | 'slide' | 'dive' | 'fallen' | 'stumble' | 'throw' | 'celebrate' | 'touch' | 'trap' | 'header';
 export interface Action { type: ActionType; t: number; duration: number; fired: boolean; dir: number; data?: any; }
 
+/** Actions that take over the player's legs (no free running, no new decisions). */
+const BLOCKING: ReadonlySet<ActionType> = new Set(['tackle', 'slide', 'dive', 'fallen', 'stumble', 'throw', 'header']);
+
 export interface Intent {
-  move: V2;            // desired movement direction (unit or zero)
+  move: V2;            // desired movement direction, length 0..1
   sprint: boolean;
-  face?: V2 | null;    // optional facing override
+  face?: V2 | null;    // face this way while moving (jockeying, setting up a kick)
+  jockey?: boolean;    // defensive side-step: short quick steps, capped speed
+  /** Per-step steering override (dribble assist, stepping up to a kick). Cleared every step; `move` keeps the player's wish. */
+  steer?: V2 | null;
 }
 
-/** A footballer in the simulation (human-controlled or AI). */
+export interface PendingKick { kind: 'pass' | 'through' | 'lob' | 'shoot'; power: number; dir: V2; opts: any; t0: number; }
+
+/** A footballer: momentum-based movement (acceleration, braking and cornering limits) plus actions. */
 export class Agent {
   pos: V2 = { x: 0, z: 0 };
   vel: V2 = { x: 0, z: 0 };
   heading: V2 = { x: 1, z: 0 };
+  /** Previous fixed-step state, for render interpolation. */
+  prevPos: V2 = { x: 0, z: 0 };
+  prevHeadingAngle = 0;
   intent: Intent = { move: { x: 0, z: 0 }, sprint: false };
   action: Action | null = null;
-  /** Seconds before this player may touch the ball again. */
+  pendingKick: PendingKick | null = null;
+  /** Seconds before this player can touch the ball again (after kicks, heavy touches, being tackled). */
   cooldown = 0;
-  /** Formation base, normalised. */
+  /** Seconds before the next dribble touch. */
+  touchCooldown = 0;
+  /** Seconds before another tackle can start: committing to a tackle has a price, so mashing does nothing. */
+  tackleCooldown = 0;
+  stunned = 0;
   home: V2 = { x: 0, z: 0 };
   role = 'CM';
   isGK = false;
@@ -27,82 +43,110 @@ export class Agent {
   hasBall = false;
   animPhase = 0;
   animTime = 0;
-  /** AI scratch state. */
-  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0 };
+  /** Smoothed accelerations along / across the heading (m/s²) and turn rate (rad/s), used for body lean. */
+  accelFwd = 0; accelLat = 0; turnRate = 0;
+  lastTouchFoot = 1;
+  yellow = 0;
+  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; lapseKey: number; lapse: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, lapseKey: -1, lapse: false };
   keeperHold = 0;
-  stunned = 0;
-  tackleCooldown = 0;
   readonly maxSpeed: number;
   readonly accel: number;
   readonly agility: number;
+  readonly skill: { dribble: number; pass: number; shoot: number; defend: number; control: number };
 
   constructor(public card: PlayerCard, public team: number, public index: number) {
     const a = card.attrs;
-    this.maxSpeed = 5.6 + (a.pace / 99) * 3.0;
-    this.accel = 7 + (a.physical / 99) * 4;
+    this.maxSpeed = 5.8 + (a.pace / 99) * 3.0;          // 7.1 .. 8.8 m/s
+    this.accel = 6.5 + (a.physical / 99) * 2.5 + (a.pace / 99) * 2;
     this.agility = 0.5 + (a.dribbling / 99) * 0.5;
     this.isGK = card.position === 'GK';
+    this.skill = { dribble: a.dribbling / 99, pass: a.passing / 99, shoot: a.shooting / 99, defend: a.defending / 99, control: (a.dribbling * 0.6 + a.passing * 0.4) / 99 };
   }
 
   speed() { return v2.len(this.vel); }
-
   startAction(type: ActionType, duration: number, dir = 1, data?: any): Action {
     this.action = { type, t: 0, duration, fired: false, dir, data };
     return this.action;
   }
-  busy() { return !!this.action && this.action.type !== 'celebrate'; }
-  canMove() { return !this.action || this.action.type === 'kick' || this.action.type === 'celebrate'; }
+  /** Busy = cannot start new actions or make on-ball decisions. */
+  busy() { return !!this.action && (BLOCKING.has(this.action.type) || this.action.type === 'kick'); }
+  legsBusy() { return !!this.action && BLOCKING.has(this.action.type); }
 
-  /** Integrate movement toward the intent. */
-  update(dt: number, speedMul = 1) {
+  update(dt: number, speedMul = 1, grip = 1) {
+    this.prevPos = { x: this.pos.x, z: this.pos.z }; this.prevHeadingAngle = Math.atan2(this.heading.z, this.heading.x);
     if (this.cooldown > 0) this.cooldown -= dt;
-    if (this.stunned > 0) this.stunned -= dt;
+    if (this.touchCooldown > 0) this.touchCooldown -= dt;
     if (this.tackleCooldown > 0) this.tackleCooldown -= dt;
+    if (this.stunned > 0) this.stunned -= dt;
     this.animTime += dt;
-    if (this.action) {
-      this.action.t += dt;
-      if (this.action.t >= this.action.duration) this.action = null;
-    }
+    if (this.action) { this.action.t += dt; if (this.action.t >= this.action.duration) this.action = null; }
     const act = this.action;
-    let desired: V2 = { x: 0, z: 0 };
-    let maxSpeed = this.maxSpeed * speedMul * (this.intent.sprint ? 1 : 0.72);
-    if (act && (act.type === 'slide' || act.type === 'dive' || act.type === 'tackle')) {
-      // lunge along the stored direction, decaying
-      const k = Math.max(0, 1 - act.t / act.duration);
-      const lungeSpeed = act.type === 'slide' ? 8.5 : act.type === 'dive' ? 7.5 : 5.5;
+    const before = { x: this.vel.x, z: this.vel.z };
+    const sp = this.speed();
+
+    if (act && BLOCKING.has(act.type)) {
+      // Committed movement: lunges and slides carry their own momentum and decay with friction.
       const d = act.data?.dir as V2 | undefined;
-      desired = d ? v2.scale(d, lungeSpeed * k) : { x: 0, z: 0 };
-      maxSpeed = lungeSpeed;
-    } else if (act && (act.type === 'fallen' || act.type === 'throw')) {
-      desired = { x: 0, z: 0 };
-    } else if (this.stunned > 0) {
-      desired = { x: 0, z: 0 };
+      if (act.type === 'slide' && d) {
+        const slideT = 0.75;
+        if (act.t < slideT) { const s = act.data.speed as number; const v = Math.max(0, s - (7.5 / (act.data.slideFactor ?? 1)) * act.t); this.vel = v2.scale(d, v); }
+        else this.vel = v2.scale(this.vel, Math.exp(-10 * dt));
+      } else if (act.type === 'tackle' && d) {
+        const lunge = act.t < 0.3 ? 4.2 : Math.max(0, 4.2 - (act.t - 0.3) * 16);
+        this.vel = v2.lerp(this.vel, v2.scale(d, Math.max(lunge, 0)), 1 - Math.exp(-12 * dt));
+      } else if (act.type === 'dive' && act.data?.vel) {
+        const k = Math.max(0, 1 - act.t / 0.55); this.vel = v2.scale(act.data.vel, k);
+      } else if (act.type === 'stumble') {
+        this.vel = v2.scale(this.vel, Math.exp(-3 * dt));
+      } else {
+        this.vel = v2.scale(this.vel, Math.exp(-(act.type === 'header' ? 2 : 8) * dt));
+      }
     } else {
-      const m = this.intent.move;
-      const ml = v2.len(m);
-      if (ml > 0.05) {
-        const withBall = this.hasBall ? 0.9 : 1;
-        desired = v2.scale(v2.norm(m), Math.min(1, ml) * maxSpeed * withBall);
-        if (act?.type === 'kick') desired = v2.scale(desired, 0.35);
+      // Free running: accelerate toward the intended velocity with separate limits for speeding up,
+      // braking and cornering, so sharp turns at pace need a plant and a slow-down.
+      const m = this.intent.steer ?? this.intent.move; const ml = Math.min(1, v2.len(m));
+      let top = this.maxSpeed * speedMul * (this.intent.sprint ? 1 : 0.7);
+      if (this.hasBall) top *= 0.93;
+      if (this.intent.jockey) top = Math.min(top, 3.4);
+      if (act?.type === 'kick') top *= 0.45;
+      if (this.stunned > 0) top *= 0.3;
+      const desired = ml > 0.05 ? v2.scale(v2.norm(m), ml * top) : { x: 0, z: 0 };
+      const dv = v2.sub(desired, this.vel);
+      if (sp > 0.3) {
+        const t = v2.scale(this.vel, 1 / sp);
+        const dvt = v2.dot(dv, t); const dvn = v2.sub(dv, v2.scale(t, dvt));
+        const maxUp = grip * this.accel * (1 - 0.55 * Math.min(1, sp / this.maxSpeed));
+        const maxBrake = grip * 12;
+        const maxLat = grip * (9 + this.agility * 5) * (this.intent.jockey ? 1.4 : 1);
+        const at = Math.max(-maxBrake * dt, Math.min(maxUp * dt, dvt));
+        const nl = v2.len(dvn); const an = nl > maxLat * dt ? v2.scale(dvn, (maxLat * dt) / nl) : dvn;
+        this.vel = v2.add(this.vel, v2.add(v2.scale(t, at), an));
+      } else {
+        const l = v2.len(dv); const lim = grip * this.accel * dt;
+        this.vel = l > lim ? v2.add(this.vel, v2.scale(dv, lim / l)) : desired;
       }
     }
-    // accelerate toward desired velocity
-    const dv = v2.sub(desired, this.vel);
-    const dl = v2.len(dv);
-    const a = (dl > 0 && v2.dot(dv, this.vel) < 0 ? this.accel * 1.6 : this.accel) * dt;
-    if (dl <= a) this.vel = desired; else this.vel = v2.add(this.vel, v2.scale(dv, a / dl));
     this.pos = v2.add(this.pos, v2.scale(this.vel, dt));
-    // facing
+
+    // Facing: follow the run, or a requested facing; turn rate drops with speed.
     const face = this.intent.face;
-    const sp = v2.len(this.vel);
-    const want = face && v2.len(face) > 0.01 ? v2.norm(face) : sp > 0.5 ? v2.norm(this.vel) : null;
-    if (want && !(act && act.type !== 'kick' && act.type !== 'celebrate')) {
-      const cur = v2.angle(this.heading), tgt = v2.angle(want);
-      let d = tgt - cur; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
-      const rate = (this.hasBall ? 7 + this.agility * 6 : 14) * dt;
+    const nsp = this.speed();
+    const want = act && BLOCKING.has(act.type) ? null : face && v2.len(face) > 0.01 ? v2.norm(face) : nsp > 0.4 ? v2.norm(this.vel) : null;
+    const cur = Math.atan2(this.heading.z, this.heading.x);
+    if (want) {
+      let d = Math.atan2(want.z, want.x) - cur; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
+      const rate = ((10 + this.agility * 8) / (1 + 0.22 * nsp)) * dt;
       const step = Math.abs(d) <= rate ? d : Math.sign(d) * rate;
       this.heading = v2.fromAngle(cur + step);
-    }
-    this.animPhase += sp * dt * 2.6;
+      this.turnRate += (step / dt - this.turnRate) * Math.min(1, dt * 10);
+    } else this.turnRate *= Math.exp(-8 * dt);
+
+    // Smoothed accelerations for body lean.
+    const acc = v2.scale(v2.sub(this.vel, before), 1 / dt);
+    const h = this.heading; const right = { x: -h.z, z: h.x };
+    const k = Math.min(1, dt * 8);
+    this.accelFwd += (v2.dot(acc, h) - this.accelFwd) * k;
+    this.accelLat += (v2.dot(acc, right) - this.accelLat) * k;
+    this.animPhase += nsp * dt * (this.intent.jockey ? 3.4 : 2.6);
   }
 }
