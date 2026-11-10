@@ -41,7 +41,7 @@ export class MatchScreen implements Screen {
     const [hk, ak] = p.homeKit && p.awayKit ? [p.homeKit, p.awayKit] : pickKits(home, away);
     const hxi = p.homeSquad ?? startingXI(rosterOf(home.id)), axi = p.awaySquad ?? startingXI(rosterOf(away.id));
     const match = new Match({
-      pitch: futsal ? PITCH_FUTSAL : PITCH_11, mode: p.mode as any, humanTeam: 0, script, durationSec: script.durationSec, clockMinutes: CLOCK_MINUTES[p.mode as 'kickoff' | 'futsal' | 'fut'],
+      pitch: futsal ? PITCH_FUTSAL : PITCH_11, mode: p.mode as any, humanTeam: 0, script, surface: p.surface ?? (futsal ? 'court' : 'dry'), durationSec: script.durationSec, clockMinutes: CLOCK_MINUTES[p.mode as 'kickoff' | 'futsal' | 'fut'],
       teams: [
         { team: home, players: futsal ? futsalFive(hxi) : hxi, kit: hk as Kit, kitKey: `${home.id}:${hk === home.home ? 'h' : 'a'}`, name: p.clubName ?? home.name, short: p.clubName ? p.clubName.slice(0, 3).toUpperCase() : home.short },
         { team: away, players: futsal ? futsalFive(axi) : axi, kit: ak as Kit, kitKey: `${away.id}:${ak === away.home ? 'h' : 'a'}`, name: p.mode === 'fut' ? 'Rival UT' : away.name, short: p.mode === 'fut' ? 'RIV' : away.short },
@@ -72,17 +72,19 @@ export class MatchScreen implements Screen {
     match.on((e) => {
       switch (e.type) {
         case 'goal': { const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
-        case 'post': this.showToast('Off the woodwork!'); audio.post(); break;
-        case 'save': this.showToast(`Great save by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
+        case 'post': this.showToast(e.bar ? 'Off the crossbar!' : 'Off the post!'); audio.post(); break;
+        case 'save': this.showToast(e.caught ? `Held by ${e.keeper.card.shortName}` : `Parried by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
+        case 'foul': this.showToast(e.card ? `Yellow card · ${e.by.card.shortName}` : e.penalty ? 'Penalty!' : `Foul by ${e.by.card.shortName}`); audio.whistle(); if (e.penalty) this.showBanner('PENALTY', 1.8); break;
+        case 'setpiece': if (e.kind === 'freekick') this.showToast(`Free kick · ${match.teams[e.team].setup.short}`); else if (e.kind === 'penalty') this.showToast(`Penalty · ${match.teams[e.team].setup.short}`); break;
         case 'kickoff': audio.whistle(); break;
         case 'halftime': this.showBanner('HALF TIME', 2.5); audio.whistle(true); break;
         case 'fulltime': this.showBanner('FULL TIME', 2.5); audio.whistle(true); this.onFullTime(); break;
         case 'kick': if (e.agent.isHuman || Math.random() < 0.5) audio.kick(e.kind === 'shoot' ? 0.9 : 0.4); break;
         case 'tackle': if (e.success) audio.kick(0.3); break;
-        case 'out': this.showToast(e.kind === 'throw' ? 'Throw-in' : e.kind === 'corner' ? 'Corner' : 'Goal kick'); break;
+        case 'out': this.showToast(e.kind === 'throw' ? (futsal ? 'Kick-in' : 'Throw-in') : e.kind === 'corner' ? 'Corner' : 'Goal kick'); break;
       }
     });
-    this.showBanner(`${home.short} <small>vs</small> ${match.teams[1].setup.short}<small>${home.stadium.name}</small>`, 2.2);
+    this.showBanner(`${home.short} <small>vs</small> ${match.teams[1].setup.short}<small>${futsal ? 'Indoor court' : home.stadium.name + ' · ' + match.surface.label}</small>`, 2.4);
   }
 
   private frame(dt: number, time: number) {

@@ -8,7 +8,7 @@ import { el, button, topbar, betPanel, teamPicker } from '../ui/components';
 import { Showcase } from '../render/showcase';
 import { FreeKickGame, type FKSide } from '../freekick/freekick';
 import { TEAM_BY_ID, rosterOf, startingXI, TEAMS } from '@shared/teams';
-import { pickKits } from './setup';
+import { pickKits, resolveSurface } from './setup';
 import { input } from '../input/input';
 import { focus } from '../ui/focus';
 import { showResults } from '../ui/results';
@@ -66,7 +66,7 @@ export class FreeKickScreen implements Screen {
     this.root.innerHTML = ''; this.showcase = null;
     const home = TEAM_BY_ID[homeId], away = TEAM_BY_ID[awayId];
     const [hk, ak] = pickKits(home, away);
-    const game = new FreeKickGame(app.stage, script, side(homeId, hk, `${homeId}:${hk === home.home ? 'h' : 'a'}`), side(awayId, ak, `${awayId}:${ak === away.home ? 'h' : 'a'}`), Math.random() < 0.7);
+    const game = new FreeKickGame(app.stage, script, side(homeId, hk, `${homeId}:${hk === home.home ? 'h' : 'a'}`), side(awayId, ak, `${awayId}:${ak === away.home ? 'h' : 'a'}`), Math.random() < 0.7, resolveSurface(false));
     this.game = game;
     input.menuMode = false; audio.unlock(); audio.startCrowd(); audio.crowdLevel(0.12);
     const hud = el('div', 'hud fk-hud'); this.hud = hud;

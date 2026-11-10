@@ -8,72 +8,120 @@ export function groundBasis(camera: THREE.Camera): { right: { x: number; z: numb
   return { forward: { x: fx, z: fz }, right: { x: -fz, z: fx } };
 }
 
+/** Critically damped spring toward a target (Game Programming Gems 4 / Unity SmoothDamp). No overshoot, continuous velocity. */
+export function smoothDamp(cur: number, target: number, state: { v: number }, smoothTime: number, maxSpeed: number, dt: number): number {
+  const st = Math.max(1e-4, smoothTime); const omega = 2 / st; const x = omega * dt;
+  const exp = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  let change = cur - target; const orig = target;
+  const maxChange = maxSpeed * st; change = Math.max(-maxChange, Math.min(maxChange, change));
+  const tgt = cur - change;
+  const temp = (state.v + omega * change) * dt;
+  state.v = (state.v - omega * temp) * exp;
+  let out = tgt + (change + temp) * exp;
+  if ((orig - cur > 0) === (out > orig)) { out = orig; state.v = (out - orig) / dt; }
+  return out;
+}
+class Damp3 {
+  vx = { v: 0 }; vy = { v: 0 }; vz = { v: 0 };
+  step(cur: THREE.Vector3, target: THREE.Vector3, smoothTime: number, maxSpeed: number, dt: number) {
+    cur.set(smoothDamp(cur.x, target.x, this.vx, smoothTime, maxSpeed, dt), smoothDamp(cur.y, target.y, this.vy, smoothTime, maxSpeed, dt), smoothDamp(cur.z, target.z, this.vz, smoothTime, maxSpeed, dt));
+  }
+  reset() { this.vx.v = this.vy.v = this.vz.v = 0; }
+}
+
 export type CamMode = 'broadcast' | 'low' | 'behindGoal' | 'drone' | 'closeup' | 'freekick' | 'showcase';
 
-/** Camera rigs: smoothed broadcast camera for play and cinematic cuts for the highlight tape. */
+/** Broadcast camera in the style of EA FC's "Tele Broadcast": tracks a smoothed focus point driven by the ball,
+ *  shifted toward the direction of play of the team in possession, with no shake and long blends between shots. */
 export class CameraRig {
   mode: CamMode = 'broadcast';
   heightMul = 1;
   private pos = new THREE.Vector3(0, 30, -60);
   private look = new THREE.Vector3();
-  private vel = new THREE.Vector3();
-  private shake = 0;
-  private cutTime = 0;
-  private cutSide = 1;
+  private posDamp = new Damp3(); private lookDamp = new Damp3();
+  private focusX = 0; private focusZ = 0; private fvx = { v: 0 }; private fvz = { v: 0 };
+  private bias = 0; private biasV = { v: 0 };
+  private lookY = 0.4; private lookYV = { v: 0 };
+  private ballVx = 0; private prevTarget: THREE.Vector3 | null = null;
+  /** Seconds of extra-soft blending left after a change of shot. */
+  private blend = 0;
+  private urgency = 0;
+  private cutTime = 0; private cutSide = 1;
   constructor(private camera: THREE.PerspectiveCamera, public pitchLength: number, public pitchWidth: number) {}
 
   snap() { this.camera.position.copy(this.pos); this.camera.lookAt(this.look); }
-  addShake(v: number) { this.shake = Math.min(1, this.shake + v); }
+  /** Kept for API compatibility: the broadcast camera never shakes. */
+  addShake(_v: number) {}
+  /** Start a soft blend (e.g. coming back from a celebration close-up). */
+  softBlend(seconds = 1.2) { this.blend = Math.max(this.blend, seconds); }
 
-  /** target = point of interest (ball), lead = direction of play for look-ahead. */
-  update(dt: number, target: THREE.Vector3, lead: THREE.Vector3, time: number) {
-    const L = this.pitchLength, W = this.pitchWidth;
-    const scale = L / 105; // futsal gets a tighter camera
-    let desired = new THREE.Vector3(); let desiredLook = new THREE.Vector3();
-    switch (this.mode) {
-      case 'broadcast': {
-        const tx = THREE.MathUtils.clamp(target.x + lead.x * 5, -L / 2 + 8 * scale, L / 2 - 8 * scale);
-        const tz = target.z;
-        const h = this.heightMul;
-        // Slightly tighter than a TV wide shot so the controlled player is easy to read; drifts toward the ball across the width.
-        desired.set(tx * 0.95, (11.5 + tz * 0.05) * h * (0.35 + 0.65 * scale), -(W / 2 + 7 * scale) * (0.6 + 0.4 * h) + tz * 0.2);
-        desiredLook.set(tx, 0.4, THREE.MathUtils.clamp(tz * 0.6 - 3 * scale, -W / 2, W / 2));
-        break;
-      }
-      case 'low': {
-        desired.set(target.x - 6, 3.5, -(W / 2 + 6));
-        desiredLook.set(target.x, 1.2, target.z);
-        break;
-      }
-      case 'behindGoal': {
-        const s = this.cutSide;
-        desired.set(s * (L / 2 + 16), 9, 0);
-        desiredLook.set(target.x, 1, target.z);
-        break;
-      }
-      case 'drone': {
-        const a = time * 0.12;
-        desired.set(Math.cos(a) * (L * 0.55), 32 + Math.sin(time * 0.3) * 4, Math.sin(a) * (W * 0.9));
-        desiredLook.set(target.x * 0.5, 0, target.z * 0.5);
-        break;
-      }
-      case 'closeup': {
-        const dir = new THREE.Vector3(-lead.x, 0, -lead.z); if (dir.lengthSq() < 0.01) dir.set(0, 0, -1); dir.normalize();
-        desired.copy(target).addScaledVector(dir, 7).setY(2.4);
-        desiredLook.copy(target).setY(1.2);
-        break;
-      }
-      default: return;
-    }
-    const stiff = this.mode === 'broadcast' ? 4.5 : this.mode === 'closeup' ? 8 : 2.5;
-    this.pos.lerp(desired, 1 - Math.exp(-stiff * dt));
-    this.look.lerp(desiredLook, 1 - Math.exp(-(stiff + 2) * dt));
-    this.camera.position.copy(this.pos);
-    if (this.shake > 0.001) { this.camera.position.x += (Math.random() - 0.5) * this.shake * 0.6; this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.4; this.shake *= Math.exp(-6 * dt); }
-    this.camera.lookAt(this.look);
+  /** Where the broadcast camera wants to be for the current smoothed focus. */
+  private broadcastPose(outPos: THREE.Vector3, outLook: THREE.Vector3) {
+    const L = this.pitchLength, W = this.pitchWidth; const scale = L / 105; const h = this.heightMul;
+    const fx = this.focusX, fz = this.focusZ;
+    // Narrow (portrait) screens: pull back and up so enough of the pitch's length is in view.
+    const wide = this.camera.aspect < 1.2 ? 1 + (1.2 - this.camera.aspect) * 0.9 : 1;
+    const back = (W / 2 + 7 * scale) * (0.6 + 0.4 * h);
+    outPos.set(fx * 0.95, (11.5 + fz * 0.05) * h * (0.5 + 0.5 * scale) * wide, -(back + (wide - 1) * 14 * scale) + fz * 0.2);
+    outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.6 - 3 * scale, -W / 2, W / 2));
   }
 
-  /** Cinematic cut scheduler for the highlight tape. */
+  /** target = ball position; lead.x = direction of play of the team in possession (-1..1, 0 when loose). */
+  update(dt: number, target: THREE.Vector3, lead: THREE.Vector3, time: number) {
+    if (dt <= 0) return;
+    const L = this.pitchLength; const scale = L / 105;
+    // Ball velocity along the pitch, estimated from the target and smoothed (no sudden look-ahead swings).
+    if (this.prevTarget) {
+      const jump = target.distanceTo(this.prevTarget);
+      const vx = jump > 8 ? 0 : (target.x - this.prevTarget.x) / dt; // ignore teleports (restarts)
+      if (jump > 8) this.blend = Math.max(this.blend, 1.6); // ball placed for a restart: glide over, don't lunge
+      this.ballVx += (vx - this.ballVx) * (1 - Math.exp(-dt / 0.35));
+    } else { this.focusX = target.x; this.focusZ = target.z; }
+    this.prevTarget = (this.prevTarget ?? new THREE.Vector3()).copy(target);
+
+    if (this.mode === 'broadcast') {
+      // Direction of play: drift ahead of the ball for the attacking side, slowly so turnovers don't whip the camera.
+      this.bias = smoothDamp(this.bias, THREE.MathUtils.clamp(lead.x, -1, 1) * 7 * scale, this.biasV, 1.4, 10, dt);
+      const lookAhead = THREE.MathUtils.clamp(this.ballVx * 0.25, -4 * scale, 4 * scale);
+      const tx = THREE.MathUtils.clamp(target.x + this.bias + lookAhead, -L / 2 + 9 * scale, L / 2 - 9 * scale);
+      // Edge guard: if the ball is drifting toward the edge of the frame (fast long balls, narrow phone screens), catch up quicker.
+      const ndc = target.clone().project(this.camera);
+      const edge = Math.max(Math.abs(ndc.x), Math.abs(ndc.y) * 0.9);
+      const want = edge > 0.55 && this.blend < 0.6 ? Math.min(1, (edge - 0.55) / 0.35) : 0;
+      this.urgency += (want - this.urgency) * (1 - Math.exp(-dt / 0.25)); // eased, so the catch-up never snaps
+      // Narrow (portrait) screens see less of the pitch, so track tighter.
+      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.5, 1);
+      const glide = 0.7 * Math.min(1, this.blend / 1.2); // slower focus while gliding to a restart
+      this.focusX = smoothDamp(this.focusX, tx, this.fvx, (0.8 - 0.45 * this.urgency) * narrow + glide, Math.max(22 * scale, 14), dt);
+      this.focusZ = smoothDamp(this.focusZ, target.z, this.fvz, (1.1 - 0.6 * this.urgency) * narrow * (0.6 + 0.4 * scale) + glide, Math.max(16 * scale, 9), dt);
+      // Tilt up for high balls; a closer (futsal) camera has to tilt more, and faster when the ball nears the frame edge.
+      const tilt = Math.min(0.6, 0.25 / Math.max(0.4, scale));
+      this.lookY = smoothDamp(this.lookY, 0.4 + Math.min(8, Math.max(0, target.y - 1)) * tilt, this.lookYV, 0.8 - 0.5 * this.urgency, 12, dt);
+      const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l);
+      this.apply(p, l, dt);
+      return;
+    }
+    // Other shots (used by the highlight tape): computed targets, same smoothing.
+    const W = this.pitchWidth; const p = new THREE.Vector3(), l = new THREE.Vector3();
+    switch (this.mode) {
+      case 'low': p.set(target.x - 6, 3.5, -(W / 2 + 6)); l.set(target.x, 1.2, target.z); break;
+      case 'behindGoal': p.set(this.cutSide * (L / 2 + 16), 9, 0); l.set(target.x, 1, target.z); break;
+      case 'drone': { const a = time * 0.12; p.set(Math.cos(a) * (L * 0.55), 32 + Math.sin(time * 0.3) * 4, Math.sin(a) * (W * 0.9)); l.set(target.x * 0.5, 0, target.z * 0.5); break; }
+      case 'closeup': { const d = new THREE.Vector3(-lead.x, 0, -lead.z); if (d.lengthSq() < 0.01) d.set(0, 0, -1); d.normalize(); p.copy(target).addScaledVector(d, 7).setY(2.4); l.copy(target).setY(1.2); break; }
+      default: return;
+    }
+    this.apply(p, l, dt);
+  }
+
+  private apply(p: THREE.Vector3, l: THREE.Vector3, dt: number) {
+    this.blend = Math.max(0, this.blend - dt);
+    const soft = 0.9 * Math.min(1, this.blend / 1.2); // tapers continuously to zero: no step change in smoothing
+    this.posDamp.step(this.pos, p, 0.16 + soft, 80, dt);
+    this.lookDamp.step(this.look, l, 0.1 + soft, 80, dt);
+    this.camera.position.copy(this.pos); this.camera.lookAt(this.look);
+  }
+
+  /** Cinematic cut scheduler for the highlight tape (hard cuts between shots, smooth within them). */
   cinematic(dt: number, target: THREE.Vector3, lead: THREE.Vector3, time: number) {
     this.cutTime -= dt;
     if (this.cutTime <= 0) {
@@ -81,17 +129,26 @@ export class CameraRig {
       this.mode = modes[Math.floor(Math.random() * modes.length)];
       this.cutSide = target.x > 0 ? 1 : -1;
       this.cutTime = 4 + Math.random() * 5;
-      // hard cut: snap position near the desired spot
-      this.pos.set(target.x + (Math.random() - 0.5) * 20, 10 + Math.random() * 20, -(this.pitchWidth / 2 + 20));
+      this.posDamp.reset(); this.lookDamp.reset();
+      // hard cut: jump straight to the new framing
+      const save = { pos: this.pos.clone() };
+      this.update(1 / 60, target, lead, time);
+      if (this.mode === 'broadcast') { const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l); this.pos.copy(p); this.look.copy(l); }
+      else { this.pos.copy(this.camera.position); }
+      void save;
     }
     this.update(dt, target, lead, time);
   }
 
-  setFixed(pos: THREE.Vector3, look: THREE.Vector3) { this.pos.copy(pos); this.look.copy(look); this.camera.position.copy(pos); this.camera.lookAt(look); }
-  moveTo(dt: number, pos: THREE.Vector3, look: THREE.Vector3, stiff = 4) {
-    this.pos.lerp(pos, 1 - Math.exp(-stiff * dt)); this.look.lerp(look, 1 - Math.exp(-(stiff + 1) * dt));
-    this.camera.position.copy(this.pos);
-    if (this.shake > 0.001) { this.camera.position.x += (Math.random() - 0.5) * this.shake * 0.4; this.camera.position.y += (Math.random() - 0.5) * this.shake * 0.3; this.shake *= Math.exp(-6 * dt); }
-    this.camera.lookAt(this.look);
+  setFixed(pos: THREE.Vector3, look: THREE.Vector3) { this.pos.copy(pos); this.look.copy(look); this.posDamp.reset(); this.lookDamp.reset(); this.camera.position.copy(pos); this.camera.lookAt(look); }
+
+  /** Frame a specific shot (celebrations, set pieces) with soft critically damped motion. */
+  moveTo(dt: number, pos: THREE.Vector3, look: THREE.Vector3, smoothTime = 0.8) {
+    this.posDamp.step(this.pos, pos, smoothTime, 40, dt);
+    this.lookDamp.step(this.look, look, smoothTime * 0.8, 40, dt);
+    this.camera.position.copy(this.pos); this.camera.lookAt(this.look);
+    // keep the broadcast focus tracking so the return is seamless
+    this.focusX += (look.x - this.focusX) * Math.min(1, dt * 0.5);
+    this.blend = 1.2;
   }
 }

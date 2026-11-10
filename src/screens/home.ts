@@ -8,6 +8,7 @@ import { TEAMS, rosterOf, startingXI, type Team } from '@shared/teams';
 import { crestSvg } from '../ui/crest';
 import { pickKits } from './setup';
 import { focus } from '../ui/focus';
+import { randomSurface } from '../game/surface';
 import { state } from '../app/state';
 
 /** Main menu over a cinematic league-highlights tape (an AI vs AI match with cuts and a broadcast filter). */
@@ -56,7 +57,7 @@ export class HomeScreen implements Screen {
     const pool = TEAMS.slice().sort(() => Math.random() - 0.5);
     const home: Team = pool[0], away: Team = pool[1];
     const kits = pickKits(home, away);
-    const match = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: null, script: null, durationSec: 600, clockMinutes: 90,
+    const match = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: null, script: null, durationSec: 600, clockMinutes: 90, surface: randomSurface(),
       teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: kits[0], kitKey: `${home.id}:${kits[0] === home.home ? 'h' : 'a'}`, name: home.name, short: home.short },
         { team: away, players: startingXI(rosterOf(away.id)), kit: kits[1], kitKey: `${away.id}:${kits[1] === away.home ? 'h' : 'a'}`, name: away.name, short: away.short }] });
     // Highlights are more fun with goals: let both sides attack freely.

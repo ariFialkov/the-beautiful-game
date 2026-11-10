@@ -28,9 +28,9 @@ export const FREE_PLAY: Modifiers = {
   botSkill: 0.6, homeAiSkill: 0.6, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], pushTeam: null, pushLevel: 0, forced: false, tackleBias: 0, shotAppetite: [1, 1], defenseLapse: 0,
 };
 
-const WINDOW_BEFORE = 0.05;
+/** Window timing per pitch: futsal scripts pack more goals into a shorter match, so its windows open earlier and escalate faster. */
+const WINDOWS = { full: { before: 0.06, after: 0.02, esc: 0.05 }, futsal: { before: 0.1, after: 0.01, esc: 0.03 } };
 
-const FORCE_AFTER = 0.02;
 /** Hard stop: fraction of regulation after which any remaining scripted goals are awarded outright. */
 export const OVERRUN_LIMIT = 1.2;
 
@@ -44,6 +44,7 @@ export class Director {
     this.events = script.events.slice();
     this.mods.botSkill = 0.35 + script.botStrength * 0.5;
   }
+  private get win() { return this.match.pitch.futsal ? WINDOWS.futsal : WINDOWS.full; }
   get pending(): GoalEvent | null { return this.events[this.idx] ?? null; }
   get done() { return this.idx >= this.events.length; }
   get remaining() { return this.events.length - this.idx; }
@@ -59,7 +60,7 @@ export class Director {
   allowGoal(team: number): boolean {
     const e = this.pending;
     if (!e) return false;
-    return this.teamOf(e) === team && this.match.frac >= e.t - WINDOW_BEFORE;
+    return this.teamOf(e) === team && this.match.frac >= e.t - this.win.before;
   }
 
   update(dt: number) {
@@ -74,10 +75,10 @@ export class Director {
     }
     const team = this.teamOf(e);
     const other = team === 0 ? 1 : 0;
-    const start = e.t - WINDOW_BEFORE;
+    const W = this.win; const start = e.t - W.before;
     // Score-state pacing: if the human is "ahead of script" the bots look sharper; if behind, they look sloppy.
     if (frac >= start) {
-      const level = Math.min(1, (frac - start) / (WINDOW_BEFORE + FORCE_AFTER));
+      const level = Math.min(1, (frac - start) / (W.before + W.after));
       m.pushTeam = team; m.pushLevel = level; m.goalAllowed[team] = true;
       m.keeper[other] = level > 0.5 ? 'soft' : 'normal'; // the defending keeper gets beatable
       m.keeper[team] = 'wall';
@@ -86,10 +87,10 @@ export class Director {
       if (team === 1) { m.botSkill = Math.min(1, 0.7 + level * 0.3); m.homeAiSkill = 0.55 - level * 0.2; m.speedMul[1] = 1.04 + level * 0.1; m.speedMul[0] = 1 - level * 0.06; }
       else { m.homeAiSkill = 0.75 + level * 0.25; m.botSkill = Math.max(0.1, 0.35 - level * 0.25); m.speedMul[1] = 0.96 - level * 0.1; }
       m.defenseLapse = level > 0.4 ? (level - 0.4) * 0.5 : 0;
-      if (frac >= e.t + FORCE_AFTER) {
+      if (frac >= e.t + W.after) {
         m.forced = true; m.pushLevel = 1; m.keeper[other] = 'soft';
         // escalate the longer a forced goal takes: the pushing side gets quicker, the other side wilts
-        const esc = Math.min(1, (frac - (e.t + FORCE_AFTER)) / 0.05);
+        const esc = Math.min(1, (frac - (e.t + W.after)) / W.esc);
         m.speedMul[team] = 1.06 + esc * 0.18; m.speedMul[other] = 0.94 - esc * 0.2;
         m.shotAppetite[team] = 3 + esc * 3; m.tackleBias = (team === 0 ? 1 : -1) * (0.8 + esc * 0.2);
         if (team === 1) { m.botSkill = 1; m.homeAiSkill = 0.15; } else { m.homeAiSkill = 1; m.botSkill = 0.1; }

@@ -9,6 +9,29 @@ import { crestSvg } from '../ui/crest';
 import { Showcase } from '../render/showcase';
 import { TEAM_BY_ID, rosterOf, startingXI, type Team, type Kit } from '@shared/teams';
 import { focus } from '../ui/focus';
+import { SURFACES, randomSurface, type SurfaceId } from '../game/surface';
+
+/** Resolve the conditions preference to a surface for one match. */
+export function resolveSurface(futsal: boolean): SurfaceId {
+  if (futsal) return 'court';
+  return state.conditions === 'random' ? randomSurface() : (state.conditions as SurfaceId);
+}
+
+/** Pitch-conditions chips (outdoor modes). */
+export function conditionsPanel(): HTMLElement {
+  const p = el('div', 'panel col');
+  p.appendChild(el('div', 'label', 'Conditions'));
+  const row = el('div', 'league-tabs');
+  const opts: Array<[string, string]> = [['random', 'Random'], ['dry', 'Dry'], ['firm', 'Firm'], ['wet', 'Rain'], ['snow', 'Snow']];
+  const hint = el('div', 'small muted');
+  const render = () => {
+    row.innerHTML = '';
+    for (const [id, label] of opts) { const b = el('button', `chip${state.conditions === id ? ' active' : ''}`, label); b.setAttribute('data-focus', ''); b.addEventListener('click', () => { state.conditions = id; state.saveTeams(); render(); }); row.appendChild(b); }
+    const s = state.conditions === 'random' ? null : SURFACES[state.conditions as SurfaceId];
+    hint.textContent = s ? ({ dry: 'True bounce, firm passing.', firm: 'Hard ground: the ball bounces higher and runs on.', wet: 'Slick surface: passes zip and skid, slides go further, footing is looser.', snow: 'Heavy ball: it dies on landing and rolls short; players struggle to turn.', court: '' } as Record<string, string>)[s.id] : 'Weather is drawn at kick-off.';
+  };
+  render(); p.append(row, hint); return p;
+}
 
 export function kitClash(a: Kit, b: Kit): boolean {
   const ca = new THREE.Color(a.primary), cb = new THREE.Color(b.primary);
@@ -55,10 +78,12 @@ export class SetupScreen implements Screen {
       try {
         const r = await api.startRound(this.mode, stake, state.homeTeamId, state.awayTeamId);
         state.setWallet(r.wallet);
-        app.router.go('match', { mode: this.mode, round: r, stake, homeTeamId: state.homeTeamId, awayTeamId: state.awayTeamId });
+        app.router.go('match', { mode: this.mode, round: r, stake, homeTeamId: state.homeTeamId, awayTeamId: state.awayTeamId, surface: resolveSurface(this.mode === 'futsal') });
       } catch (e: any) { bet.setError(e.message ?? 'Could not start the round'); bet.setBusy(false); }
     }, this.mode === 'futsal' ? 'Play Futsal' : 'Kick Off');
-    side.append(versus, bet.el);
+    side.append(versus);
+    if (this.mode !== 'futsal') side.append(conditionsPanel());
+    side.append(bet.el);
     layout.append(teamsPane, side);
     screen.appendChild(layout);
     root.appendChild(screen);
@@ -74,4 +99,4 @@ export class SetupScreen implements Screen {
   unmount() { app.stage.setScene(null, null); this.showcase = null; }
 }
 
-export type MatchParams = { mode: GameMode; round: any; stake: number; homeTeamId?: string; awayTeamId?: string; homeSquad?: any[]; awaySquad?: any[]; clubName?: string; homeKit?: Kit; awayKit?: Kit; chemistry?: number };
+export type MatchParams = { mode: GameMode; round: any; stake: number; homeTeamId?: string; awayTeamId?: string; homeSquad?: any[]; awaySquad?: any[]; clubName?: string; homeKit?: Kit; awayKit?: Kit; chemistry?: number; surface?: SurfaceId };

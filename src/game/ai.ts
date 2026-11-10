@@ -85,8 +85,12 @@ function setPieceDecision(m: Match, team: TeamState, a: Agent, skill: number): b
       break;
     }
   }
+  // Any other restart (or no better option): play it to the most available team-mate. A set-piece taker may not dribble.
+  const target = bestTeammate(m, team, a, (t) => !t.isGK || sp.kind === 'goalkick', (t) => Math.min(8, nearestOpponent(m, t).dist) * 1.2 - v2.dist(t.pos, a.pos) * 0.12 + ((t.pos.x - a.pos.x) * team.attackDir) * 0.04);
+  if (target) { const d = v2.dist(target.pos, a.pos); m.startKick(a, d > 24 && !m.pitch.futsal ? 'lob' : 'pass', 0.65, v2.norm(v2.sub(target.pos, a.pos)), { targetAgent: target, botSkill: skill }); return true; }
+  m.startKick(a, m.pitch.futsal ? 'pass' : 'lob', 0.8, { x: team.attackDir, z: 0 }, { clear: true, botSkill: skill });
   void opp;
-  return false;
+  return true;
 }
 
 /** Decide and execute for the player on the ball. */
@@ -132,7 +136,7 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
     let kind: 'pass' | 'through' | 'lob' = 'pass';
     const tGoal = v2.dist(t.pos, goal);
     if (forward > 0.6 && tOpp > 3 && tGoal < dGoal - 6) { kind = rnd() < 0.5 ? 'through' : 'pass'; score += 0.15 + push * 0.4; }
-    if (lane < 0.3 && d > 14 && !futsal) { kind = 'lob'; score += 0.35; }
+    if (lane < 0.3 && d > 14 && !futsal) { kind = 'lob'; score += 0.15; }
     // crosses from wide areas into the box (futsal is played on the floor)
     if (!futsal && Math.abs(a.pos.z) > m.pitch.width * 0.25 && Math.abs(a.pos.x - goal.x) < (futsal ? 10 : 25) && Math.abs(t.pos.x - goal.x) < m.pitch.boxDepth + 2 && Math.abs(t.pos.z) < m.pitch.boxWidth / 2) { kind = 'lob'; score += 0.25 + push * 0.3; }
     score *= 0.6 + skill * 0.5;

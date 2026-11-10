@@ -9,6 +9,7 @@ import { Showcase } from '../render/showcase';
 import { playerById, TEAM_BY_ID, type Kit } from '@shared/teams';
 import { chemistry, SLOTS_433, positionFit } from '../fut/chemistry';
 import { focus } from '../ui/focus';
+import { resolveSurface, conditionsPanel } from './setup';
 
 export const FUT_HOME_KIT: Kit = { primary: '#0b1a33', secondary: '#19f5a4', shorts: '#0b1a33', socks: '#19f5a4', pattern: 'sash' };
 export const FUT_AWAY_KIT: Kit = { primary: '#ff4d6d', secondary: '#111111', shorts: '#111111', socks: '#ff4d6d', pattern: 'chevron' };
@@ -156,9 +157,10 @@ export class FutScreen implements Screen {
         const oppBest = opp.squad.slice().sort((a, b) => b.rating - a.rating)[0];
         const r = await api.startRound('fut', stake, best.teamId, oppBest.teamId);
         state.setWallet(r.wallet);
-        app.router.go('match', { mode: 'fut', round: r, stake, homeTeamId: best.teamId, awayTeamId: oppBest.teamId === best.teamId ? Object.keys(TEAM_BY_ID).find((k) => k !== best.teamId) : oppBest.teamId, homeSquad: squad, awaySquad: opp.squad, clubName: club.clubName, homeKit: FUT_HOME_KIT, awayKit: FUT_AWAY_KIT, chemistry: chem.team });
+        app.router.go('match', { mode: 'fut', round: r, stake, homeTeamId: best.teamId, awayTeamId: oppBest.teamId === best.teamId ? Object.keys(TEAM_BY_ID).find((k) => k !== best.teamId) : oppBest.teamId, homeSquad: squad, awaySquad: opp.squad, clubName: club.clubName, homeKit: FUT_HOME_KIT, awayKit: FUT_AWAY_KIT, chemistry: chem.team, surface: resolveSurface(false) });
       } catch (e: any) { bet.setError(e.message ?? 'Could not start'); bet.setBusy(false); }
     }, 'Play match');
+    right.appendChild(conditionsPanel());
     right.appendChild(bet.el);
   }
 

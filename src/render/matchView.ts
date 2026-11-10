@@ -6,6 +6,7 @@ import { Stadium } from './stadium';
 import { makeLighting, type Stage } from './scene';
 import { CameraRig, groundBasis } from './camera';
 import { keeperKit } from './kits';
+import { WeatherFx } from './weather';
 import { state } from '../app/state';
 
 let ballTex: THREE.CanvasTexture | null = null;
@@ -26,7 +27,9 @@ export function makeBallMesh(radius = 0.11): THREE.Mesh {
   m.castShadow = true; return m;
 }
 
-/** Renders a Match into the shared Stage. */
+const lerpAngle = (a: number, b: number, t: number) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
+
+/** Renders a Match into the shared Stage, interpolating between fixed simulation steps. */
 export class MatchView {
   scene = new THREE.Scene();
   stadium: Stadium;
@@ -35,87 +38,115 @@ export class MatchView {
   private ball: THREE.Mesh;
   private ballShadow: THREE.Mesh;
   private sun: THREE.DirectionalLight;
-  private ballQuat = new THREE.Quaternion();
+  private weather: WeatherFx;
   cinematic = false;
-  private goalFlash = 0;
+  private goalCamT = 0;
+  private wasGoal = false;
 
   constructor(private stage: Stage, public match: Match, night: boolean) {
     const [h, a] = match.opts.teams;
     const low = stage.quality === 'low';
+    const surf = match.surface;
     this.stadium = new Stadium(match.pitch, h.team, a.team, night, low);
     this.scene.add(this.stadium.group);
     this.sun = makeLighting(this.scene, night, stage.quality === 'high', match.pitch.futsal ? 30 : 60).sun;
+    // Conditions: overcast rain, snow cover, baked firm ground.
+    if (surf.weather === 'rain') {
+      this.stadium.pitchMaterial.color.setRGB(0.72, 0.8, 0.74); this.sun.intensity *= 0.55;
+      const sky = new THREE.Color(night ? 0x0a0f18 : 0x5d6875); this.scene.background = sky; this.scene.fog = new THREE.Fog(sky, 60, 260);
+    } else if (surf.weather === 'snow') {
+      this.stadium.pitchMaterial.color.setRGB(0.78, 0.84, 0.82); this.stadium.pitchMaterial.emissive.setRGB(0.2, 0.22, 0.25); this.sun.intensity *= 0.7; // snow-dusted, lines still readable
+      const sky = new THREE.Color(night ? 0x141a24 : 0xb9c4cf); this.scene.background = sky; this.scene.fog = new THREE.Fog(sky, 50, 240);
+    } else if (surf.id === 'firm') {
+      this.stadium.pitchMaterial.color.setRGB(1.08, 1.02, 0.85); this.sun.intensity *= 1.15;
+    }
+    this.weather = new WeatherFx(surf.weather, low);
+    if (this.weather.object) this.scene.add(this.weather.object);
     const gkKit = [keeperKit(h.kit, a.kit), keeperKit(a.kit, h.kit)];
-    for (const t of match.teams) {
-      for (const ag of t.agents) {
-        const kit = ag.isGK ? gkKit[t.index] : t.setup.kit;
-        const hum = new Humanoid(ag.card, kit, ag.isGK ? `${t.setup.kitKey}:gk` : t.setup.kitKey, ag.isGK);
-        hum.setShadowsReal(stage.quality === 'high');
-        this.scene.add(hum.root);
-        this.humanoids.set(ag, hum);
-      }
+    for (const t of match.teams) for (const ag of t.agents) {
+      const kit = ag.isGK ? gkKit[t.index] : t.setup.kit;
+      const hum = new Humanoid(ag.card, kit, ag.isGK ? `${t.setup.kitKey}:gk` : t.setup.kitKey, ag.isGK);
+      hum.setShadowsReal(stage.quality === 'high');
+      this.scene.add(hum.root);
+      this.humanoids.set(ag, hum);
     }
     this.ball = makeBallMesh(match.ball.radius);
+    if (surf.weather === 'snow') (this.ball.material as THREE.MeshStandardMaterial).color.set(0xff8a3d); // orange ball in the snow
     this.scene.add(this.ball);
     this.ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.12, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }));
     this.ballShadow.rotation.x = -Math.PI / 2; this.ballShadow.position.y = 0.015;
     this.scene.add(this.ballShadow);
     this.rig = new CameraRig(stage.camera, match.pitch.length, match.pitch.width);
     this.rig.heightMul = state.settings.cameraHeight;
-    this.rig.setFixed(new THREE.Vector3(0, 28, -(match.pitch.width / 2 + 34)), new THREE.Vector3(0, 0, 0));
-    match.on((e) => { if (e.type === 'goal') { this.stadium.cheer(1); this.goalFlash = 1; this.rig.addShake(0.5); } if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5); if (e.type === 'kick' && e.kind === 'shoot') this.rig.addShake(0.12); });
+    this.rig.setFixed(new THREE.Vector3(0, 12, -(match.pitch.width / 2 + 9)), new THREE.Vector3(0, 0.4, -3));
+    match.on((e) => { if (e.type === 'goal') this.stadium.cheer(1); if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5); });
   }
 
-  private animFor(a: Agent, m: Match): AnimParams {
-    const act = a.action; let st: AnimState = 'idle'; let action = 0; let dir = 1;
+  private animFor(a: Agent, m: Match, dt: number): AnimParams {
+    const act = a.action; let st: AnimState = 'idle'; let action = 0; let dir = 1; let overlay: AnimParams['overlay'] = null;
     const speed = a.speed();
-    if (act) {
+    if (act && act.type !== 'touch' && act.type !== 'trap') {
       action = act.t / act.duration; dir = act.dir;
       switch (act.type) {
-        case 'kick': st = 'kick'; break; case 'tackle': st = 'tackle'; break; case 'slide': st = 'slide'; break; case 'dive': st = 'dive'; break;
-        case 'fallen': st = 'fallen'; break; case 'celebrate': st = 'celebrate'; break; case 'throw': st = 'throw'; break;
+        case 'kick': st = a.isGK && act.data?.held ? 'throw' : 'kick'; action = Math.min(1, act.t / 0.55); break;
+        case 'tackle': st = 'tackle'; dir = act.data?.foot ?? 1; break;
+        case 'slide': st = 'slide'; break;
+        case 'dive': st = 'dive'; action = Math.min(1, act.t / 0.9); break;
+        case 'fallen': st = 'fallen'; break;
+        case 'stumble': st = 'stumble'; break;
+        case 'header': st = 'header'; break;
+        case 'celebrate': st = 'celebrate'; break;
+        case 'throw': st = 'throw'; break;
       }
-    } else if (speed > 0.6) st = 'run';
-    else if (a.isGK && Math.hypot(m.ball.x - a.pos.x, m.ball.z - a.pos.z) < 28 && !a.hasBall) st = 'keeperReady';
-    return { state: st, phase: a.animPhase, speed: Math.min(1, speed / a.maxSpeed), action, dir, time: a.animTime };
+    } else {
+      if (act && (act.type === 'touch' || act.type === 'trap')) overlay = { kind: act.type, t: act.t / act.duration, foot: act.dir };
+      if (a.isGK && m.ball.held && m.ball.owner === a) st = 'hold';
+      else if (a.intent.jockey && speed < 4) st = 'jockey';
+      else if (speed > 0.5) st = 'run';
+      else if (a.isGK && Math.hypot(m.ball.x - a.pos.x, m.ball.z - a.pos.z) < 30) st = 'keeperReady';
+    }
+    return { state: st, phase: a.animPhase, speed: Math.min(1, speed / a.maxSpeed), action, dir, time: a.animTime, dt, accelFwd: a.accelFwd, accelLat: a.accelLat,
+      carrying: m.ball.owner === a && !m.ball.held, overlay, kick: act?.type === 'kick' ? act.data?.kind : undefined, style: act?.data?.style };
   }
 
   frame(dt: number, time: number) {
-    const m = this.match;
+    const m = this.match; const al = m.alpha;
     for (const [a, h] of this.humanoids) {
-      h.root.position.set(a.pos.x, 0, a.pos.z);
-      h.root.rotation.y = Math.atan2(a.heading.x, a.heading.z);
-      h.animate(this.animFor(a, m));
+      const x = a.prevPos.x + (a.pos.x - a.prevPos.x) * al, z = a.prevPos.z + (a.pos.z - a.prevPos.z) * al;
+      h.root.position.set(x, 0, z);
+      const ang = lerpAngle(a.prevHeadingAngle, Math.atan2(a.heading.z, a.heading.x), al);
+      h.root.rotation.y = Math.atan2(Math.cos(ang), Math.sin(ang));
+      h.animate(this.animFor(a, m, dt));
       const sel = a === m.controlled && m.humanTeam !== null && !this.cinematic;
       h.setSelected(sel, m.autopilot ? 0xf7c948 : 0x19f5a4);
     }
     const b = m.ball;
-    this.ball.position.set(b.x, b.y, b.z);
-    const hs = Math.hypot(b.vx, b.vz);
-    if (hs > 0.05) {
-      const axis = new THREE.Vector3(b.vz / hs, 0, -b.vx / hs);
-      const q = new THREE.Quaternion().setFromAxisAngle(axis, (hs / b.radius) * dt);
-      this.ballQuat.premultiply(q);
-      this.ball.quaternion.copy(this.ballQuat);
-    }
-    this.ballShadow.position.set(b.x, 0.015, b.z);
-    const sh = Math.max(0.3, 1 - (b.y - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
+    const bx = b.px + (b.x - b.px) * al, by = b.py + (b.y - b.py) * al, bz = b.pz + (b.z - b.pz) * al;
+    this.ball.position.set(bx, by, bz);
+    // Spin the ball with its real angular velocity.
+    const wl = Math.hypot(b.wx, b.wy, b.wz);
+    if (wl > 0.01) { const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(b.wx / wl, b.wy / wl, b.wz / wl), wl * dt); this.ball.quaternion.premultiply(q); }
+    this.ballShadow.position.set(bx, 0.015, bz);
+    const sh = Math.max(0.3, 1 - (by - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.35 * sh;
-    // camera
-    const target = new THREE.Vector3(b.x, b.y, b.z);
-    const lead = b.owner ? new THREE.Vector3(b.owner.heading.x, 0, b.owner.heading.z) : new THREE.Vector3(b.vx, 0, b.vz).normalize();
-    if (m.phase === 'goal' && m.lastScorer) {
+
+    // Camera: ball-driven broadcast framing, biased toward the direction of play of the team in possession.
+    const target = new THREE.Vector3(bx, by, bz);
+    const owner = b.owner;
+    const playDir = owner ? m.teams[owner.team].attackDir * (owner.isGK ? 0.4 : 1) : 0;
+    const lead = new THREE.Vector3(playDir, 0, 0);
+    if (m.phase === 'goal') { this.goalCamT += dt; this.wasGoal = true; } else if (this.wasGoal) { this.wasGoal = false; this.goalCamT = 0; this.rig.softBlend(1.4); }
+    if (m.phase === 'goal' && m.lastScorer && this.goalCamT > 0.9 && !this.cinematic) {
       const s = m.lastScorer; const sp = new THREE.Vector3(s.pos.x, 1.2, s.pos.z);
-      const cam = sp.clone().add(new THREE.Vector3(-s.heading.x * 5, 1.4, -s.heading.z * 5 - 2));
-      this.rig.moveTo(dt, cam, sp, 3);
-    } else if (this.cinematic) this.rig.cinematic(dt, target, lead, time);
+      const cam = sp.clone().add(new THREE.Vector3(-s.heading.x * 5.5, 1.6, -s.heading.z * 5.5 - 2));
+      this.rig.moveTo(dt, cam, sp, 0.9);
+    } else if (this.cinematic) this.rig.cinematic(dt, target, new THREE.Vector3(b.vx, 0, b.vz).normalize(), time);
     else this.rig.update(dt, target, lead, time);
     // controls follow the camera so left/right/up/down always match the screen
-    this.match.controlBasis = groundBasis(this.stage.camera);
-    // shadow frustum follows the action
+    m.controlBasis = groundBasis(this.stage.camera);
     this.sun.position.set(target.x - 40, 70, target.z - 50); this.sun.target.position.set(target.x, 0, target.z); this.sun.target.updateMatrixWorld();
     this.stadium.update(dt, time);
-    if (this.goalFlash > 0) this.goalFlash -= dt;
+    this.weather.update(dt, this.stage.camera.position, time);
   }
 
   dispose() {

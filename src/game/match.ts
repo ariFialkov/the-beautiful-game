@@ -720,10 +720,10 @@ export class Match {
         if (b.speed3() > 6 && b.lastTouchTeam !== a.team) { this.keeperContact(a, this.mods.keeper[a.team] === 'wall'); return; }
         b.vx = b.vy = b.vz = 0; b.held = true; b.owner = a; a.keeperHold = 0; b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; return;
       }
+      // During a scripted goal window the defending side can misread the ball (it runs under the foot, over the head).
+      if (this.lapses(a)) continue;
       // Headers: ball at head height, close to the head.
       if (canPlay && !a.isGK && b.y > 1.25 && b.y < 2.45 && dh < 0.6 && b.vy < 3) { this.header(a); return; }
-      // During a scripted goal window the defending side can misread the ball (it runs under the foot).
-      if (this.lapses(a)) continue;
       // Foot/body control
       const footD = v2.dist(v2.add(a.pos, v2.scale(a.heading, 0.3)), bp);
       if (canPlay && b.y < 1.2 && footD < 0.7 && footD < bestD) { best = a; bestD = footD; continue; }

@@ -11,6 +11,7 @@ export class Stadium {
   private crowdPhase: Float32Array | null = null;
   private excitement = 0;
   readonly lights: THREE.Group = new THREE.Group();
+  pitchMaterial!: THREE.MeshLambertMaterial;
 
   constructor(public spec: PitchSpec, home: Team, away: Team, public night: boolean, lowDetail: boolean) {
     const { length: L, width: W } = spec;
@@ -20,7 +21,8 @@ export class Stadium {
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(L + 30, W + 30), new THREE.MeshLambertMaterial({ color: spec.futsal ? 0x1c2a44 : 0x2a7a37 }));
     apron.rotation.x = -Math.PI / 2; apron.position.y = -0.02; apron.receiveShadow = true;
     this.group.add(apron);
-    const pitch = new THREE.Mesh(new THREE.PlaneGeometry(L, W), new THREE.MeshLambertMaterial({ map: pitchTexture(L, W, spec.futsal) }));
+    this.pitchMaterial = new THREE.MeshLambertMaterial({ map: pitchTexture(L, W, spec.futsal) });
+    const pitch = new THREE.Mesh(new THREE.PlaneGeometry(L, W), this.pitchMaterial);
     pitch.rotation.x = -Math.PI / 2; pitch.position.y = 0; pitch.receiveShadow = true;
     this.group.add(pitch);
 

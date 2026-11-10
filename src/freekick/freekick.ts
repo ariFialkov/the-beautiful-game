@@ -376,7 +376,7 @@ export class FreeKickGame {
     idle.animate({ state: 'idle', phase: 0, speed: 0, action: 0, dir: 1, time });
     const ks = this.keeperState;
     keeper.root.position.set(ks.x, 0, ks.z); keeper.root.rotation.y = -Math.PI / 2;
-    if (ks.diveT >= 0) keeper.animate({ state: 'dive', phase: 0, speed: 0, action: Math.min(1, ks.diveT / 0.7), dir: ks.save ? (ks.diveTarget.z - ks.z >= 0 ? 1 : -1) : ks.diveDir, time });
+    if (ks.diveT >= 0) keeper.animate({ state: 'dive', phase: 0, speed: 0, action: Math.min(1, ks.diveT / 0.7), dir: -(ks.save ? (ks.diveTarget.z - ks.z >= 0 ? 1 : -1) : ks.diveDir), time, dt }); // keeper faces -x, so +z is his left
     else keeper.animate({ state: 'keeperReady', phase: 0, speed: 0, action: 0, dir: 1, time });
     for (const w of wall) { const jumpH = this.wallJump > 0 ? Math.sin(Math.min(Math.PI, this.wallJump * 5)) * 0.45 : 0; w.root.position.y = jumpH; w.animate({ state: 'idle', phase: 0, speed: 0, action: 0, dir: 1, time }); }
     // aim marker

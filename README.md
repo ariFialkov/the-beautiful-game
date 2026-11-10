@@ -51,7 +51,20 @@ Paytables live in `shared/paytable.ts`. Each mode has a fixed *shape* of paying 
 3. **The director** (`src/game/director.ts`) enforces it. Around each scripted goal a window opens for that side only: the attacking side's bots get sharper and quicker, the defending keeper becomes beatable, tackles favour the attackers, and if the goal still has not come the shot in flight is steered into the net. Between windows *no* goal is allowed: keepers are walls and anything that would cross the line hits the woodwork. The human can play as well or as badly as they like — the score at full time is always the scripted one. If the human stalls, an auto-pilot takes over the controlled player; a hard failsafe awards any remaining goals only after an extended stoppage time.
 4. **Free Kick** is turn-based with the player kicking first. The server pre-computes a reactive decision tree per round (`FreeKickRoundPlan`): what the bot does if the player scores, what it does if the player misses, the bot's shot style and miss style, whether the opposing keeper is guaranteed to stop the player this round, and whether the player's shot is quietly steered in. Losing scripts let the bot miss early kicks for suspense but end on a round where the keeper is a wall; winning scripts end on a round where the player's shot goes in and the bot misses.
 
+The director never teleports the ball or fakes a result on screen. It works through the same physics the players do:
+- **Goal windows:** around each scheduled goal, the scoring side gets sharper first touches, passing and pace. Defenders on the other side start to misread balls and hold off tackles, and that keeper becomes beatable.
+- **Overdue goals:** if a goal is late, the shot in flight is guided toward its target.
+- **Unscheduled goals:** a shot that would go in is bent onto the post, wide or over the bar before it reaches the line, using the same path prediction the keepers use.
+
 Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leaving a match early settles at the scripted result. Pending rounds are auto-settled when the next round starts.
+
+## Physics and conditions
+
+- **Ball:** a full 3D model with aerodynamic drag, including the drag crisis that makes a hard-struck ball fly further. Spin curls the ball in the air (Magnus effect), topspin dips, and backspin floats. On landing, friction couples spin and speed, so a backspun ball checks and a topspun one runs on. The posts, crossbar and net are solid.
+- **Conditions:** Dry, Firm, Rain, Snow and the futsal Indoor court each change bounce, skid, rolling distance and player grip. Pick them in match setup, or leave it on Random. Rain and snow are drawn on screen, and snow matches use an orange ball.
+- **Dribbling:** the ball is never glued to a player's foot. Each touch pushes it ahead, further when sprinting and less precisely for weaker dribblers, and the player has to run onto it again. Passes and shots are taken when the ball is in reach.
+- **Tackling:** tackles are aimed at the ball's position. Win the ball cleanly and it's yours; catch the man's legs first and it's a foul, which gives a free kick, or a penalty in the box, and sometimes a yellow card. Committing to a tackle has a recovery time, so mashing the button doesn't work.
+- **Camera:** the broadcast camera follows a critically damped focus point driven by the ball. It leans toward the attacking direction of the team in possession and blends between shots without shake.
 
 ## Controls
 
@@ -60,7 +73,7 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 | Move | WASD / Arrows | Left stick / D-pad | Left joystick |
 | Sprint | Shift | R2 / RT | Sprint |
 | Pass · Contain (defending) | Space | ✕ / A | Pass |
-| Shoot · Standing tackle | Z | ○ / B | Shoot |
+| Shoot · Standing tackle at the ball | Z | ○ / B | Shoot |
 | Through ball · Slide tackle | X | □ / X | Through |
 | Lob / Cross | C | △ / Y | Cross |
 | Finesse shot (hold) | R | R1 / RB | — |

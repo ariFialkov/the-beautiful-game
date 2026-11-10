@@ -3,7 +3,8 @@ import type { Kit } from '@shared/teams';
 import type { PlayerCard } from '@shared/types';
 import { shirtBackTexture, shirtTexture } from './kits';
 
-export type AnimState = 'idle' | 'run' | 'kick' | 'tackle' | 'slide' | 'dive' | 'celebrate' | 'fallen' | 'juggle' | 'keeperReady' | 'throw';
+export type AnimState = 'idle' | 'run' | 'jockey' | 'kick' | 'tackle' | 'slide' | 'dive' | 'fallen' | 'stumble' | 'header' | 'celebrate' | 'fallen'
+  | 'juggle' | 'keeperReady' | 'throw' | 'hold';
 
 export interface AnimParams {
   state: AnimState;
@@ -13,11 +14,32 @@ export interface AnimParams {
   speed: number;
   /** Progress of a one-shot action (kick, dive, slide), 0..1. */
   action: number;
-  /** -1 left, +1 right for dives/tackles. */
+  /** Side for one-sided actions: +1 = the player's right (kicking foot, dive direction). */
   dir: number;
   /** Global time for idle breathing. */
   time: number;
+  /** Frame time, for pose crossfades. */
+  dt?: number;
+  /** Accelerations along / across the facing (m/s²) for forward lean and banking. */
+  accelFwd?: number;
+  accelLat?: number;
+  /** Dribbling: shorter strides, eyes on the ball. */
+  carrying?: boolean;
+  /** One-shot overlay on the legs while running: a dribble touch or a first-touch trap, with progress 0..1. */
+  overlay?: { kind: 'touch' | 'trap'; t: number; foot: number } | null;
+  /** Kick type changes the backlift and follow-through. */
+  kick?: 'pass' | 'through' | 'lob' | 'shoot';
+  /** Celebration variant. */
+  style?: number;
 }
+
+const JOINTS = ['bpy', 'bpz', 'brx', 'bry', 'brz', 'hpy', 'hrx', 'hry', 'hrz', 'trx', 'try', 'trz', 'hdx', 'hdy',
+  'aLx', 'aLy', 'aLz', 'aRx', 'aRy', 'aRz', 'fL', 'fR', 'lLx', 'lLy', 'lLz', 'lRx', 'lRy', 'lRz', 'sL', 'sR'] as const;
+type Joint = typeof JOINTS[number];
+type Pose = Record<Joint, number>;
+const blank = (): Pose => Object.fromEntries(JOINTS.map((j) => [j, 0])) as Pose;
+const ease = (t: number) => t * t * (3 - 2 * t);
+const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 
 const SKIN = ['#f6d3b8', '#e8b48f', '#c98b5e', '#a66a3f', '#7a4a2b', '#4b2e1b'];
 const HAIR = ['#1a1310', '#3d2314', '#6b4a2a', '#b88a4a', '#e8d9b0'];
@@ -119,107 +141,193 @@ export class Humanoid {
   setSelected(on: boolean, color = 0x19f5a4) { this.selectRing.visible = on; (this.selectRing.material as THREE.MeshBasicMaterial).color.setHex(color); }
   setShadowsReal(on: boolean) { this.shadow.visible = !on; this.root.traverse((o) => { if ((o as THREE.Mesh).isMesh && o !== this.shadow && o !== this.selectRing) o.castShadow = on; }); }
 
-  /** Pose all joints for the current animation. */
-  animate(p: AnimParams) {
-    const { state, phase, speed, action, dir, time } = p;
-    const s = Math.sin(phase), c = Math.cos(phase);
-    // reset
-    this.body.position.set(0, 0, 0); this.body.rotation.set(0, 0, 0);
-    this.hips.rotation.set(0, 0, 0); this.torso.rotation.set(0, 0, 0); this.head.rotation.set(0, 0, 0);
-    this.armL.rotation.set(0, 0, 0.12); this.armR.rotation.set(0, 0, -0.12); this.foreL.rotation.set(-0.3, 0, 0); this.foreR.rotation.set(-0.3, 0, 0);
-    this.legL.rotation.set(0, 0, 0); this.legR.rotation.set(0, 0, 0); this.shinL.rotation.set(0, 0, 0); this.shinR.rotation.set(0, 0, 0);
-    const breathe = Math.sin(time * 2.2) * 0.01;
+  /* Pose crossfading: when the state changes, the previous pose is captured and faded out. */
+  private cur: Pose = blank();
+  private from: Pose = blank();
+  private target: Pose = blank();
+  private lastState: AnimState | null = null;
+  private fade = 1; private fadeDur = 0.12;
 
-    switch (state) {
+  /** Pose all joints for the current animation, crossfading between states. */
+  animate(p: AnimParams) {
+    const dt = p.dt ?? 1 / 60;
+    if (p.state !== this.lastState) {
+      Object.assign(this.from, this.cur);
+      const soft: AnimState[] = ['fallen', 'slide', 'dive', 'celebrate', 'stumble', 'hold'];
+      this.fadeDur = this.lastState === null ? 0 : soft.includes(p.state) || (this.lastState && soft.includes(this.lastState)) ? 0.22 : 0.12;
+      this.fade = 0; this.lastState = p.state;
+    }
+    this.fade = Math.min(1, this.fade + (this.fadeDur > 0 ? dt / this.fadeDur : 1));
+    const t = this.target; for (const j of JOINTS) t[j] = 0;
+    this.pose(t, p);
+    const w = ease(this.fade);
+    for (const j of JOINTS) this.cur[j] = this.from[j] + (t[j] - this.from[j]) * w;
+    this.apply(this.cur);
+  }
+
+  private apply(c: Pose) {
+    this.body.position.set(0, c.bpy, c.bpz); this.body.rotation.set(c.brx, c.bry, c.brz);
+    this.hips.position.y = 0.95 + c.hpy; this.hips.rotation.set(c.hrx, c.hry, c.hrz);
+    this.torso.rotation.set(c.trx, c.try, c.trz); this.head.rotation.set(c.hdx, c.hdy, 0);
+    this.armL.rotation.set(c.aLx, c.aLy, c.aLz); this.armR.rotation.set(c.aRx, c.aRy, c.aRz);
+    this.foreL.rotation.set(c.fL, 0, 0); this.foreR.rotation.set(c.fR, 0, 0);
+    this.legL.rotation.set(c.lLx, c.lLy, c.lLz); this.legR.rotation.set(c.lRx, c.lRy, c.lRz);
+    this.shinL.rotation.set(c.sL, 0, 0); this.shinR.rotation.set(c.sR, 0, 0);
+  }
+
+  /** Target pose for a state. Note: the "L" limbs sit on the player's right (-x when facing +z). */
+  private pose(o: Pose, p: AnimParams) {
+    const { phase, speed, action: t, time } = p; const dir = p.dir >= 0 ? 1 : -1;
+    const s = Math.sin(phase), c = Math.cos(phase);
+    const breathe = Math.sin(time * 2.2) * 0.01;
+    // limb helpers by side: right = L limbs, left = R limbs
+    const R = { leg: 'lLx', legY: 'lLy', legZ: 'lLz', shin: 'sL', arm: 'aLx', armZ: 'aLz', fore: 'fL' } as const;
+    const Lf = { leg: 'lRx', legY: 'lRy', legZ: 'lRz', shin: 'sR', arm: 'aRx', armZ: 'aRz', fore: 'fR' } as const;
+    const kickSide = dir > 0 ? R : Lf, plantSide = dir > 0 ? Lf : R;
+    o.aLz = 0.12; o.aRz = -0.12; o.fL = -0.3; o.fR = -0.3;
+    const lean = () => {
+      o.brx += clamp((p.accelFwd ?? 0) * 0.022, -0.16, 0.2);
+      o.brz += clamp((p.accelLat ?? 0) * 0.028, -0.32, 0.32);
+    };
+    switch (p.state) {
       case 'idle': {
-        this.torso.rotation.x = 0.04 + breathe; this.hips.position.y = 0.95 + breathe * 0.5;
-        this.armL.rotation.x = Math.sin(time * 1.3) * 0.05; this.armR.rotation.x = -Math.sin(time * 1.1) * 0.05;
-        this.head.rotation.y = Math.sin(time * 0.7) * 0.25;
-        this.legL.rotation.z = 0.04; this.legR.rotation.z = -0.04;
-        break;
-      }
-      case 'keeperReady': {
-        this.torso.rotation.x = 0.35 + breathe; this.hips.position.y = 0.82;
-        this.legL.rotation.x = -0.5; this.legR.rotation.x = -0.5; this.shinL.rotation.x = 0.9; this.shinR.rotation.x = 0.9;
-        this.legL.rotation.z = 0.3; this.legR.rotation.z = -0.3;
-        this.armL.rotation.set(-0.6, 0, 0.9); this.armR.rotation.set(-0.6, 0, -0.9); this.foreL.rotation.x = -1.2; this.foreR.rotation.x = -1.2;
+        o.trx = 0.04 + breathe; o.hpy = breathe * 0.5;
+        o.aLx = Math.sin(time * 1.3) * 0.05; o.aRx = -Math.sin(time * 1.1) * 0.05;
+        o.hdy = Math.sin(time * 0.7) * 0.25; o.lLz = 0.04; o.lRz = -0.04;
+        lean();
         break;
       }
       case 'run': {
-        const amp = 0.45 + speed * 0.65;
-        this.legL.rotation.x = s * amp; this.legR.rotation.x = -s * amp;
-        this.shinL.rotation.x = Math.max(0, -c) * amp * 1.3 + 0.15 * speed; this.shinR.rotation.x = Math.max(0, c) * amp * 1.3 + 0.15 * speed;
-        this.armL.rotation.x = -s * amp * 0.9; this.armR.rotation.x = s * amp * 0.9;
-        this.foreL.rotation.x = -0.9 - speed * 0.6; this.foreR.rotation.x = -0.9 - speed * 0.6;
-        this.torso.rotation.x = 0.1 + speed * 0.22; this.torso.rotation.y = s * 0.08 * speed;
-        this.hips.position.y = 0.95 + Math.abs(c) * 0.03 * speed;
-        this.hips.rotation.y = -s * 0.12;
+        const carry = p.carrying ? 0.85 : 1;
+        const amp = (0.4 + speed * 0.7) * carry;
+        o.lLx = s * amp; o.lRx = -s * amp;
+        o.sL = Math.max(0, -c) * amp * 1.35 + 0.15 * speed; o.sR = Math.max(0, c) * amp * 1.35 + 0.15 * speed;
+        o.aLx = -s * amp * 0.9; o.aRx = s * amp * 0.9;
+        o.fL = -0.9 - speed * 0.6; o.fR = -0.9 - speed * 0.6;
+        o.trx = 0.08 + speed * 0.2 + (p.carrying ? 0.06 : 0); o.try = s * 0.09 * speed;
+        o.hdx = p.carrying ? 0.28 : 0;
+        o.hpy = Math.abs(c) * 0.035 * speed - 0.01 * speed; o.hry = -s * 0.12;
+        lean();
+        break;
+      }
+      case 'jockey': {
+        // low, side-on, short shuffling steps
+        o.hpy = -0.12; o.trx = 0.28; o.hdx = 0.15;
+        o.lLx = -0.35 + s * 0.2; o.lRx = -0.35 - s * 0.2; o.sL = 0.7; o.sR = 0.7;
+        o.lLz = 0.2 + Math.max(0, s) * 0.18; o.lRz = -0.2 - Math.max(0, -s) * 0.18;
+        o.aLx = -0.3; o.aRx = -0.3; o.aLz = 0.45; o.aRz = -0.45; o.fL = -0.8; o.fR = -0.8;
+        lean();
         break;
       }
       case 'kick': {
-        // wind-up (0..0.4) then swing through (0.4..1)
-        const t = action; const kickLeg = dir < 0 ? this.legL : this.legR; const kickShin = dir < 0 ? this.shinL : this.shinR;
-        const plant = dir < 0 ? this.legR : this.legL;
-        const wind = t < 0.4 ? t / 0.4 : 1 - (t - 0.4) / 0.6 * 1.9;
-        kickLeg.rotation.x = wind * 0.9; kickShin.rotation.x = t < 0.4 ? 1.4 * (t / 0.4) : Math.max(0, 1.4 - (t - 0.4) * 5);
-        plant.rotation.x = -0.25; (dir < 0 ? this.shinR : this.shinL).rotation.x = 0.4;
-        this.torso.rotation.x = 0.25 - (t > 0.4 ? (t - 0.4) * 0.5 : 0); this.torso.rotation.z = dir * 0.15 * (t > 0.4 ? 1 : 0);
-        this.armL.rotation.x = dir < 0 ? 0.6 : -0.6; this.armR.rotation.x = dir < 0 ? -0.6 : 0.6; this.armL.rotation.z = 0.6; this.armR.rotation.z = -0.6;
-        this.hips.position.y = 0.93;
+        // run-up plant (0..0.35), strike (0.35..0.55), follow-through
+        const kind = p.kick ?? 'pass';
+        const back = kind === 'shoot' ? 1.15 : kind === 'lob' ? 1.0 : 0.75;
+        const through = kind === 'shoot' ? 1.4 : kind === 'lob' ? 1.25 : 0.8;
+        const wind = t < 0.35 ? ease(t / 0.35) : 1 - ease(Math.min(1, (t - 0.35) / 0.25));
+        const swing = t < 0.35 ? 0 : ease(Math.min(1, (t - 0.35) / 0.3));
+        o[kickSide.leg] = wind * back - swing * through;
+        o[kickSide.shin] = t < 0.35 ? 1.5 * ease(t / 0.35) : Math.max(0, 1.5 * (1 - swing * 1.6));
+        if (kind === 'pass' || kind === 'through') o[kickSide.legY] = -dir * 0.45 * swing; // side-foot
+        o[plantSide.leg] = -0.25; o[plantSide.shin] = 0.45;
+        o.trx = (kind === 'lob' ? -0.05 : 0.22) - swing * (kind === 'shoot' ? 0.1 : 0.25);
+        o.brz = dir * 0.12 * swing; o.try = -dir * 0.25 * (1 - swing) + dir * 0.2 * swing;
+        o[kickSide.arm] = -0.4; o[plantSide.arm] = 0.5; o.aLz = 0.7; o.aRz = -0.7;
+        o.hpy = -0.03;
         break;
       }
-      case 'throw': {
-        const t = action; this.armL.rotation.x = -2.6 + t * 2.4; this.armR.rotation.x = -2.6 + t * 2.4; this.torso.rotation.x = -0.3 + t * 0.6; this.legL.rotation.x = 0.3; this.legR.rotation.x = -0.3; break;
-      }
       case 'tackle': {
-        const t = action; const lunge = Math.sin(t * Math.PI);
-        this.torso.rotation.x = 0.6 * lunge; this.legR.rotation.x = -1.1 * lunge; this.shinR.rotation.x = 0.2; this.legL.rotation.x = 0.6 * lunge; this.shinL.rotation.x = 1.2 * lunge;
-        this.armL.rotation.x = -0.8 * lunge; this.armR.rotation.x = 0.8 * lunge; this.hips.position.y = 0.95 - 0.25 * lunge;
+        // standing poke: lunge the near leg at the ball, then recover
+        const lunge = t < 0.45 ? ease(t / 0.45) : 1 - ease((t - 0.45) / 0.55);
+        o.trx = 0.45 * lunge; o.hpy = -0.22 * lunge;
+        o[kickSide.leg] = -1.25 * lunge; o[kickSide.shin] = 0.15; o[kickSide.legY] = dir * 0.25 * lunge;
+        o[plantSide.leg] = 0.55 * lunge; o[plantSide.shin] = 1.25 * lunge;
+        o.aLx = -0.7 * lunge; o.aRx = 0.7 * lunge; o.aLz = 0.6; o.aRz = -0.6;
         break;
       }
       case 'slide': {
-        const t = Math.min(1, action);
-        this.body.rotation.x = -Math.PI / 2 * 0.75 * Math.min(1, t * 3); this.body.position.y = 0.35 * Math.min(1, t * 3) - 0.15;
-        this.legR.rotation.x = -1.3; this.legL.rotation.x = 0.6; this.shinL.rotation.x = 1.4; this.torso.rotation.x = -0.3;
-        this.armL.rotation.set(-1.5, 0, 0.7); this.armR.rotation.set(0.6, 0, -1.2);
+        const down = ease(Math.min(1, t / 0.18)); const up = t > 0.62 ? ease((t - 0.62) / 0.38) : 0; const k = down * (1 - up);
+        o.brx = -Math.PI / 2 * 0.72 * k; o.bpy = 0.33 * k - 0.15 * k;
+        o[kickSide.leg] = -1.35 * k; o[plantSide.leg] = 0.55 * k; o[plantSide.shin] = 1.45 * k; o.trx = -0.3 * k;
+        o[plantSide.arm] = -1.4 * k; o[kickSide.arm] = 0.5 * k; o.aLz = 0.7 * k + 0.12; o.aRz = -1.1 * k - 0.12;
+        o.hpy = -0.3 * up * (1 - up);
         break;
       }
       case 'dive': {
-        const t = Math.min(1, action);
-        const k = Math.sin(Math.min(1, t * 1.5) * Math.PI / 2);
-        this.body.rotation.z = -dir * 1.35 * k; this.body.rotation.y = -dir * 0.3 * k; this.body.position.y = 0.35 * k * (1 - t * 0.6);
-        this.armL.rotation.set(0, 0, 2.8 * (dir < 0 ? k : 0.3)); this.armR.rotation.set(0, 0, -2.8 * (dir > 0 ? k : 0.3));
-        this.legL.rotation.x = -0.5 * k; this.legR.rotation.x = 0.4 * k; this.shinL.rotation.x = 0.6 * k; this.torso.rotation.x = 0.2 * k;
-        this.hips.position.y = 0.95 - 0.5 * k;
+        const k = Math.sin(Math.min(1, t * 1.6) * Math.PI / 2); const rise = t > 0.75 ? ease((t - 0.75) / 0.25) : 0; const kk = k * (1 - rise);
+        o.brz = dir * 1.35 * kk; o.bry = dir * 0.3 * kk; o.bpy = 0.35 * kk * (1 - t * 0.5);
+        o.aLz = dir > 0 ? 2.8 * kk : 0.4; o.aRz = dir > 0 ? -0.4 : -2.8 * kk;
+        o.lLx = -0.45 * kk; o.lRx = 0.35 * kk; o.sL = 0.6 * kk; o.trx = 0.15 * kk; o.hpy = -0.45 * kk;
         break;
       }
       case 'fallen': {
-        this.body.rotation.x = -Math.PI / 2 * 0.9; this.body.position.y = 0.25; this.body.position.z = -0.3;
-        this.armL.rotation.set(-1.2, 0, 0.5); this.armR.rotation.set(-1.2, 0, -0.5); this.legL.rotation.x = 0.2; this.legR.rotation.x = -0.1;
+        const down = ease(Math.min(1, t / 0.2)); const up = t > 0.7 ? ease((t - 0.7) / 0.3) : 0; const k = down * (1 - up);
+        o.brx = Math.PI / 2 * 0.88 * k; o.bpy = 0.24 * k; o.bpz = 0.35 * k;
+        o.aLx = -2.2 * k; o.aRx = -2.0 * k; o.aLz = 0.5; o.aRz = -0.5; o.lLx = 0.2 * k; o.lRx = -0.3 * k; o.sR = 0.6 * k;
+        break;
+      }
+      case 'stumble': {
+        const k = Math.sin(Math.min(1, t) * Math.PI);
+        o.brx = 0.45 * k; o.trx = 0.3 * k; o.aLx = -1.2 * k; o.aRx = -0.4 * k; o.aLz = 0.9 * k; o.aRz = -0.9 * k;
+        o.lLx = -0.6 * k; o.lRx = 0.5 * k; o.sR = 1.0 * k; o.hpy = -0.15 * k;
+        break;
+      }
+      case 'header': {
+        const j = Math.sin(Math.min(1, t) * Math.PI);
+        o.bpy = 0.42 * j; o.trx = t < 0.4 ? -0.35 * ease(t / 0.4) : -0.35 + 0.8 * ease(Math.min(1, (t - 0.4) / 0.25));
+        o.hdx = o.trx * 0.6; o.aLx = -1.4 * j; o.aRx = -1.4 * j; o.aLz = 0.9; o.aRz = -0.9;
+        o.lLx = -0.4 * j; o.lRx = 0.2 * j; o.sL = 0.9 * j; o.sR = 0.6 * j;
         break;
       }
       case 'celebrate': {
-        const t = time * 6;
-        this.armL.rotation.set(-2.6 + Math.sin(t) * 0.3, 0, 0.5); this.armR.rotation.set(-2.6 + Math.cos(t) * 0.3, 0, -0.5);
-        this.foreL.rotation.x = -0.4; this.foreR.rotation.x = -0.4;
-        const hop = Math.abs(Math.sin(t * 0.5));
-        this.body.position.y = hop * 0.18; this.legL.rotation.x = -hop * 0.4; this.legR.rotation.x = -hop * 0.4; this.shinL.rotation.x = hop * 0.8; this.shinR.rotation.x = hop * 0.8;
-        this.torso.rotation.x = -0.15; this.head.rotation.x = -0.3;
+        const style = p.style ?? 0; const tt = time * 6;
+        if (style === 1) {
+          // aeroplane: arms out, running cycle
+          const amp = 0.8; o.lLx = s * amp; o.lRx = -s * amp; o.sL = Math.max(0, -c) * 1.1; o.sR = Math.max(0, c) * 1.1;
+          o.aLz = 1.5; o.aRz = -1.5; o.brz = Math.sin(time * 2) * 0.25; o.trx = 0.15; o.hdx = -0.2;
+        } else if (style === 2) {
+          // knee slide, arms raised
+          o.bpy = -0.42; o.lLx = -1.4; o.lRx = -1.4; o.sL = 2.3; o.sR = 2.3; o.trx = -0.35; o.hdx = -0.45;
+          o.aLx = -2.7; o.aRx = -2.7; o.aLz = 0.4; o.aRz = -0.4; o.fL = -0.2; o.fR = -0.2;
+        } else {
+          const hop = Math.abs(Math.sin(tt * 0.5));
+          o.aLx = -2.6 + Math.sin(tt) * 0.3; o.aRx = -2.6 + Math.cos(tt) * 0.3; o.aLz = 0.5; o.aRz = -0.5; o.fL = -0.4; o.fR = -0.4;
+          o.bpy = hop * 0.18; o.lLx = -hop * 0.4; o.lRx = -hop * 0.4; o.sL = hop * 0.8; o.sR = hop * 0.8; o.trx = -0.15; o.hdx = -0.3;
+        }
         break;
       }
       case 'juggle': {
-        // Ball-juggling idle for menus: alternate knees with a bounce.
-        const t = time * 3.2; const k = Math.sin(t);
-        const up = k > 0 ? this.legR : this.legL; const other = k > 0 ? this.legL : this.legR;
-        const upShin = k > 0 ? this.shinR : this.shinL;
-        up.rotation.x = -Math.abs(k) * 1.5; upShin.rotation.x = Math.abs(k) * 1.1; other.rotation.x = 0.05;
-        this.torso.rotation.x = 0.12 + Math.abs(k) * 0.08; this.hips.position.y = 0.95 - Math.abs(k) * 0.06;
-        this.armL.rotation.set(-0.3, 0, 0.5 + Math.abs(k) * 0.2); this.armR.rotation.set(-0.3, 0, -0.5 - Math.abs(k) * 0.2); this.foreL.rotation.x = -1; this.foreR.rotation.x = -1;
-        this.head.rotation.x = 0.35;
+        const tj = time * 3.2; const k = Math.sin(tj);
+        const up = k > 0 ? R : Lf; const other = k > 0 ? Lf : R;
+        o[up.leg] = -Math.abs(k) * 1.5; o[up.shin] = Math.abs(k) * 1.1; o[other.leg] = 0.05;
+        o.trx = 0.12 + Math.abs(k) * 0.08; o.hpy = -Math.abs(k) * 0.06;
+        o.aLx = -0.3; o.aRx = -0.3; o.aLz = 0.5 + Math.abs(k) * 0.2; o.aRz = -0.5 - Math.abs(k) * 0.2; o.fL = -1; o.fR = -1;
+        o.hdx = 0.35;
+        break;
+      }
+      case 'keeperReady': {
+        o.trx = 0.35 + breathe; o.hpy = -0.13;
+        o.lLx = -0.5; o.lRx = -0.5; o.sL = 0.9; o.sR = 0.9; o.lLz = 0.3; o.lRz = -0.3;
+        o.aLx = -0.6; o.aRx = -0.6; o.aLz = 0.9; o.aRz = -0.9; o.fL = -1.2; o.fR = -1.2;
+        lean();
+        break;
+      }
+      case 'hold': {
+        o.trx = 0.1; o.aLx = -1.1; o.aRx = -1.1; o.aLz = -0.25; o.aRz = 0.25; o.fL = -1.3; o.fR = -1.3;
+        break;
+      }
+      case 'throw': {
+        o.aLx = -2.6 + t * 2.4; o.aRx = -2.6 + t * 2.4; o.trx = -0.3 + t * 0.6; o.lLx = 0.3; o.lRx = -0.3;
         break;
       }
     }
-    this.hips.position.y *= 1; // scaled by body
+    // Overlays on the legs (dribble touches and traps) without breaking the run cycle.
+    const ov = p.overlay;
+    if (ov && (p.state === 'run' || p.state === 'idle' || p.state === 'jockey')) {
+      const side = ov.foot >= 0 ? R : Lf; const k = Math.sin(Math.min(1, ov.t) * Math.PI);
+      if (ov.kind === 'touch') { o[side.leg] = o[side.leg] * (1 - k) - 0.55 * k; o[side.shin] = o[side.shin] * (1 - k) + 0.25 * k; o[side.legY] = -ov.foot * 0.3 * k; }
+      else { o[side.leg] = o[side.leg] * (1 - k) - 0.85 * k; o[side.shin] = 1.0 * k; o.trx += 0.08 * k; o.hdx = 0.35 * k; }
+    }
   }
 }
 
