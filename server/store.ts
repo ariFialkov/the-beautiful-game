@@ -1,39 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { FutClub, Wallet, RoundScript } from '../shared/types';
 
-export interface StoredRound {
-  id: string;
-  playerId: string;
-  mode: string;
-  stake: number;
-  clientSeed: string;
-  serverSeed: string;
-  serverSeedHash: string;
-  nonce: number;
-  tier: string;
-  multiplier: number;
-  script: RoundScript;
-  createdAt: number;
-  settledAt: number | null;
-  payout: number;
-}
-
-export interface PlayerRecord {
-  wallet: Wallet;
-  club: FutClub;
-  nonce: number;
-  nextServerSeed: string;
-  rounds: Record<string, StoredRound>;
-}
+import type { PlayerRecord, StoreLike } from '../shared/engine';
+export type { PlayerRecord };
 
 interface StoreShape { players: Record<string, PlayerRecord>; }
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data');
 const file = path.join(dir, 'store.json');
 
-export class Store {
+export class Store implements StoreLike {
   private data: StoreShape = { players: {} };
   private timer: NodeJS.Timeout | null = null;
 

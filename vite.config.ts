@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
+  base: process.env.BASE_PATH ?? '/',
   resolve: {
     alias: { '@shared': fileURLToPath(new URL('./shared', import.meta.url)) },
   },

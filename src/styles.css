@@ -37,6 +37,7 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.02em; margin: 0
 .brand { font-family: var(--font-display); font-size: 18px; letter-spacing: 0.08em; text-transform: uppercase; }
 .brand b { color: var(--accent); }
 .wallet { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid var(--line); font-weight: 700; font-size: 14px; }
+.wallet .demo { font-size: 9px; letter-spacing: 0.12em; padding: 2px 6px; border-radius: 4px; background: var(--gold); color: #2a1d00; margin-left: 4px; }
 .wallet .coin { width: 16px; height: 16px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff2b0, var(--gold) 60%, #b8860b); box-shadow: 0 0 10px rgba(247, 201, 72, 0.5); }
 
 /* ---------- buttons ---------- */

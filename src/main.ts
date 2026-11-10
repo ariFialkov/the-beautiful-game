@@ -50,16 +50,22 @@ async function boot() {
   window.addEventListener('pointerdown', unlock, { once: true }); window.addEventListener('keydown', unlock, { once: true });
   audio.setEnabled(state.settings.sound);
 
-  // Server config + wallet (the app still opens offline; betting needs the outcome server).
-  try {
-    const [cfg, w] = await Promise.all([api.config(), api.wallet()]);
-    state.config = cfg; state.wallet = w.wallet; state.nextServerSeedHash = w.nextServerSeedHash; state.offline = false;
-  } catch (e) { console.warn('[tbg] outcome server unreachable', e); state.offline = true; }
+  // Outcome server config + wallet. On static hosting (or when the server is unreachable) the
+  // identical engine runs in the browser as a demo: outcomes are still RTP-driven and provably fair,
+  // but the seeds live on this device.
+  state.local = import.meta.env.VITE_LOCAL_ENGINE === 'true';
+  const load = async () => { const [cfg, w] = await Promise.all([api.config(), api.wallet()]); state.config = cfg; state.wallet = w.wallet; state.nextServerSeedHash = w.nextServerSeedHash; state.offline = false; };
+  try { await load(); }
+  catch (e) {
+    if (!state.local) { console.warn('[tbg] outcome server unreachable, switching to the in-browser engine', e); state.local = true; try { await load(); } catch (e2) { console.warn(e2); state.offline = true; } }
+    else { console.warn(e); state.offline = true; }
+  }
   state.emit();
 
   // PWA service worker
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('sw', e)));
+    const reg = () => navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch((e) => console.warn('sw', e));
+    if (document.readyState === 'complete') reg(); else window.addEventListener('load', reg);
   }
   loading.remove();
   app.router.go('home');

@@ -57,7 +57,7 @@ export class SettingsScreen implements Screen {
     grid.appendChild(fair);
 
     const admin = el('div', 'panel col'); admin.appendChild(el('div', 'label', 'Operator · RTP'));
-    admin.innerHTML += `<p class="small muted">Set the return-to-player per mode. Requires the server's admin token (ADMIN_TOKEN env, default <kbd>change-me</kbd>).</p>`;
+    admin.innerHTML += state.local ? `<p class="small muted">Demo mode: outcomes are generated on this device, so you can set the RTP freely here (no token needed).</p>` : `<p class="small muted">Set the return-to-player per mode. Requires the server's admin token (ADMIN_TOKEN env, default <kbd>change-me</kbd>).</p>`;
     const tokenIn = el('input'); tokenIn.type = 'password'; tokenIn.placeholder = 'Admin token';
     const modeSel = el('select'); modeSel.innerHTML = `<option value="all">All modes</option>` + (['kickoff', 'futsal', 'fut', 'freekick'] as GameMode[]).map((m) => `<option value="${m}">${m}</option>`).join('');
     const rtpIn = el('input'); rtpIn.type = 'number'; rtpIn.step = '0.005'; rtpIn.min = '0.5'; rtpIn.max = '0.995'; rtpIn.placeholder = 'RTP e.g. 0.96';

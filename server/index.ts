@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Engine, DEFAULT_CONFIG } from './engine';
+import { createEngine, DEFAULT_CONFIG } from './engine';
 import type { GameMode, PackType, ServerConfigPublic } from '../shared/types';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -12,7 +12,7 @@ const MODES: GameMode[] = ['kickoff', 'futsal', 'fut', 'freekick'];
 const config = structuredClone(DEFAULT_CONFIG);
 if (process.env.RTP) for (const m of MODES) config.rtp[m] = Number(process.env.RTP);
 for (const m of MODES) { const v = process.env[`RTP_${m.toUpperCase()}`]; if (v) config.rtp[m] = Number(v); }
-const engine = new Engine(config);
+const engine = createEngine(config);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = [path.join(here, '..', 'dist'), path.join(here, 'dist'), path.join(process.cwd(), 'dist')].find((d) => fs.existsSync(path.join(d, 'index.html')));
@@ -44,14 +44,14 @@ const server = http.createServer(async (req, res) => {
           const body: ServerConfigPublic = { modes: Object.fromEntries(MODES.map((m) => [m, engine.paytable(m)])) as ServerConfigPublic['modes'], minStake: config.minStake, maxStake: config.maxStake, stakes: config.stakes, packs: config.packs };
           return json(res, 200, body);
         }
-        case 'GET /api/wallet': { const id = pid(url.searchParams.get('playerId')); return json(res, 200, { wallet: engine.wallet(id), nextServerSeedHash: engine.nextSeedHash(id) }); }
+        case 'GET /api/wallet': { const id = pid(url.searchParams.get('playerId')); return json(res, 200, { wallet: engine.wallet(id), nextServerSeedHash: await engine.nextSeedHash(id) }); }
         case 'GET /api/history': { const id = pid(url.searchParams.get('playerId')); return json(res, 200, { rounds: engine.history(id) }); }
         case 'POST /api/round/start': {
           const b = await readBody(req);
           if (!MODES.includes(b.mode)) throw new Error('invalid mode');
-          return json(res, 200, engine.startRound(pid(b.playerId), b.mode, Number(b.stake), String(b.clientSeed ?? ''), b.homeTeamId, b.awayTeamId));
+          return json(res, 200, await engine.startRound(pid(b.playerId), b.mode, Number(b.stake), String(b.clientSeed ?? ''), b.homeTeamId, b.awayTeamId));
         }
-        case 'POST /api/round/settle': { const b = await readBody(req); return json(res, 200, engine.settle(pid(b.playerId), String(b.roundId))); }
+        case 'POST /api/round/settle': { const b = await readBody(req); return json(res, 200, await engine.settle(pid(b.playerId), String(b.roundId))); }
         case 'GET /api/fut/club': { const id = pid(url.searchParams.get('playerId')); return json(res, 200, { club: engine.club(id), wallet: engine.wallet(id) }); }
         case 'POST /api/fut/squad': { const b = await readBody(req); return json(res, 200, { club: engine.saveSquad(pid(b.playerId), b.squad ?? {}, b.clubName) }); }
         case 'POST /api/fut/pack': { const b = await readBody(req); return json(res, 200, engine.openPack(pid(b.playerId), b.type as PackType)); }

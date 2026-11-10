@@ -8,6 +8,7 @@ import { TEAMS, rosterOf, startingXI, type Team } from '@shared/teams';
 import { crestSvg } from '../ui/crest';
 import { pickKits } from './setup';
 import { focus } from '../ui/focus';
+import { state } from '../app/state';
 
 /** Main menu over a cinematic league-highlights tape (an AI vs AI match with cuts and a broadcast filter). */
 export class HomeScreen implements Screen {
@@ -43,7 +44,7 @@ export class HomeScreen implements Screen {
       c.addEventListener('click', go); menu.appendChild(c);
     });
     screen.appendChild(menu);
-    const foot = el('div', 'home-footer small muted', `Works offline as an app · Gamepad, keyboard & touch supported · Outcomes are provably fair`);
+    const foot = el('div', 'home-footer small muted', state.local ? `Demo build: the outcome engine runs in your browser (credits reset if you clear site data) · Gamepad, keyboard & touch supported` : `Works offline as an app · Gamepad, keyboard & touch supported · Outcomes are provably fair`);
     screen.appendChild(foot);
     root.appendChild(screen);
     focus.setRoot(screen); focus.onBack = null;
