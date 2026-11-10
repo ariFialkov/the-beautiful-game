@@ -1,0 +1,95 @@
+import type { PlayerCard, GameMode, ModePaytable } from '@shared/types';
+import { TEAMS, LEAGUES, TEAM_BY_ID, type Team } from '@shared/teams';
+import { crestSvg } from './crest';
+import { state, fmt } from '../app/state';
+import { input } from '../input/input';
+
+export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e;
+}
+export function button(label: string, cls = '', onClick?: () => void): HTMLButtonElement {
+  const b = el('button', `btn ${cls}`, label); b.setAttribute('data-focus', ''); if (onClick) b.addEventListener('click', onClick); return b;
+}
+
+export function walletBadge(): HTMLElement {
+  const w = el('div', 'wallet', `<span class="coin"></span><span class="amt">…</span>`);
+  const upd = () => { w.querySelector('.amt')!.textContent = state.wallet ? `${fmt(state.wallet.balance)} ${state.wallet.currency}` : (state.offline ? 'offline' : '…'); };
+  upd(); const off = state.subscribe(upd); (w as any)._off = off;
+  return w;
+}
+
+export function topbar(title: string, onBack?: () => void): HTMLElement {
+  const bar = el('div', 'topbar');
+  if (onBack) bar.appendChild(button('‹ Back', 'small ghost', onBack));
+  bar.appendChild(el('div', 'brand', `${title}`));
+  bar.appendChild(el('div', 'spacer'));
+  bar.appendChild(walletBadge());
+  return bar;
+}
+
+export function teamCard(team: Team, selected: boolean, onClick: () => void): HTMLElement {
+  const c = el('button', `team-card${selected ? ' selected' : ''}`);
+  c.setAttribute('data-focus', '');
+  c.innerHTML = `${crestSvg(team, 56)}<div class="name">${team.name}</div><div class="meta">${team.league}</div><span class="rating ${team.rating >= 84 ? 'hi' : ''}">${team.rating}</span>`;
+  c.addEventListener('click', onClick);
+  return c;
+}
+
+/** Team picker with league tabs. */
+export function teamPicker(selectedId: string, onPick: (id: string) => void, exclude?: string): HTMLElement {
+  const wrap = el('div', 'col');
+  let league = TEAM_BY_ID[selectedId]?.league ?? LEAGUES[0];
+  const tabs = el('div', 'league-tabs'); const grid = el('div', 'grid-teams');
+  const render = () => {
+    tabs.innerHTML = '';
+    for (const l of ['All', ...LEAGUES]) { const c = el('button', `chip${l === league ? ' active' : ''}`, l); c.setAttribute('data-focus', ''); c.addEventListener('click', () => { league = l; render(); }); tabs.appendChild(c); }
+    grid.innerHTML = '';
+    for (const t of TEAMS.filter((t) => league === 'All' || t.league === league)) {
+      if (t.id === exclude) continue;
+      grid.appendChild(teamCard(t, t.id === selectedId, () => { selectedId = t.id; onPick(t.id); render(); }));
+    }
+  };
+  render();
+  wrap.append(tabs, grid);
+  return wrap;
+}
+
+export function paytableTable(pt: ModePaytable): HTMLElement {
+  const t = el('table', 'paytable');
+  t.innerHTML = pt.entries.map((e) => `<tr class="${e.tier}"><td>${e.label}</td><td class="muted small">${(e.probability * 100).toFixed(1)}%</td><td>${e.multiplier ? e.multiplier.toFixed(2) + '×' : '—'}</td></tr>`).join('');
+  return t;
+}
+
+/** Stake selector + paytable + start button. */
+export function betPanel(mode: GameMode, onStart: (stake: number) => void, startLabel = 'Kick Off'): { el: HTMLElement; setError: (m: string) => void; setBusy: (b: boolean) => void } {
+  const cfg = state.config;
+  const stakes = cfg?.stakes ?? [10, 25, 50, 100, 250, 500];
+  const p = el('div', 'panel col');
+  p.appendChild(el('div', 'label', 'Your stake'));
+  const stakesEl = el('div', 'stakes');
+  const renderStakes = () => { stakesEl.innerHTML = ''; for (const s of stakes) { const b = el('button', `stake${s === state.stake ? ' active' : ''}`, fmt(s)); b.setAttribute('data-focus', ''); b.addEventListener('click', () => { state.stake = s; state.saveTeams(); renderStakes(); }); stakesEl.appendChild(b); } };
+  renderStakes();
+  p.appendChild(stakesEl);
+  if (cfg) { p.appendChild(el('div', 'label', `Pays · RTP ${(cfg.modes[mode].rtp * 100).toFixed(1)}%`)); p.appendChild(paytableTable(cfg.modes[mode])); }
+  const err = el('div', 'error'); p.appendChild(err);
+  const start = button(startLabel, 'primary big'); start.setAttribute('data-focus', 'default');
+  start.addEventListener('click', () => onStart(state.stake));
+  p.appendChild(start);
+  return { el: p, setError: (m) => { err.textContent = m; }, setBusy: (b) => { start.disabled = b; start.textContent = b ? 'Placing bet…' : startLabel; } };
+}
+
+const SKIN = ['#f6d3b8', '#e8b48f', '#c98b5e', '#a66a3f', '#7a4a2b', '#4b2e1b'];
+export function cardMini(card: PlayerCard | null, opts: { chem?: number; slot?: string; onClick?: () => void; focus?: boolean } = {}): HTMLElement {
+  const c = el('div', `card-mini ${card ? card.rarity : 'empty'}`);
+  if (opts.onClick) { c.addEventListener('click', opts.onClick); c.setAttribute('data-focus', ''); c.setAttribute('role', 'button'); }
+  if (!card) { c.innerHTML = `<div class="p" style="position:static">${opts.slot ?? ''}</div><div class="n">Empty</div>`; return c; }
+  const team = TEAM_BY_ID[card.teamId];
+  const chem = opts.chem;
+  c.innerHTML = `<div class="r">${card.rating}</div><div class="p">${card.position}</div>${chem !== undefined ? `<div class="chem ${chem >= 3 ? 'full' : chem >= 1 ? 'ok' : ''}" title="chemistry"></div>` : ''}<div class="face" style="background:${SKIN[card.look.skin % 6]}"></div><div class="n">${card.shortName}</div><div class="n" style="font-size:8px;opacity:.8">${team?.short ?? ''} · ${card.nationality.slice(0, 3).toUpperCase()}</div>`;
+  return c;
+}
+
+export function controllerHint(): string {
+  const l = input.buttonLabels();
+  return input.lastSource === 'gamepad' ? `${l.pass} Pass · ${l.shoot} Shoot · ${l.through} Through · ${l.lob} Cross · ${l.sprint} Sprint · ${l.switch} Switch` : input.lastSource === 'touch' ? 'Drag left to move · Buttons to pass, shoot, cross' : 'WASD/Arrows move · Space pass · Z shoot · X through · C cross · Shift sprint · Q switch · E slide';
+}

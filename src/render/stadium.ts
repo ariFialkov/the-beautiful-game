@@ -15,6 +15,8 @@ export class Stadium {
   constructor(public spec: PitchSpec, home: Team, away: Team, public night: boolean, lowDetail: boolean) {
     const { length: L, width: W } = spec;
     // Pitch surface + surrounding grass apron
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshLambertMaterial({ color: night ? 0x1a2230 : 0x5c6670 }));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.05; this.group.add(ground);
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(L + 30, W + 30), new THREE.MeshLambertMaterial({ color: spec.futsal ? 0x1c2a44 : 0x2a7a37 }));
     apron.rotation.x = -Math.PI / 2; apron.position.y = -0.02; apron.receiveShadow = true;
     this.group.add(apron);
@@ -84,7 +86,7 @@ export class Stadium {
       standGroup.add(g);
     };
     addStand(L + 10, 0, W / 2 + gap, 0);           // far side
-    addStand(L + 10, 0, -W / 2 - gap, Math.PI);    // near side (camera side)
+    addStand(L + 10, 0, -W / 2 - gap - 7, Math.PI); // near side (camera side, set back so the broadcast camera clears it)
     addStand(W + 10, L / 2 + gap, 0, Math.PI / 2); // right end
     addStand(W + 10, -L / 2 - gap, 0, -Math.PI / 2); // left end
     this.group.add(standGroup);

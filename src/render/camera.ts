@@ -24,10 +24,11 @@ export class CameraRig {
     let desired = new THREE.Vector3(); let desiredLook = new THREE.Vector3();
     switch (this.mode) {
       case 'broadcast': {
-        const tx = THREE.MathUtils.clamp(target.x + lead.x * 6, -L / 2 + 10 * scale, L / 2 - 10 * scale);
+        const tx = THREE.MathUtils.clamp(target.x + lead.x * 5, -L / 2 + 8 * scale, L / 2 - 8 * scale);
         const tz = target.z;
-        desired.set(tx * 0.9, (26 + tz * 0.1) * this.heightMul * (0.55 + 0.45 * scale), -(W / 2 + 34 * scale) * (0.6 + 0.4 * this.heightMul));
-        desiredLook.set(tx, 1.5, THREE.MathUtils.clamp(tz * 0.6, -W / 2, W / 2));
+        const h = this.heightMul;
+        desired.set(tx * 0.93, (14.5 + tz * 0.06) * h * (0.35 + 0.65 * scale), -(W / 2 + 13.5 * scale) * (0.6 + 0.4 * h));
+        desiredLook.set(tx, 0.4, THREE.MathUtils.clamp(tz * 0.5 - 5 * scale, -W / 2, W / 2));
         break;
       }
       case 'low': {

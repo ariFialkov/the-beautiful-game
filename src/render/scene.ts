@@ -13,6 +13,7 @@ export class Stage {
   private raf = 0;
   private last = performance.now();
   private frame: ((dt: number, time: number) => void) | null = null;
+  preFrame: (() => void) | null = null;
   time = 0;
 
   constructor(parent: HTMLElement) {
@@ -22,7 +23,7 @@ export class Stage {
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: this.quality === 'high', powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality === 'high' ? 2 : 1.25));
     this.renderer.shadowMap.enabled = this.quality === 'high';
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
@@ -48,7 +49,7 @@ export class Stage {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // Keep the pitch readable in portrait by widening the vertical FOV.
-    this.camera.fov = this.camera.aspect < 1 ? 62 : this.camera.aspect < 1.5 ? 50 : 42;
+    this.camera.fov = this.camera.aspect < 1 ? 66 : this.camera.aspect < 1.5 ? 54 : 46;
     this.camera.updateProjectionMatrix();
   }
   setScene(scene: THREE.Scene | null, frame: ((dt: number, time: number) => void) | null) {
@@ -60,7 +61,7 @@ export class Stage {
     const now = performance.now();
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now; this.time += dt;
-    try { this.frame?.(dt, this.time); } catch (e) { console.error(e); }
+    try { this.preFrame?.(); this.frame?.(dt, this.time); } catch (e) { console.error(e); }
     if (this.scene) this.renderer.render(this.scene, this.camera);
   };
   dispose() { cancelAnimationFrame(this.raf); }

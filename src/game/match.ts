@@ -42,7 +42,9 @@ export class Match {
   possessionTeam = -1;
   controlled: Agent | null = null;
   director: Director | null = null;
-  mods: Modifiers = FREE_PLAY;
+  mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1] };
+  /** Persistent per-team speed factor (e.g. Ultimate Team chemistry); multiplies the director's modifiers. */
+  teamSpeedBonus: [number, number] = [1, 1];
   charge: { kind: 'shoot' | 'pass'; t: number } | null = null;
   ended = false;
   stoppage = false;
@@ -170,7 +172,7 @@ export class Match {
         const d = v2.sub({ x: this.ball.x, z: this.ball.z }, a.pos); const dl = v2.len(d);
         if (dl < 6) { a.intent.move = v2.scale(v2.norm(d), -1); a.intent.sprint = false; }
       }
-      const mul = this.mods.speedMul[a.team] * (this.phase === 'goal' ? 0.4 : 1);
+      const mul = this.mods.speedMul[a.team] * this.teamSpeedBonus[a.team] * (this.phase === 'goal' ? 0.4 : 1);
       a.update(dt, mul);
       // keep inside the stadium apron
       const lim = { x: this.pitch.length / 2 + 3, z: this.pitch.width / 2 + 3 };
@@ -187,6 +189,8 @@ export class Match {
   }
 
   private lastConceded = 0;
+  lastScorer: Agent | null = null;
+  lastScorerTeam: number | null = null;
 
   private updateClockPhases() {
     if (this.phase !== 'play' && this.phase !== 'restart') return;
@@ -503,6 +507,7 @@ export class Match {
     this.ball.owner = null; for (const a of this.agents) { a.hasBall = false; if (a.action?.type === 'kick') a.action = null; }
     this.ball.vx *= 0.2; this.ball.vz *= 0.2; this.ball.inFlightShot = null;
     if (scorer) { scorer.action = null; scorer.startAction('celebrate', 4); scorer.intent.move = { x: 0, z: 0 }; }
+    this.lastScorer = scorer; this.lastScorerTeam = teamIdx;
     this.emit({ type: 'goal', team: teamIdx, scorer });
   }
 

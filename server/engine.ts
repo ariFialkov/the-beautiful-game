@@ -130,12 +130,12 @@ export class Engine {
   /* ------------------------------ FUT ------------------------------ */
   private starterClub(playerId: string): FutClub {
     // A playable starter squad: pick a balanced XI of bronze/silver players spread across clubs.
-    const pool = allPlayers().filter((c) => c.rating <= 74);
+    const pool = allPlayers().filter((c) => c.rating >= 56 && c.rating <= 70);
     const rng = new Rng(`starter:${playerId}`);
-    const xi = startingXI(rng.shuffle(pool.slice()).slice(0, 120));
     const slots = ['GK', 'RB', 'CB1', 'CB2', 'LB', 'CDM', 'CM1', 'CM2', 'RW', 'ST', 'LW'];
-    const squad: Record<string, string | null> = {};
-    slots.forEach((s, i) => { squad[s] = xi[i]?.id ?? null; });
+    const want = ['GK', 'RB', 'CB', 'CB', 'LB', 'CDM', 'CM', 'CAM', 'RW', 'ST', 'LW'];
+    const squad: Record<string, string | null> = {}; const xi: PlayerCard[] = [];
+    slots.forEach((s, i) => { const cands = pool.filter((c) => c.position === want[i] && !xi.includes(c)); const pick = cands.length ? rng.pick(cands) : rng.pick(pool.filter((c) => !xi.includes(c))); xi.push(pick); squad[s] = pick.id; });
     return { playerId, cards: xi.map((c) => c.id), squad, formation: '4-3-3', clubName: 'My Club' };
   }
 

@@ -31,6 +31,8 @@ export class InputManager {
   aim: Vec2 = { x: 0, y: 0 }; // right stick
   sprint = new Button(); pass = new Button(); shoot = new Button(); through = new Button(); lob = new Button();
   switch = new Button(); slide = new Button(); finesse = new Button(); shield = new Button(); pause = new Button();
+  /** Free-kick curl from touch buttons: -1, 0, 1. */
+  touchCurl = 0;
   gamepadConnected = false;
   gamepadKind: 'xbox' | 'playstation' | 'generic' = 'generic';
   lastSource: 'keyboard' | 'gamepad' | 'touch' = 'keyboard';
