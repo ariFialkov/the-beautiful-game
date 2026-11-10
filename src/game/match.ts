@@ -50,13 +50,14 @@ export class Match {
   clock = 0;
   phase: Phase = 'kickoff';
   phaseTimer = 0;
+  private restartAt = 0;
   half = 1;
   possessionTeam = -1;
   controlled: Agent | null = null;
   director: Director | null = null;
   mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1] };
   teamSpeedBonus: [number, number] = [1, 1];
-  charge: { kind: 'shoot' | 'pass'; t: number } | null = null;
+  charge: { kind: 'shoot' | 'pass' | 'lob'; t: number } | null = null;
   ended = false;
   stoppage = false;
   lastSwitch = 0;
@@ -160,13 +161,8 @@ export class Match {
     const goalX = t.attackDir * L / 2;
     const into = kind === 'penalty' || kind === 'freekick' ? v2.norm({ x: goalX - pos.x, z: -pos.z }) : kind === 'throw' ? { x: 0, z: -Math.sign(pos.z) } : kind === 'corner' ? v2.norm({ x: -Math.sign(pos.x) * 0.4, z: -Math.sign(pos.z) }) : { x: t.attackDir, z: 0 };
     taker.pos = v2.sub(pos, v2.scale(into, kind === 'throw' ? 0.3 : 0.55)); taker.prevPos = { ...taker.pos }; taker.vel = { x: 0, z: 0 }; taker.heading = into;
-    // Opponents give the ball room; penalties clear the box.
-    const room = kind === 'throw' ? 2 : kind === 'goalkick' ? 0 : this.pitch.futsal ? 5 : 9.15;
-    for (const a of opp.agents) {
-      if (kind === 'penalty' && a.isGK) { a.pos = { x: -opp.attackDir * (L / 2 - 0.3), z: 0 }; a.prevPos = { ...a.pos }; a.vel = { x: 0, z: 0 }; continue; }
-      const d = v2.sub(a.pos, pos); const dl = v2.len(d);
-      if (dl < room) { a.pos = v2.add(pos, v2.scale(dl > 0.1 ? v2.norm(d) : { x: -t.attackDir, z: 0 }, room)); a.prevPos = { ...a.pos }; }
-    }
+    // Opponents give the ball room: they jog out of the restricted zone during the restart phase (see applyPhaseConstraints).
+    if (kind === 'penalty') for (const a of opp.agents) if (a.isGK) { a.pos = { x: -opp.attackDir * (L / 2 - 0.3), z: 0 }; a.prevPos = { ...a.pos }; a.vel = { x: 0, z: 0 }; }
     if (kind === 'penalty') {
       const lineX = -opp.attackDir * L / 2; const edge = lineX + opp.attackDir * (boxDepth + 1);
       for (const a of this.agents) {
@@ -175,7 +171,7 @@ export class Match {
       }
     }
     this.setPiece = { kind, team: teamIdx, taker, pos };
-    this.phase = 'restart'; this.phaseTimer = kind === 'penalty' ? 1.8 : kind === 'goalkick' ? 1.2 : 1.0;
+    this.phase = 'restart'; this.phaseTimer = kind === 'penalty' ? 1.8 : kind === 'goalkick' ? 1.2 : 1.0; this.restartAt = this.time;
     this.possessionTeam = teamIdx;
     if (this.humanTeam === teamIdx && !taker.isGK) this.setControlled(taker);
     else if (this.humanTeam !== null && this.humanTeam !== teamIdx) this.setControlled(this.closestToBall(this.humanTeam));
@@ -212,7 +208,8 @@ export class Match {
     if (this.phaseTimer > 0) {
       this.phaseTimer -= h;
       if (this.phaseTimer <= 0) {
-        if (this.phase === 'kickoff' || this.phase === 'restart') { this.phase = 'play'; if (this.setPiece) this.giveControl(this.setPiece.taker); }
+        if (this.phase === 'restart' && !this.restartClear()) this.phaseTimer = STEP; // wait for the opponents to retreat
+        else if (this.phase === 'kickoff' || this.phase === 'restart') { this.phase = 'play'; if (this.setPiece) this.giveControl(this.setPiece.taker); }
         else if (this.phase === 'dead') { const r = this.pendingRestart; this.pendingRestart = null; r?.(); }
         else if (this.phase === 'goal') this.kickoff(this.lastConceded);
         else if (this.phase === 'halftime') { this.half = 2; this.kickoff(this.firstKickoff === 0 ? 1 : 0); }
@@ -246,6 +243,54 @@ export class Match {
     this.updateClockPhases();
   }
 
+  /** Radius opponents must keep from the ball at a set piece. */
+  setPieceRoom(kind: SetPieceKind): number {
+    const f = this.pitch.futsal;
+    switch (kind) { case 'kickoff': return 0; case 'throw': return f ? 4 : 3; case 'goalkick': return f ? 5 : 12; default: return f ? 5 : 9.15; }
+  }
+  /** Is a point inside the area the defending side must vacate (ball radius, plus the box for goal kicks and penalties)? */
+  inSetPieceZone(p: V2, margin = 0): boolean { return v2.dist(this.clearOfSetPiece(p, margin), p) > 1e-3; }
+  /** The nearest point to p outside that area. */
+  clearOfSetPiece(p: V2, margin = 0): V2 {
+    const sp = this.setPiece; if (!sp) return p;
+    let q = { ...p };
+    const box = sp.kind === 'goalkick' || sp.kind === 'penalty';
+    for (let it = 0; it < 3; it++) {
+      const r = this.setPieceRoom(sp.kind) + margin; const d = v2.sub(q, sp.pos); const dl = v2.len(d);
+      if (r > 0 && dl < r) {
+        const t = this.teams[sp.team]; const out = dl > 0.1 ? v2.norm(d) : { x: -t.attackDir * (sp.kind === 'goalkick' ? -1 : 1), z: 0 };
+        q = v2.add(sp.pos, v2.scale(out, r));
+        // near a touchline or the corner flag the radial way out leaves the pitch: slide round the circle back onto it
+        const lx = this.pitch.length / 2 - 0.5, lz = this.pitch.width / 2 - 0.5;
+        if (Math.abs(q.z) > lz) { const z = Math.sign(q.z) * lz; const h = Math.sqrt(Math.max(0, r * r - (z - sp.pos.z) ** 2)); const c = [sp.pos.x + h, sp.pos.x - h].filter((x) => Math.abs(x) <= lx); q = { x: c.length ? c.reduce((a, b) => (Math.abs(b - p.x) < Math.abs(a - p.x) ? b : a)) : q.x, z }; }
+        if (Math.abs(q.x) > lx) { const x = Math.sign(q.x) * lx; const h = Math.sqrt(Math.max(0, r * r - (x - sp.pos.x) ** 2)); const c = [sp.pos.z + h, sp.pos.z - h].filter((z) => Math.abs(z) <= lz); q = { x, z: c.length ? c.reduce((a, b) => (Math.abs(b - p.z) < Math.abs(a - p.z) ? b : a)) : q.z }; }
+      }
+      if (box) {
+        const { length: L, boxDepth, boxWidth } = this.pitch;
+        const dir = sp.kind === 'goalkick' ? this.teams[sp.team].attackDir : -this.teams[sp.team].attackDir; // pointing out of the box
+        const lineX = -dir * L / 2; const depth = (q.x - lineX) * dir; const m = margin + (sp.kind === 'goalkick' ? 1 : 0.5);
+        if (depth < boxDepth + m && Math.abs(q.z) < boxWidth / 2 + m) {
+          const front = boxDepth + m - depth, side = boxWidth / 2 + m - Math.abs(q.z);
+          if (front <= side) q = { x: lineX + dir * (boxDepth + m), z: q.z }; else q = { x: q.x, z: Math.sign(q.z || 1) * (boxWidth / 2 + m) };
+        }
+      }
+    }
+    return q;
+  }
+  /** Everyone who must be clear of the ball at this restart is. Stragglers are moved after a few seconds. */
+  private restartClear(): boolean {
+    const sp = this.setPiece; if (!sp) return true;
+    const late = this.time - this.restartAt > 3.2;
+    let clear = true;
+    for (const a of this.agents) {
+      if (a === sp.taker || (sp.kind === 'penalty' && a.isGK && a.team !== sp.team)) continue;
+      if (a.team === sp.team && sp.kind !== 'penalty') continue;
+      if (!this.inSetPieceZone(a.pos, -0.3)) continue;
+      if (late) { a.pos = this.clearOfSetPiece(a.pos, 0.2); a.prevPos = { ...a.pos }; a.vel = { x: 0, z: 0 }; } else clear = false;
+    }
+    return clear;
+  }
+
   /** Kick-offs and restarts: everyone holds position, the taker waits at the ball, opponents keep their distance. */
   private applyPhaseConstraints() {
     if (this.phase === 'kickoff' || this.phase === 'halftime') { for (const a of this.agents) { a.intent.move = { x: 0, z: 0 }; a.intent.sprint = false; } return; }
@@ -253,11 +298,17 @@ export class Match {
     if (!sp || (this.phase !== 'restart' && this.phase !== 'play')) return;
     if (this.phase === 'restart') { sp.taker.intent.steer = { x: 0, z: 0 }; }
     else if (sp.taker === this.ball.owner) { if (!sp.taker.pendingKick) sp.taker.intent.steer = { x: 0, z: 0 }; }
-    const room = sp.kind === 'throw' ? 2 : sp.kind === 'goalkick' || sp.kind === 'kickoff' ? 0 : this.pitch.futsal ? 5 : 9.15;
-    if (room > 0) for (const a of this.opponentsOf(sp.team).agents) {
-      if (a.isGK && sp.kind === 'penalty') { a.intent.move = { x: 0, z: (this.ball.z * 0.2 - a.pos.z) }; continue; }
-      const d = v2.sub(a.pos, sp.pos); const dl = v2.len(d);
-      if (dl < room + 0.5) { a.intent.move = dl > 0.1 ? v2.norm(d) : { x: 1, z: 0 }; a.intent.sprint = false; }
+    if (sp.kind === 'kickoff') return;
+    for (const a of this.agents) {
+      if (a === sp.taker) continue;
+      if (sp.kind === 'penalty' && a.isGK && a.team !== sp.team) { a.intent.move = { x: 0, z: (this.ball.z * 0.2 - a.pos.z) }; continue; }
+      if (a.team === sp.team && sp.kind !== 'penalty') continue;
+      // Anyone inside the restricted area heads straight out of it (and may not walk back in until the ball is played).
+      if (this.inSetPieceZone(a.pos, 0.6)) {
+        const out = v2.sub(this.clearOfSetPiece(a.pos, 1.2), a.pos); const ol = v2.len(out);
+        const inward = a.intent.move ? v2.dot(a.intent.move, out) < 0.2 * v2.len(a.intent.move) * ol : true;
+        if (this.phase === 'restart' || inward || this.inSetPieceZone(a.pos, 0)) { a.intent.move = ol > 0.05 ? v2.norm(out) : { x: 0, z: 0 }; a.intent.sprint = ol > 5; a.intent.face = v2.sub({ x: this.ball.x, z: this.ball.z }, a.pos); }
+      }
     }
   }
 
@@ -339,12 +390,13 @@ export class Match {
     if (canKick && this.phase === 'play') {
       if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
       if (input.pass.down) { if (!this.charge || this.charge.kind !== 'pass') this.charge = { kind: 'pass', t: 0 }; else this.charge.t += dt; }
+      if (input.lob.down) { if (!this.charge || this.charge.kind !== 'lob') this.charge = { kind: 'lob', t: 0 }; else this.charge.t += dt; }
       if (input.shoot.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.22, this.charge?.t ?? 0.3) / 0.9); this.startKick(me, this.setPiece?.kind === 'throw' ? 'pass' : 'shoot', p, aimDir, { finesse: input.finesse.down }); this.charge = null; }
       else if (input.pass.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.2, this.charge?.t ?? 0.2) / 0.5); this.startKick(me, 'pass', p, aimDir, {}); this.charge = null; }
       else if (input.through.justPressed && !me.busy()) this.startKick(me, 'through', 0.7, aimDir, {});
-      else if (input.lob.justPressed && !me.busy()) this.startKick(me, 'lob', 0.7, aimDir, {});
+      else if (input.lob.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.15, this.charge?.t ?? 0.15) / 0.7); this.startKick(me, 'lob', p, aimDir, {}); this.charge = null; }
       if (input.shield.down && b.owner === me) { me.intent.sprint = false; me.intent.move = v2.scale(move, 0.35); me.intent.jockey = true; }
-      if (!input.shoot.down && !input.pass.down) this.charge = null;
+      if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
       return;
     }
     this.charge = null;
@@ -358,7 +410,7 @@ export class Match {
       me.intent.face = v2.sub(bp, me.pos); me.intent.jockey = v2.len(d) < 3;
     }
     if (input.shoot.justPressed) this.tackle(me, 'tackle');
-    if (input.through.justPressed || input.slide.justPressed) this.tackle(me, 'slide');
+    if (input.lob.justPressed || input.slide.justPressed) this.tackle(me, 'slide'); // cross button slides when defending
     if (input.switch.justPressed) this.setControlled(this.closestToBall(team.index, me));
     if (this.time - this.lastSwitch > 0.7 && (!b.owner || b.owner.team !== team.index) && !me.busy()) {
       const c = this.closestToBall(team.index);
@@ -490,17 +542,18 @@ export class Match {
       aim = { x: Math.max(-lim.x, Math.min(lim.x, aim.x)), z: Math.max(-lim.z, Math.min(lim.z, aim.z)) };
       const dist = Math.max(2, v2.dist(aim, { x: from.x, z: from.z }));
       if (lofted) {
-        const theta = throwIn ? 0.45 : d.clear ? 0.75 : 0.62;
         const crossIntoBox = target && Math.abs(aim.x - team.attackDir * this.pitch.length / 2) < this.pitch.boxDepth + 2;
-        const yT = crossIntoBox ? 1.6 : BALL_R;
-        const speed = Math.min(throwIn ? 15 : 31, Math.max(8, Math.sqrt((G * dist) / Math.sin(2 * theta)) * 1.12));
-        const sol = solveKick(from, { x: aim.x, y: yT, z: aim.z }, speed, 0, throwIn ? 0 : -25, this.surface, theta);
+        // Crosses and lofted passes are driven: flatter and faster the more power (the longer the button is held).
+        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.42 - 0.2 * d.power : 0.55 - 0.22 * d.power;
+        const yT = crossIntoBox ? 1.35 : BALL_R;
+        const speed = Math.min(throwIn ? 15 : 33, Math.max(9, Math.sqrt((G * dist) / Math.sin(2 * theta)) * (1.15 + 0.1 * d.power)));
+        const sol = solveKick(from, { x: aim.x, y: yT, z: aim.z }, speed, 0, throwIn ? 0 : -18 + 12 * d.power, this.surface, theta);
         v = sol.v; w = sol.w;
       } else {
         // Human passes: the power bar sets the pace (a soft pass still reaches its man, a full one fizzes across the pitch).
         const needed = passSpeedFor(dist * (through ? 1.1 : 1), this.surface);
         const speed = human
-          ? Math.max(6, Math.min(30, Math.max(needed * 0.97, 7 + d.power * 21)))
+          ? (target ? Math.max(8, Math.min(31, Math.max(needed * 0.97, 9 + d.power * 21))) : 6 + d.power * 25) // into space: pace is the power bar alone
           : Math.max(6, Math.min(30, needed * (0.92 + d.power * 0.16)));
         const yaw = Math.atan2(aim.z - from.z, aim.x - from.x);
         v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };

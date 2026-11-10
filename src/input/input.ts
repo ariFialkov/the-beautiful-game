@@ -1,6 +1,6 @@
 /** Unified input: keyboard, standard gamepads (PS5 / Xbox) and touch controls.
  *  Gamepad mapping follows the EA FC layout:
- *    Attack: A/Cross pass · B/Circle shoot · X/Square through ball · Y/Triangle lob/cross · RT/R2 sprint · RB/R1 finesse · LT/L2 shield
+ *    Attack: A/Cross pass · B/Circle shoot · Y/Triangle through ball · X/Square cross/lob (hold = lower, harder) · RT/R2 sprint · RB/R1 finesse · LT/L2 shield
  *    Defend: A/Cross contain · B/Circle standing tackle · X/Square slide tackle · LB/L1 switch player
  *    Menus: D-pad / left stick navigate · A select · B back · Start pause */
 
@@ -21,7 +21,7 @@ export type NavEvent = 'up' | 'down' | 'left' | 'right' | 'accept' | 'back' | 'p
 
 const KEYS = {
   up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'], left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'],
-  sprint: ['ShiftLeft', 'ShiftRight'], pass: ['Space', 'KeyJ'], shoot: ['KeyZ', 'KeyK'], through: ['KeyX', 'KeyL'], lob: ['KeyC', 'KeyI'],
+  sprint: ['ShiftLeft', 'ShiftRight'], pass: ['Space', 'KeyJ'], shoot: ['KeyZ', 'KeyK'], through: ['KeyC', 'KeyI'], lob: ['KeyX', 'KeyL'],
   switch: ['KeyQ', 'Tab'], slide: ['KeyE', 'KeyU'], finesse: ['KeyR', 'KeyO'], shield: ['KeyF', 'KeyP'], pause: ['Escape', 'KeyP'], curlL: ['KeyQ'], curlR: ['KeyE'],
 };
 type KeyAction = keyof typeof KEYS;
@@ -94,7 +94,7 @@ export class InputManager {
       const dpx = (b(15) ? 1 : 0) - (b(14) ? 1 : 0), dpy = (b(12) ? 1 : 0) - (b(13) ? 1 : 0);
       if (Math.abs(gx) + Math.abs(gy) > 0.05 || dpx || dpy || pad.buttons.some((x) => x.pressed)) this.lastSource = 'gamepad';
       mx = mx || gx || dpx; my = my || gy || dpy;
-      sprint = sprint || b(7); pass = pass || b(0); shoot = shoot || b(1); through = through || b(2); lob = lob || b(3);
+      sprint = sprint || b(7); pass = pass || b(0); shoot = shoot || b(1); through = through || b(3); lob = lob || b(2);
       sw = sw || b(4); finesse = finesse || b(5); shield = shield || b(6); pause = pause || b(9); slide = slide || b(2);
       // Menu navigation from the pad with key repeat.
       if (this.menuMode) {
@@ -125,7 +125,7 @@ export class InputManager {
 
   buttonLabels() {
     const ps = this.gamepadKind === 'playstation';
-    return { pass: ps ? '✕' : 'A', shoot: ps ? '○' : 'B', through: ps ? '□' : 'X', lob: ps ? '△' : 'Y', sprint: ps ? 'R2' : 'RT', switch: ps ? 'L1' : 'LB', finesse: ps ? 'R1' : 'RB' };
+    return { pass: ps ? '✕' : 'A', shoot: ps ? '○' : 'B', through: ps ? '△' : 'Y', lob: ps ? '□' : 'X', sprint: ps ? 'R2' : 'RT', switch: ps ? 'L1' : 'LB', finesse: ps ? 'R1' : 'RB' };
   }
 }
 

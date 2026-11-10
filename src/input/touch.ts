@@ -7,7 +7,7 @@ export class TouchControls {
   private joyId: number | null = null; private origin = { x: 0, y: 0 };
   private buttons: Record<string, HTMLElement> = {};
   private labelsAttack = { pass: 'Pass', shoot: 'Shoot', through: 'Through', lob: 'Cross' };
-  private labelsDefend = { pass: 'Press', shoot: 'Tackle', through: 'Slide', lob: 'Rush' };
+  private labelsDefend = { pass: 'Press', shoot: 'Tackle', through: 'Rush', lob: 'Slide' };
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
@@ -19,8 +19,8 @@ export class TouchControls {
       <div class="buttons">
         <button class="tbtn pass" data-b="pass">Pass</button>
         <button class="tbtn shoot" data-b="shoot">Shoot</button>
-        <button class="tbtn through" data-b="through">Through</button>
-        <button class="tbtn lob" data-b="lob">Cross</button>
+        <button class="tbtn through" data-b="lob">Cross</button>
+        <button class="tbtn lob" data-b="through">Through</button>
       </div>`;
     parent.appendChild(this.el);
     this.zone = this.el.querySelector('.joy-zone')!; this.joy = this.el.querySelector('.joy')!; this.knob = this.joy.querySelector('i')!;
@@ -30,7 +30,8 @@ export class TouchControls {
     this.zone.addEventListener('pointerup', end); this.zone.addEventListener('pointercancel', end);
     for (const b of Array.from(this.el.querySelectorAll<HTMLElement>('.tbtn'))) {
       const name = b.dataset.b!; this.buttons[name] = b;
-      const down = (e: PointerEvent) => { e.preventDefault(); b.classList.add('pressed'); input.setTouchButton(name === 'through' && this.defending ? 'slide' : name, true); if (name === 'through') input.setTouchButton(this.defending ? 'slide' : 'through', true); };
+      // FIFA layout: the left face button crosses when attacking and slides when defending
+      const down = (e: PointerEvent) => { e.preventDefault(); b.classList.add('pressed'); input.setTouchButton(name === 'lob' && this.defending ? 'slide' : name, true); };
       const up = () => { b.classList.remove('pressed'); input.setTouchButton(name, false); input.setTouchButton('slide', false); };
       b.addEventListener('pointerdown', down); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());

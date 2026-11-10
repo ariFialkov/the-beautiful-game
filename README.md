@@ -74,6 +74,11 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Fouls:** a tackling boot that meets an opponent's leg before the ball is a foul.
   - **Everything else:** the ball rebounds off whichever limb it hits.
 - **Pass assistance:** a pass goes to the best teammate in the general direction you aim, up to about 75° off, favouring nearer, open players with a clear lane. It's led to where the receiver will meet it, and control switches to the receiver, who comes to the ball unless you steer him. The power bar sets the pace: a light pass still reaches a nearby teammate, and a full-power one carries across the pitch.
+- **Team shape:** each side plays as a block. The back line steps up and drops with the ball, the lines stay compact out of possession and stretch wide with it, and every player keeps his lane.
+  - **Loose ball:** only the player who will reach it first (or the intended receiver) goes for it.
+  - **Defending:** one player presses the carrier, one covers goal-side, and the rest mark only opponents who come into their zone.
+  - **Attacking:** the two nearest teammates offer diagonal angles, and teammates' positions push apart so nobody stacks up on the same patch.
+- **Set pieces:** opponents must clear the ball by the full distance before a restart can be taken: 9.15 m for free kicks and corners (5 m in futsal), out of the box and 12 m away for goal kicks, and 3 m for throws. They jog out, the restart waits until they have, and anyone still in the way after about three seconds is moved. Teammates give the taker room, and the taker or keeper picks a free teammate with a clear lane.
 - **Camera:** the broadcast camera follows a critically damped focus point driven by the ball. It leans toward the attacking direction of the team in possession and blends between shots without shake.
 
 ## Controls
@@ -84,8 +89,8 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 | Sprint | Shift | R2 / RT | Sprint |
 | Pass · Contain (defending) | Space | ✕ / A | Pass |
 | Shoot · Standing tackle at the ball | Z | ○ / B | Shoot |
-| Through ball · Slide tackle | X | □ / X | Through |
-| Lob / Cross | C | △ / Y | Cross |
+| Through ball | C | △ / Y | Through |
+| Cross / lofted pass · Slide tackle (defending) | X (E also slides) | □ / X | Cross · Slide |
 | Finesse shot (hold) | R | R1 / RB | — |
 | Shield (hold) | F | L2 / LT | — |
 | Switch player | Q | L1 / LB | Switch |
@@ -93,7 +98,7 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 | Pause | Esc | Options / Menu | ⏸ |
 | Menus | Arrows · Enter · Esc | D-pad · ✕/A · ○/B | Tap |
 
-Shots and passes are charge-and-release (hold for power). Touch button labels switch between attacking and defending actions automatically.
+Shots and passes are charge-and-release (hold for power). The longer you hold a cross, the lower and harder it's driven. Touch button labels switch between attacking and defending actions automatically.
 
 ## Project layout
 

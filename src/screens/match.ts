@@ -96,7 +96,7 @@ export class MatchScreen implements Screen {
     const sb = this.hud.querySelector('.scoreboard')!;
     sb.querySelector('.h')!.textContent = String(m.teams[0].score); sb.querySelector('.a')!.textContent = String(m.teams[1].score);
     const c = m.clockText(); const clock = sb.querySelector('.clock')!; clock.textContent = c.text; clock.classList.toggle('stoppage', c.stoppage);
-    if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'shoot' ? 0.9 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
+    if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
     this.touch?.setDefending(!(m.controlled?.hasBall));
     const hint = this.hud.querySelector('.controls-hint')!; const txt = m.autopilot ? 'AUTO-PILOT · touch the controls to take over' : controllerHint(); if (hint.textContent !== txt) hint.textContent = txt;
     if (this.bannerTimer > 0) { this.bannerTimer -= dt; if (this.bannerTimer <= 0) this.banner.classList.remove('show'); }

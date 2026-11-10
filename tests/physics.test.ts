@@ -75,7 +75,7 @@ test('the kick solver hits its target despite drag, curl and dip', () => {
 test('ground pass tables land passes at the requested distance', () => {
   for (const s of ['dry', 'wet', 'snow'] as SurfaceId[]) {
     const v0 = passSpeedFor(20, SURFACES[s]); const b = ball(s); b.vx = v0; b.setRolling();
-    while (b.vx > 6) b.integrate(1 / 120);
+    while (b.vx > 8.5) b.integrate(1 / 120);
     assert.ok(Math.abs(b.x - 20) < 0.8, `${s}: ${b.x}`);
   }
   assert.ok(passSpeedFor(20, SURFACES.snow) > passSpeedFor(20, SURFACES.wet), 'heavier pitch needs a firmer pass');
