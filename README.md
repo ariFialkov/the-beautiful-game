@@ -4,6 +4,12 @@ A 3D football game with real stakes, playable on desktop and mobile as an instal
 
 The front end plays like a skill game: fluid player movement, dribbling, passing, shooting, tackling, keepers, 24 clubs with full rosters, kits, crests and stadiums. The back end decides every round like a classic betting game *before kick-off*; the match is then paced toward that result by an in-game "director" that steers the bots.
 
+## Play it now
+
+**https://arifialkov.github.io/the-beautiful-game/** — a static build deployed by GitHub Actions (`.github/workflows/pages.yml`) on every push.
+
+That build has no outcome server, so it runs the identical engine inside the browser ("DEMO" badge in the wallet): outcomes are still RTP-driven and provably fair, but the server seed, wallet and Ultimate Team club live in that browser's local storage, and the RTP can be changed from Settings without a token. Install it from the browser menu to get the full-screen PWA. For real deployments run the outcome server below.
+
 ## Quick start
 
 ```bash
@@ -83,6 +89,11 @@ public/        PWA manifest, service worker, icons
 ```
 
 Everything visual is procedural (no external assets): kits are canvas textures, crests are SVG, stadiums are built from team colours, and players are articulated low-poly humanoids animated in code. The home screen plays an AI-vs-AI "league highlights" match with cinematic camera cuts under a broadcast filter.
+
+## Deploying
+
+- **Static (GitHub Pages / any CDN):** `BASE_PATH=/<repo>/ VITE_LOCAL_ENGINE=true npm run build:client` and publish `dist/`. The workflow does this automatically; Pages is enabled by the workflow itself (`actions/configure-pages` with `enablement: true`).
+- **With the outcome server:** `npm run build && npm start` serves the PWA and `/api` from one origin. To host the client elsewhere, build it with `VITE_API_BASE=https://your-server` so API calls go to the server.
 
 ## Notes
 
