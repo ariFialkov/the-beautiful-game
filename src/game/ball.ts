@@ -212,27 +212,45 @@ export function predictPath(b: BallBody, duration = 3, step = 1 / 30): PathPoint
 
 /* ------------------------------ ground pass tables ------------------------------ */
 const ARRIVE = 8.5; // passes still arrive with pace
-const passTables = new Map<SurfaceId, Array<{ v0: number; dist: number; time: number }>>();
-function passTable(surface: Surface) {
-  let t = passTables.get(surface.id);
+const passTables = new Map<string, Array<{ v0: number; dist: number; time: number }>>();
+function passTable(surface: Surface, arrive: number) {
+  const key = `${surface.id}:${arrive}`;
+  let t = passTables.get(key);
   if (t) return t;
   t = [];
   const b = new BallBody(); b.surface = surface;
-  for (let v0 = 5; v0 <= 32; v0 += 0.5) {
+  for (let v0 = Math.max(3, arrive + 0.5); v0 <= 32; v0 += 0.5) {
     b.x = 0; b.y = BALL_R; b.z = 0; b.vx = v0; b.vy = 0; b.vz = 0; b.setRolling(); b.wy = 0;
-    let time = 0; while (b.vx > ARRIVE && time < 8) { b.integrate(1 / 60); time += 1 / 60; }
+    let time = 0; while (b.vx > arrive && time < 8) { b.integrate(1 / 60); time += 1 / 60; }
     t.push({ v0, dist: b.x, time });
   }
-  passTables.set(surface.id, t); return t;
+  passTables.set(key, t); return t;
 }
-function passLookup(dist: number, surface: Surface) {
-  const tab = passTable(surface);
+function passLookup(dist: number, surface: Surface, arrive: number) {
+  const tab = passTable(surface, arrive);
+  if (dist <= tab[0].dist) return { v0: tab[0].v0, time: tab[0].time * dist / Math.max(1e-3, tab[0].dist) };
   for (let i = 1; i < tab.length; i++) if (tab[i].dist >= dist) { const a = tab[i - 1], c = tab[i]; const k = (dist - a.dist) / Math.max(1e-6, c.dist - a.dist); return { v0: a.v0 + (c.v0 - a.v0) * k, time: a.time + (c.time - a.time) * k }; }
   const last = tab[tab.length - 1]; return { v0: last.v0, time: last.time * dist / Math.max(1, last.dist) };
 }
-/** Launch speed for a ground pass that arrives `dist` metres away still rolling firmly, on this surface. */
-export function passSpeedFor(dist: number, surface: Surface = SURFACES.dry): number { return passLookup(dist, surface).v0; }
-export function passTimeFor(dist: number, surface: Surface = SURFACES.dry): number { return passLookup(dist, surface).time; }
+/** Launch speed for a ground pass that arrives `dist` metres away still rolling at `arrive` m/s, on this surface. */
+export function passSpeedFor(dist: number, surface: Surface = SURFACES.dry, arrive = ARRIVE): number { return passLookup(dist, surface, arrive).v0; }
+export function passTimeFor(dist: number, surface: Surface = SURFACES.dry, arrive = ARRIVE): number { return passLookup(dist, surface, arrive).time; }
+
+/** A ground pass that covers `dist` metres in `time` seconds: its launch speed and the pace it arrives with.
+ *  If that is impossible the closest achievable (fastest firm pass, or a gentle one that arrives late) is returned. */
+export function passForTime(dist: number, time: number, surface: Surface = SURFACES.dry): { v0: number; arrive: number; time: number } {
+  let prev: { v0: number; arrive: number; time: number } | null = null;
+  for (let arrive = 2; arrive <= 14; arrive += 1) {
+    const cur = { ...passLookup(dist, surface, arrive), arrive };
+    if (cur.time <= time) {
+      if (!prev) return cur;
+      const k = (prev.time - time) / Math.max(1e-6, prev.time - cur.time);
+      return { v0: prev.v0 + (cur.v0 - prev.v0) * k, arrive: prev.arrive + (cur.arrive - prev.arrive) * k, time };
+    }
+    prev = cur;
+  }
+  return prev!;
+}
 
 /* ------------------------------ kick solver ------------------------------ */
 export interface KickSolution { v: V3; w: V3; yaw: number; pitch: number; time: number; }

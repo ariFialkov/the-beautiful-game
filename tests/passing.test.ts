@@ -56,3 +56,42 @@ test('a full-power pass into space carries across the pitch; a light one stays s
   assert.ok(hard.dist > 55 || hard.z > 33, 'a hard pass crosses the 68 m width');
   assert.ok(soft.dist > 8 && soft.dist < hard.dist * 0.6, 'a soft pass is a short one');
 });
+
+test('the stick picks the receiver, and the power bar picks how far for a lofted pass', () => {
+  const { m, passer } = sandbox(); const mates = m.teams[0].agents;
+  place(passer, 0, 0, 0, 1);
+  const near = mates[9], far = mates[10], side = mates[8];
+  place(near, 2, 10); place(far, 4, 38); place(side, 9, 12);
+  // aimed straight at the near man (the side man is 20° off): him
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.2, z: 1 }), false, false, 0.25), near);
+  // the side man when aimed at him
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 9, z: 12 }), false, false, 0.3), side);
+  // lofted, same direction: a short charge finds the near man, a long one the far man
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.1, z: 1 }), false, true, 0.1), near);
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.1, z: 1 }), false, true, 0.75), far);
+});
+
+test("a through ball is played into the runner's path and he runs onto it", () => {
+  const { m, passer, mate } = sandbox(); const dir = m.teams[0].attackDir;
+  place(passer, 0, 0, dir, 0); place(mate, dir * 12, 5, dir, 0);
+  (m as any).setControlled(passer); m.ball.reset(dir * 0.4, 0); m.ball.owner = passer;
+  m.startKick(passer, 'through', 0.7, v2.norm({ x: dir * 12, z: 5 }), { targetAgent: mate });
+  const t = runUntil(m, 5, () => m.ball.owner === mate);
+  assert.ok(t > 0, 'the runner collected it');
+  assert.ok((mate.pos.x - 12 * dir) * dir > 2, `he ran on to meet it (now ${mate.pos.x.toFixed(1)})`);
+  assert.ok(m.ball.vx * dir > -0.5, 'and took it on, not back toward his own goal');
+});
+
+test('a pass aimed a little off still homes in on its receiver', () => {
+  let hits = 0;
+  for (let k = 0; k < 6; k++) {
+    const { m, passer, mate } = sandbox();
+    place(passer, 0, 0, 0, 1); place(mate, 4, 22, 0, -1);
+    const off = (k % 2 ? 1 : -1) * 0.12; const aim = Math.atan2(22, 4) + off; // ~7° wide
+    (m as any).setControlled(passer); m.ball.reset(0, 0.4); m.ball.owner = passer;
+    const target = m.pickPassTarget(passer, { x: Math.cos(aim), z: Math.sin(aim) }, false, false, 0.5);
+    m.startKick(passer, 'pass', 0.5, { x: Math.cos(aim), z: Math.sin(aim) }, { targetAgent: target ?? undefined });
+    if (runUntil(m, 4, () => m.ball.owner === mate) > 0) hits++;
+  }
+  assert.ok(hits >= 5, `${hits}/6 arrived`);
+});

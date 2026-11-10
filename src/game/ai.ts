@@ -240,7 +240,9 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
 
   // ---- roles: one chaser for a loose ball (first to it, or the intended receiver), one presser, one cover ----
   let chaser: Agent | null = null; let chaserPlan: { p: V2; t: number } | null = null;
-  if (loose && !dead) {
+  // Reading a pass takes a moment: the side that didn't play it reacts after a short delay (sharper players sooner).
+  const reacting = loose && ball.lastTouchTeam !== team.index && now - ball.lastTouchTime < 0.22 + (1 - skill) * 0.18;
+  if (loose && !dead && !reacting) {
     const receiver = ai.find((a) => a.ai.expectBall > now && ball.lastTouchTeam === team.index);
     if (receiver) { chaser = receiver; chaserPlan = interceptPlan(m, receiver, lofted ? 2.3 : 1.2); }
     else for (const a of outfield) { const plan = interceptPlan(m, a, lofted ? 2.3 : 1.2); if (!chaserPlan || plan.t < chaserPlan.t) { chaser = a; chaserPlan = plan; } }

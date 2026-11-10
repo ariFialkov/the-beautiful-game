@@ -73,7 +73,14 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Planned contacts:** dribble touches, first touches with the foot, thigh or chest, strikes, headers, keeper saves and tackles all happen when the right limb meets the ball.
   - **Fouls:** a tackling boot that meets an opponent's leg before the ball is a foul.
   - **Everything else:** the ball rebounds off whichever limb it hits.
-- **Pass assistance:** a pass goes to the best teammate in the general direction you aim, up to about 75° off, favouring nearer, open players with a clear lane. It's led to where the receiver will meet it, and control switches to the receiver, who comes to the ball unless you steer him. The power bar sets the pace: a light pass still reaches a nearby teammate, and a full-power one carries across the pitch.
+- **Pass assistance:** the ball always flies with the real physics, but the game works out what you meant and helps it get there.
+  - **Who:** the receiver is locked in when you release: the teammate the stick points at (at him or where he's running), up to about 55° off (45° for lofted balls). For players at similar angles, nearer, unmarked players with a clear lane win, and the power bar says how far you mean (it counts most for lofted passes).
+  - **Weight:** a pass to a teammate is weighted for him. The power bar only nudges the pace, so a misjudged bar still arrives. A pass into space takes its pace from the bar alone.
+  - **Through balls:** the game searches the space ahead of the runner for the spot he'll win the race to. It weights the ball to arrive there as he does, and he runs onto it and takes it in his stride.
+  - **Crosses:** crosses are driven at about head height; the longer you hold, the lower and harder. The trajectory is led using its real flight time.
+  - **In flight:** the pass bends gently toward its receiver, like a touch of curl, without changing its pace. A defender standing right in front of the passer is played around.
+  - **Receiving:** the receiver comes to meet the ball (or runs onto a through ball) while the stick is neutral or still held the way you passed, and stretches further for it. Push the stick a new way to take over.
+  - **Defenders:** they need a moment to react to a pass and find a fast ball harder to cut out.
 - **Team shape:** each side plays as a block. The back line steps up and drops with the ball, the lines stay compact out of possession and stretch wide with it, and every player keeps his lane.
   - **Loose ball:** only the player who will reach it first (or the intended receiver) goes for it.
   - **Defending:** one player presses the carrier, one covers goal-side, and the rest mark only opponents who come into their zone.
