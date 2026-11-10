@@ -51,6 +51,8 @@ export class Match {
   lastSwitch = 0;
   /** Seconds since the human last touched the controls; the AI takes over the controlled player when idle. */
   idleTime = 0;
+  /** Camera-relative control axes, set by the renderer each frame so stick directions match the screen. */
+  controlBasis = { right: { x: -1, z: 0 }, forward: { x: 0, z: 1 } };
   autopilot = false;
   private knockTimer = 0;
   private restartTaker: Agent | null = null;
@@ -229,12 +231,18 @@ export class Match {
   }
 
   /* ------------------------------ human control ------------------------------ */
+  /** Convert a stick direction (x right, y up on screen) into a pitch direction using the camera basis. */
+  stickToWorld(x: number, y: number): V2 {
+    const { right, forward } = this.controlBasis;
+    return { x: right.x * x + forward.x * y, z: right.z * x + forward.z * y };
+  }
+
   /** True when `a` should be driven by the AI (bots, or the human's player while on auto-pilot). */
   aiDriven(a: Agent) { return !a.isHuman || this.autopilot; }
 
   private handleHuman(input: InputManager, dt: number) {
     const me = this.controlled!; const team = this.teams[this.humanTeam!];
-    const move: V2 = { x: input.move.x, z: input.move.y };
+    const move = this.stickToWorld(input.move.x, input.move.y);
     const active = v2.len(move) > 0.1 || input.sprint.down || input.pass.down || input.shoot.down || input.through.down || input.lob.down || input.switch.down || input.slide.down;
     this.idleTime = active ? 0 : this.idleTime + dt;
     this.autopilot = this.idleTime > 2.0;

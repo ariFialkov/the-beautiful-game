@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 
+/** Camera-relative ground axes: stick right maps to `right`, stick up maps to `forward` (both unit vectors on the pitch). */
+export function groundBasis(camera: THREE.Camera): { right: { x: number; z: number }; forward: { x: number; z: number } } {
+  const d = new THREE.Vector3(); camera.getWorldDirection(d);
+  let fx = d.x, fz = d.z; const l = Math.hypot(fx, fz);
+  if (l < 1e-4) { fx = 0; fz = 1; } else { fx /= l; fz /= l; }
+  return { forward: { x: fx, z: fz }, right: { x: -fz, z: fx } };
+}
+
 export type CamMode = 'broadcast' | 'low' | 'behindGoal' | 'drone' | 'closeup' | 'freekick' | 'showcase';
 
 /** Camera rigs: smoothed broadcast camera for play and cinematic cuts for the highlight tape. */
@@ -27,8 +35,9 @@ export class CameraRig {
         const tx = THREE.MathUtils.clamp(target.x + lead.x * 5, -L / 2 + 8 * scale, L / 2 - 8 * scale);
         const tz = target.z;
         const h = this.heightMul;
-        desired.set(tx * 0.93, (14.5 + tz * 0.06) * h * (0.35 + 0.65 * scale), -(W / 2 + 13.5 * scale) * (0.6 + 0.4 * h));
-        desiredLook.set(tx, 0.4, THREE.MathUtils.clamp(tz * 0.5 - 5 * scale, -W / 2, W / 2));
+        // Slightly tighter than a TV wide shot so the controlled player is easy to read; drifts toward the ball across the width.
+        desired.set(tx * 0.95, (11.5 + tz * 0.05) * h * (0.35 + 0.65 * scale), -(W / 2 + 7 * scale) * (0.6 + 0.4 * h) + tz * 0.2);
+        desiredLook.set(tx, 0.4, THREE.MathUtils.clamp(tz * 0.6 - 3 * scale, -W / 2, W / 2));
         break;
       }
       case 'low': {

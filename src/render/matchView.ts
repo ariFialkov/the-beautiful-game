@@ -4,7 +4,7 @@ import type { Agent } from '../game/player';
 import { Humanoid, type AnimParams, type AnimState } from './humanoid';
 import { Stadium } from './stadium';
 import { makeLighting, type Stage } from './scene';
-import { CameraRig } from './camera';
+import { CameraRig, groundBasis } from './camera';
 import { keeperKit } from './kits';
 import { state } from '../app/state';
 
@@ -110,6 +110,8 @@ export class MatchView {
       this.rig.moveTo(dt, cam, sp, 3);
     } else if (this.cinematic) this.rig.cinematic(dt, target, lead, time);
     else this.rig.update(dt, target, lead, time);
+    // controls follow the camera so left/right/up/down always match the screen
+    this.match.controlBasis = groundBasis(this.stage.camera);
     // shadow frustum follows the action
     this.sun.position.set(target.x - 40, 70, target.z - 50); this.sun.target.position.set(target.x, 0, target.z); this.sun.target.updateMatrixWorld();
     this.stadium.update(dt, time);
