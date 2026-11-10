@@ -91,7 +91,7 @@ export class CameraRig {
       const want = edge > 0.55 && this.blend < 0.6 ? Math.min(1, (edge - 0.55) / 0.35) : 0;
       this.urgency += (want - this.urgency) * (1 - Math.exp(-dt / 0.25)); // eased, so the catch-up never snaps
       // Narrow (portrait) screens see less of the pitch, so track tighter.
-      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.5, 1);
+      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.6, 1);
       const glide = 0.7 * Math.min(1, this.blend / 1.2); // slower focus while gliding to a restart
       this.focusX = smoothDamp(this.focusX, tx, this.fvx, (0.8 - 0.45 * this.urgency) * narrow + glide, Math.max(22 * scale, 14), dt);
       this.focusZ = smoothDamp(this.focusZ, target.z, this.fvz, (1.1 - 0.6 * this.urgency) * narrow * (0.6 + 0.4 * scale) + glide, Math.max(16 * scale, 9), dt);

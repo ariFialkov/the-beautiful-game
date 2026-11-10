@@ -79,7 +79,10 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Through balls:** the game searches the space ahead of the runner for the spot he'll win the race to. It weights the ball to arrive there as he does, and he runs onto it and takes it in his stride.
   - **Crosses:** crosses are driven at about head height; the longer you hold, the lower and harder. The trajectory is led using its real flight time.
   - **In flight:** the pass bends gently toward its receiver, like a touch of curl, without changing its pace. A defender standing right in front of the passer is played around.
-  - **Receiving:** the receiver comes to meet the ball (or runs onto a through ball) while the stick is neutral or still held the way you passed, and stretches further for it. Push the stick a new way to take over.
+  - **Receiving:** the receiver is helped onto the ball while the stick is neutral, still held the way you passed, or pointing roughly where it's going. Push the stick a new way to take over.
+    - **Where:** he takes it where he keeps his stride rather than doubling back, and times his run to arrive with the ball instead of dashing there and turning round to wait. He attacks crosses, and runs onto through balls.
+    - **First touch:** it follows the stick if you're holding it. Otherwise it goes on along his run, or into the most open space upfield. A runner's touch keeps pace with him, and a player coming short cushions it.
+    - **Hard balls:** a fast or bouncing ball, or a sprinting receiver, can mean a slightly heavy touch (the ball a metre or two ahead), never a rebound toward the defender. A pass meeting its receiver's legs before he's shaped to take it still counts as his first touch.
   - **Defenders:** they need a moment to react to a pass and find a fast ball harder to cut out.
 - **Team shape:** each side plays as a block. The back line steps up and drops with the ball, the lines stay compact out of possession and stretch wide with it, and every player keeps his lane.
   - **Loose ball:** only the player who will reach it first (or the intended receiver) goes for it.

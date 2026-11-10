@@ -95,3 +95,37 @@ test('a pass aimed a little off still homes in on its receiver', () => {
   }
   assert.ok(hits >= 5, `${hits}/6 arrived`);
 });
+
+/** A team-mate sprinting on the AI receives a pass; returns how far he turned and whether he kept the ball close. */
+function receiveInStride(rcv: [number, number], runZ: number, k: number) {
+  const { m, passer, mate } = sandbox(); const at = m.teams[0].attackDir;
+  mate.isHuman = false;
+  const run = v2.norm({ x: at, z: runZ });
+  place(passer, 0, 0, at, 0); place(mate, rcv[0] * at, rcv[1] + k * 0.4, run.x, run.z);
+  mate.vel = v2.scale(run, mate.maxSpeed * 0.95); mate.intent = { move: run, sprint: true };
+  m.ball.reset(at * 0.4, 0); m.ball.owner = passer;
+  m.startKick(passer, 'pass', 0.45, v2.norm(v2.sub(v2.add(mate.pos, v2.scale(mate.vel, 0.8)), passer.pos)), { targetAgent: mate });
+  let started = false, maxTurn = 0, touched = -1, close = false, heavy = false, played = false; const h0 = Math.atan2(run.z, run.x);
+  m.on((e) => { if (e.type === 'touch' && e.agent === mate && touched < 0) heavy = e.heavy; if (e.type === 'kick' && e.agent === mate) played = true; });
+  for (let i = 0; i < 60 * 5; i++) {
+    m.update(1 / 60, neutral());
+    if (m.ball.lastTouch === passer && !m.ball.owner) started = true;
+    if (started && touched < 0) { let d = Math.atan2(mate.heading.z, mate.heading.x) - h0; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; maxTurn = Math.max(maxTurn, Math.abs(d)); }
+    if (touched < 0 && m.ball.lastTouch === mate) touched = m.time;
+    if (touched > 0 && (played || m.time - touched > 0.6)) { close = played || v2.dist(mate.pos, m.ball) < 2.5; break; }
+  }
+  return { turn: maxTurn * 57.3, touched: touched > 0, close, heavy };
+}
+
+test('a runner receives in his stride: no turning round, and the ball stays under control', () => {
+  let lost = 0;
+  for (const [rcv, runZ] of [[[14, 4], 0.2], [[0, 16], 0], [[12, 18], -1.3]] as Array<[[number, number], number]>) {
+    for (let k = 0; k < 3; k++) {
+      const r = receiveInStride(rcv, runZ, k);
+      assert.ok(r.touched, `the pass reached him (${rcv})`);
+      assert.ok(r.turn < 70, `he kept his line (turned ${r.turn.toFixed(0)}° for ${rcv})`);
+      if (!r.close) lost++;
+    }
+  }
+  assert.ok(lost <= 1, `the first touch kept it under control (${lost}/9 got away)`);
+});

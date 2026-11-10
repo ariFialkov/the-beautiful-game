@@ -4,7 +4,7 @@ import { Ball, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictPath, s
 import { Agent } from './player';
 import { FORMATION_433, FORMATION_FUTSAL, v2, type PitchSpec, type V2 } from './pitch';
 import { Director, FREE_PLAY, OVERRUN_LIMIT, type Modifiers } from './director';
-import { updateTeamAI, interceptPoint } from './ai';
+import { updateTeamAI, interceptPoint, receivePoint } from './ai';
 import { SURFACES, type Surface, type SurfaceId } from './surface';
 import { Motion } from './motion';
 import { pointSegment, segmentSegment, type Capsule, type Side } from './skeleton';
@@ -54,6 +54,8 @@ export class Match {
   passAssist: { passer: Agent; receiver: Agent; aim: V2; until: number; lofted: boolean; spot: V2 | null; run: V2 | null; from: number } | null = null;
   /** The controlled player is being steered by the receive assist this step (his first touch then takes it on, or settles it). */
   private receiveAssisting = false;
+  /** The human's stick this frame (world space). */
+  private stick: V2 = { x: 0, z: 0 };
   private restartAt = 0;
   half = 1;
   possessionTeam = -1;
@@ -380,7 +382,7 @@ export class Match {
     this.idleTime = active ? 0 : this.idleTime + dt;
     this.autopilot = this.idleTime > 2.0;
     if (this.autopilot) { this.charge = null; return; }
-    me.intent.move = move; me.intent.sprint = input.sprint.down; me.intent.face = null; me.intent.jockey = false;
+    me.intent.move = move; me.intent.sprint = input.sprint.down; me.intent.face = null; me.intent.jockey = false; this.stick = move;
     if (this.phase !== 'play' && this.phase !== 'restart') return;
     const b = this.ball; const bp = { x: b.x, z: b.z };
     // Receive assist: a pass is on its way to you. With the stick neutral, or still held the way the pass was aimed,
@@ -388,15 +390,24 @@ export class Match {
     const pa = this.passAssist; this.receiveAssisting = false;
     if (!b.owner && b.lastTouchTeam === me.team && me.ai.expectBall > this.time) {
       const stillAiming = pa !== null && pa.receiver === me && v2.len(move) > 0.2 && v2.dot(v2.norm(move), pa.aim) > 0.5;
-      if (v2.len(move) < 0.2 || stillAiming) {
+      // running on with the stick: the reception point is chosen along his run, and he's helped onto it unless the
+      // stick points well away from it
+      const held = v2.len(move) > 0.2 && !stillAiming;
+      const runDir = pa && pa.receiver === me && pa.run ? pa.run : null;
+      const rp = pa?.lofted ? (() => { const p = interceptPoint(this, me, 2.3); return { p, t: 0 }; })() : receivePoint(this, me, 1.5, held ? move : runDir);
+      const onLine = held && v2.dist(rp.p, me.pos) > 0.5 && v2.dot(v2.norm(v2.sub(rp.p, me.pos)), v2.norm(move)) > 0.35;
+      if (v2.len(move) < 0.2 || stillAiming || onLine) {
         // a through ball is run onto (to the spot it was played into); anything else is met
         const through = pa && pa.receiver === me && pa.spot && pa.run;
         // through ball: get to the spot (easing off if early), and run on once the ball is nearly there
         const ballNear = through && v2.dist(bp, me.pos) < 4 + v2.len(me.vel) * 0.3;
-        const meet = through ? (ballNear ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : pa!.spot!) : interceptPoint(this, me, pa?.lofted ? 2.3 : 1.5);
+        const toSpot = through && !ballNear;
+        const meet = toSpot ? pa!.spot! : rp.p;
         const to = v2.sub(meet, me.pos); const tl = v2.len(to);
-        const ease = through && !ballNear ? Math.min(1, tl / 2.5) : 1;
-        if (tl > 0.3) { me.intent.move = v2.scale(v2.norm(to), ease); me.intent.sprint = input.sprint.down || tl > 3; } else { me.intent.move = { x: 0, z: 0 }; me.intent.face = pa?.run ?? null; }
+        // through balls: get to the spot, then let the ball reach his feet; otherwise time the run to arrive with it
+        const attack = !!pa?.lofted; // a cross is attacked, not waited for
+        const ease = toSpot ? Math.min(1, tl / 2.5) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
+        if (tl > 0.3) { me.intent.move = v2.scale(v2.norm(to), ease); me.intent.sprint = toSpot ? tl > 3 : ease > 0.68; if (tl < 2.5) me.intent.face = me.heading; } else { me.intent.move = { x: 0, z: 0 }; me.intent.face = pa?.run ?? null; }
         this.receiveAssisting = true;
       }
     }
@@ -616,7 +627,7 @@ export class Match {
         for (let k = 0; k < 3; k++) {
           const dd = v2.dist(aim, { x: from.x, z: from.z });
           tFlight = lofted ? Math.sqrt((2 * Math.max(4, dd)) / G) * 1.15 : passTimeFor(dd * (through ? 1.1 : 1), this.surface);
-          aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 1.8) * (through ? 1 : 0.75)));
+          aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 1.8) * (through || target.speed() > 3 ? 0.95 : 0.75)));
           if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + dd * 0.15), z: 0 });
         }
         target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
@@ -627,17 +638,18 @@ export class Match {
       if (lofted) {
         const crossIntoBox = target && Math.abs(aim.x - team.attackDir * this.pitch.length / 2) < this.pitch.boxDepth + 2;
         // Crosses and lofted passes are driven: flatter and faster the more power (the longer the button is held).
-        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.33 - 0.15 * d.power : 0.45 - 0.2 * d.power;
-        const yT = crossIntoBox ? 1.35 : BALL_R;
+        // crosses are driven (flatter, harder with power); a lofted pass to feet is floated so it can be brought down
+        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.33 - 0.15 * d.power : 0.47 - 0.1 * d.power;
+        const yT = crossIntoBox ? 1.35 : BALL_R; d.cross = !!crossIntoBox;
         const solve = (p: V2) => {
           const dd = Math.max(2, v2.dist(p, { x: from.x, z: from.z }));
-          const speed = Math.min(throwIn ? 15 : 33, Math.max(9, Math.sqrt((G * dd) / Math.sin(2 * theta)) * (1.15 + 0.1 * d.power)));
+          const speed = Math.min(throwIn ? 15 : 33, Math.max(9, Math.sqrt((G * dd) / Math.sin(2 * theta)) * (crossIntoBox || throwIn || d.clear ? 1.15 + 0.1 * d.power : 1.1)));
           return solveKick(from, { x: p.x, y: yT, z: p.z }, speed, 0, throwIn ? 0 : -18 + 12 * d.power, this.surface, theta);
         };
         let sol = solve(aim);
         if (target && !throwIn) {
           // re-lead the receiver with the real flight time of this trajectory
-          const lead = v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 1.8) * 0.75));
+          const lead = v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 1.8) * (target.speed() > 3 ? 0.95 : 0.75)));
           aim = { x: Math.max(-lim.x, Math.min(lim.x, lead.x)), z: Math.max(-lim.z, Math.min(lim.z, lead.z)) };
           sol = solve(aim); tFlight = sol.time; target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
         }
@@ -678,7 +690,7 @@ export class Match {
     // the human takes over the intended receiver straight away (FIFA-style pass switching)
     if (human && kind !== 'shoot' && d.passTarget && this.humanTeam === a.team) {
       this.setControlled(d.passTarget);
-      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + Math.min(4, (d.flight ?? 2) + 1.2), lofted: kind === 'lob' || throwIn, spot: d.spot ?? null, run: d.run ?? null, from: this.time + (d.homeDelay ?? 0.12) };
+      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + Math.min(4, (d.flight ?? 2) + 1.2), lofted: (kind === 'lob' || throwIn) && !!d.cross, spot: d.spot ?? null, run: d.run ?? null, from: this.time + (d.homeDelay ?? 0.12) };
     }
     a.hasBall = false; a.cooldown = 0.3; a.pendingKick = null;
     if (this.setPiece?.taker === a) this.setPiece = null;
@@ -1022,6 +1034,10 @@ export class Match {
         const nx = (b.x - q.cx) / q.d, ny = (b.y - q.cy) / q.d, nz = (b.z - q.cz) / q.d;
         b.x = q.cx + nx * minD; b.y = Math.max(BALL_R, q.cy + ny * minD); b.z = q.cz + nz * minD;
         const rvx = b.vx - a.vel.x, rvy = b.vy, rvz = b.vz - a.vel.z; const vn = rvx * nx + rvy * ny + rvz * nz;
+        // A pass meeting its intended receiver's leg or body before he'd shaped to take it is still his first touch
+        // (no pinball rebound off a team-mate running onto it).
+        const meant = !b.owner && b.lastTouchTeam === a.team && b.lastTouch !== a && (a.ai.expectBall > this.time || this.passAssist?.receiver === a);
+        if (vn < 0 && meant && c.part !== 'head' && c.part !== 'arm' && c.part !== 'hand' && !a.isGK && a.stunned <= 0) { this.firstTouch(a); break; }
         if (vn < 0) {
           const e = c.part === 'foot' ? 0.55 : c.part === 'head' ? 0.5 : c.part === 'shin' ? 0.45 : c.part === 'thigh' ? 0.4 : 0.3;
           b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; b.vz -= (1 + e) * vn * nz;
@@ -1045,32 +1061,57 @@ export class Match {
     return a.ai.lapse;
   }
 
+  /** Receiving: the first touch. It goes where the player is heading, and keeps his stride if he's running that way
+   *  (a soft touch to settle it when he has to turn). A difficult ball (fast, bouncing, at pace) can be a heavy touch,
+   *  a few metres ahead of him, but only a really hard one comes off him like a rebound. */
   private firstTouch(a: Agent) {
     const b = this.ball;
-    const rel = Math.hypot(b.vx - a.vel.x, b.vy, b.vz - a.vel.z);
+    const rel = Math.hypot(b.vx - a.vel.x, b.vy * 0.5, b.vz - a.vel.z);
     const teamSkill = a.team === 0 ? this.mods.homeAiSkill : this.mods.botSkill;
     const skill = a.isHuman && !this.autopilot ? a.skill.control : a.skill.control * (0.7 + 0.6 * teamSkill);
-    const diff = Math.max(0, rel - 7) / (9 + 16 * skill) + (b.y > 0.5 ? (b.y - 0.5) * 0.35 : 0);
-    const p = Math.max(0.06, Math.min(0.99, 1.05 - diff));
-    if (Math.random() < p) {
-      let want = this.dribbleDir(a) ?? (v2.len(a.vel) > 0.5 ? v2.norm(a.vel) : a.heading);
-      let s = 0.6 + Math.min(2.5, rel * 0.06) + v2.len(a.vel) * 0.85;
-      if (a === this.controlled && this.receiveAssisting) {
-        // the assist was steering: run on with a through ball, otherwise settle it at his feet
-        const pa = this.passAssist;
-        if (pa?.run && pa.receiver === a) { want = pa.run; s = 0.8 + v2.len(a.vel) * 0.95; }
-        else { want = v2.len(a.vel) > 0.5 ? v2.norm(a.vel) : a.heading; s = 0.3 + v2.len(a.vel) * 0.6; }
-      }
-      b.vx = want.x * s; b.vz = want.z * s; b.vy = Math.min(0, b.vy * 0.2); if (b.y < 0.3) b.setRolling(); else { b.wx = b.wy = b.wz = 0; }
-      b.owner = a; b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null;
-      a.touchCooldown = 0.18; a.ai.nextDecision = this.time + 0.25 + Math.random() * 0.25;
-      this.aimUpfield(a);
-      if (this.humanTeam === a.team && !a.isHuman && !a.isGK) this.setControlled(a);
-      this.emit({ type: 'touch', agent: a, heavy: false });
-    } else {
-      this.deflect(a, 0.45);
-      this.emit({ type: 'touch', agent: a, heavy: true });
+    if (rel > 27 + skill * 6 && Math.random() < 0.6) { this.deflect(a, 0.3); this.emit({ type: 'touch', agent: a, heavy: true }); return; }
+    const want = this.touchDirection(a);
+    const spd = v2.len(a.vel); const along = Math.max(0, v2.dot(want, a.vel));
+    // in stride: the ball goes on just ahead of him at his pace; turning: a soft touch he can turn onto
+    // (coming short, against the ball's direction, or back toward his own goal, he cushions it instead)
+    const up = { x: this.teams[a.team].attackDir, z: 0 }; const bsp = Math.hypot(b.vx, b.vz);
+    const against = bsp > 1 && (want.x * b.vx + want.z * b.vz) / bsp < -0.3;
+    let s = along > 2 && !against && v2.dot(want, up) > -0.25 ? 0.4 + along * 0.95 : 1.1 + spd * 0.25;
+    const sprinting = spd > a.maxSpeed * 0.75;
+    const heavyP = Math.max(0, Math.min(0.35, (rel - 12) / (34 + 24 * skill) + (b.y > 0.6 ? (b.y - 0.6) * 0.15 : 0) + (sprinting ? 0.05 : 0)));
+    let dir = want; const heavy = Math.random() < heavyP;
+    if (heavy) { s += 0.6 + Math.random() * 0.8; const e = (Math.random() - 0.5) * 0.5; dir = { x: want.x * Math.cos(e) - want.z * Math.sin(e), z: want.x * Math.sin(e) + want.z * Math.cos(e) }; }
+    b.vx = dir.x * s; b.vz = dir.z * s; b.vy = Math.min(0, b.vy * 0.2); if (b.y < 0.3) b.setRolling(); else { b.wx = b.wy = b.wz = 0; }
+    b.owner = heavy ? null : a; b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null;
+    a.touchCooldown = heavy ? 0.3 : 0.18; a.ai.nextDecision = this.time + 0.25 + Math.random() * 0.25;
+    // carry on the way the touch went (the next decision comes shortly)
+    a.ai.mode = 'dribble'; a.ai.target = v2.add(a.pos, v2.scale(dir, 6)); a.ai.expectBall = 0;
+    if (this.aiDriven(a)) { a.intent.move = dir; a.intent.face = null; }
+    if (this.humanTeam === a.team && !a.isHuman && !a.isGK) this.setControlled(a);
+    this.emit({ type: 'touch', agent: a, heavy });
+  }
+
+  /** Which way a receiver takes his first touch: the stick if the player is steering him; otherwise on along his run
+   *  if he's running, or into the most open space upfield (never needlessly back toward his own goal). */
+  private touchDirection(a: Agent): V2 {
+    // the player's stick decides, if it's held (assisted or not)
+    if (a === this.controlled && !this.autopilot && v2.len(this.stick) > 0.2) return v2.norm(this.stick);
+    const pa = this.passAssist; if (pa?.run && pa.receiver === a) return pa.run;
+    const team = this.teams[a.team]; const up = { x: team.attackDir, z: 0 };
+    const spd = v2.len(a.vel); const runDir = spd > 2 ? v2.norm(a.vel) : a.heading;
+    const opp = this.opponentsOf(a.team).agents;
+    const cands: V2[] = [runDir, up, v2.norm({ x: up.x, z: 0.7 }), v2.norm({ x: up.x, z: -0.7 }), { x: 0, z: 1 }, { x: 0, z: -1 }];
+    let best = runDir; let bs = -Infinity;
+    for (const c of cands) {
+      const probe = v2.add(a.pos, v2.scale(c, 3.5));
+      let space = 6; for (const o of opp) space = Math.min(space, v2.dist(o.pos, probe));
+      const turn = Math.acos(Math.max(-1, Math.min(1, v2.dot(c, runDir))));
+      const lim = { x: this.pitch.length / 2 - 1.5, z: this.pitch.width / 2 - 1.5 };
+      const out = Math.abs(probe.x) > lim.x || Math.abs(probe.z) > lim.z ? 4 : 0;
+      const score = space * 0.5 + v2.dot(c, up) * 0.8 - turn * (0.4 + 0.25 * Math.min(spd, 8)) - out;
+      if (score > bs) { bs = score; best = c; }
     }
+    return best;
   }
 
   /** The head meets the ball: attackers in range go for goal, everyone else clears it. */

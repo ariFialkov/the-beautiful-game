@@ -23,6 +23,27 @@ export function shapeTarget(m: Match, team: TeamState, a: Agent): V2 {
   return { x: Math.max(-lim, Math.min(lim, x)), z: Math.max(-W / 2 + 1.5, Math.min(W / 2 - 1.5, z)) };
 }
 
+/** Where a receiver should take a pass: the reachable point on the ball's path that costs least, counting the time
+ *  and the turn away from his run (a sprinting player keeps his stride rather than doubling back). `prefer` is the
+ *  direction he wants to go (the stick, for a human). */
+export function receivePoint(m: Match, a: Agent, maxY: number, prefer?: V2 | null): { p: V2; t: number } {
+  const path = m.predicted(); const sp = a.maxSpeed * 0.92; const speed = a.speed();
+  // the way he's facing/running: turning his back on it costs (more at pace)
+  const run = prefer && v2.len(prefer) > 0.2 ? v2.norm(prefer) : speed > 3 ? v2.norm(a.vel) : a.heading;
+  const k = prefer ? 1.1 : 0.6 + 0.4 * Math.min(1, speed / 5);
+  let best: { p: V2; t: number } | null = null; let bc = Infinity;
+  for (const q of path) {
+    if (q.t < 0.08 || q.y > maxY) continue;
+    const p = { x: q.x, z: q.z }; const d = v2.dist(a.pos, p);
+    if (d > sp * q.t + 0.7) continue;
+    const turn = run && d > 0.8 ? Math.acos(Math.max(-1, Math.min(1, v2.dot(v2.scale(v2.sub(p, a.pos), 1 / d), run)))) : 0;
+    const cost = q.t + turn * k;
+    if (cost < bc) { bc = cost; best = { p, t: q.t }; }
+  }
+  if (best) return best;
+  const last = path[path.length - 1]; return { p: { x: last.x, z: last.z }, t: last.t };
+}
+
 /** Time for a player to reach the ball along its predicted path, and where. */
 function interceptPlan(m: Match, a: Agent, maxY: number): { p: V2; t: number } {
   const b = m.ball; const path = m.predicted(); const speed = a.maxSpeed * 0.92;
@@ -244,7 +265,7 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   const reacting = loose && ball.lastTouchTeam !== team.index && now - ball.lastTouchTime < 0.22 + (1 - skill) * 0.18;
   if (loose && !dead && !reacting) {
     const receiver = ai.find((a) => a.ai.expectBall > now && ball.lastTouchTeam === team.index);
-    if (receiver) { chaser = receiver; chaserPlan = interceptPlan(m, receiver, lofted ? 2.3 : 1.2); }
+    if (receiver) { chaser = receiver; chaserPlan = receivePoint(m, receiver, lofted ? 2.3 : 1.2); }
     else for (const a of outfield) { const plan = interceptPlan(m, a, lofted ? 2.3 : 1.2); if (!chaserPlan || plan.t < chaserPlan.t) { chaser = a; chaserPlan = plan; } }
   }
   let presser: Agent | null = null, cover: Agent | null = null;
@@ -269,14 +290,15 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   }
 
   // ---- targets ----
-  const targets = new Map<Agent, { t: V2; sprint: boolean; fixed: boolean }>();
+  const targets = new Map<Agent, { t: V2; sprint: boolean; fixed: boolean; arrive?: number }>();
   for (const a of ai) {
     if (a.busy()) continue;
     if (carrier === a && !ball.held) continue;
     const shape = shapeTarget(m, team, a);
     let t: V2 = shape; let sprint = false; let fixed = false; a.ai.mode = 'shape';
     if (dead) { targets.set(a, { t: shape, sprint: false, fixed: false }); continue; }
-    if (a === chaser && chaserPlan) { t = chaserPlan.p; sprint = true; fixed = true; a.ai.mode = a.ai.expectBall > now ? 'receive' : 'chase'; }
+    let arrive: number | undefined;
+    if (a === chaser && chaserPlan) { t = chaserPlan.p; sprint = true; fixed = true; a.ai.mode = a.ai.expectBall > now ? 'receive' : 'chase'; if (a.ai.mode === 'receive' && !lofted) arrive = chaserPlan.t; } // balls in the air are attacked, not waited for
     else if (a === presser && carrier && sp) { t = m.clearOfSetPiece(v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), 1)), 0.8); fixed = true; a.ai.mode = 'shape'; }
     else if (a === presser && carrier) { t = press(m, team, a, carrier, skill, dt); sprint = a.intent.sprint; fixed = true; a.ai.mode = 'press'; }
     else if (a === cover && carrier) { const gs = v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), futsal ? 4 : 7)); t = v2.lerp(gs, { x: gs.x, z: gs.z * 0.7 }, 0.5); sprint = v2.dist(a.pos, t) > 8; fixed = true; a.ai.mode = 'cover'; }
@@ -291,7 +313,7 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     }
     if (inPoss && m.mods.pushTeam === team.index && m.mods.pushLevel > 0.4 && ['ST', 'LW', 'RW', 'CAM', 'LM', 'RM'].includes(a.role) && !fixed) { t = { x: t.x + team.attackDir * 8, z: t.z }; sprint = true; }
     if (m.setPiece?.kind === 'corner' && m.setPiece.team === team.index && a !== m.setPiece.taker && a.home.x > -0.3) { const gx = team.attackDir * (m.pitch.length / 2 - (futsal ? 4 : 8)); t = { x: gx, z: a.home.z * 6 }; }
-    targets.set(a, { t, sprint, fixed });
+    targets.set(a, { t, sprint, fixed, arrive });
   }
   // ---- spacing: teammates' spots push apart so nobody stacks up on the same patch ----
   const minSpace = futsal ? 4.5 : 9;
@@ -332,6 +354,13 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     const d = v2.sub(target, a.pos); const dl = v2.len(d);
     a.ai.target = target;
     if (a.ai.mode === 'press') { a.intent.move = dl > 0.3 ? v2.scale(v2.norm(d), Math.min(1, dl)) : { x: 0, z: 0 }; continue; } // press() set facing and jockey
+    if (a.ai.mode === 'receive' && plan.arrive !== undefined) {
+      // time the run to arrive with the ball (no dash there to stand and turn round); keep facing the way he's going
+      const need = dl / Math.max(0.15, plan.arrive - 0.12);
+      a.intent.move = dl > 0.35 ? v2.scale(v2.norm(d), Math.max(0.25, Math.min(1, need / a.maxSpeed))) : { x: 0, z: 0 };
+      a.intent.sprint = need > a.maxSpeed * 0.68; a.intent.face = dl < 2.5 ? a.heading : null; // small adjustments: no turning round
+      continue;
+    }
     if (dl < 0.6) { a.intent.move = { x: 0, z: 0 }; a.intent.face = v2.sub(ballPos, a.pos); }
     else { a.intent.move = v2.scale(v2.norm(d), Math.min(1, dl / 3)); if (!plan.fixed && dl < 6) a.intent.face = v2.sub(ballPos, a.pos); }
     a.intent.sprint = plan.sprint || dl > (plan.fixed ? 6 : 14);
