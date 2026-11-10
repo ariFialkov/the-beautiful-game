@@ -371,14 +371,19 @@ export class FreeKickGame {
       const back = this.goalDir.clone().multiplyScalar(-1);
       const runT = Math.min(1, t / 0.42);
       kicker.root.position.copy(this.ballPos0).addScaledVector(back, 2.2 - 1.75 * runT).add(new THREE.Vector3(0, 0, -0.35 * (1 - runT * 0.5))); kicker.root.position.y = 0;
-      kicker.animate(t < 0.3 ? { state: 'run', phase: t * 14, speed: 0.8, action: 0, dir: 1, time } : { state: 'kick', phase: 0, speed: 0, action: Math.min(1, (t - 0.3) / 0.5), dir: 1, time });
-    } else kicker.animate({ state: 'idle', phase: 0, speed: 0, action: 0, dir: 1, time });
-    idle.animate({ state: 'idle', phase: 0, speed: 0, action: 0, dir: 1, time });
+      const ballAt = { x: this.ballPos0.x, y: 0.11, z: this.ballPos0.z };
+      kicker.puppetUpdate(dt, t < 0.25 ? { state: 'run', ball: ballAt } : { state: 'kick', t: t - 0.25, duration: 0.6, strike: 0.17, contact: ballAt, dir: { x: this.goalDir.x, z: this.goalDir.z }, kind: 'shoot', side: 'R', ball: ballAt });
+    } else kicker.puppetUpdate(dt, { state: 'idle', ball: { x: b.x, y: b.y, z: b.z } });
+    idle.puppetUpdate(dt, { state: 'idle', ball: { x: b.x, y: b.y, z: b.z } });
     const ks = this.keeperState;
     keeper.root.position.set(ks.x, 0, ks.z); keeper.root.rotation.y = -Math.PI / 2;
-    if (ks.diveT >= 0) keeper.animate({ state: 'dive', phase: 0, speed: 0, action: Math.min(1, ks.diveT / 0.7), dir: -(ks.save ? (ks.diveTarget.z - ks.z >= 0 ? 1 : -1) : ks.diveDir), time, dt }); // keeper faces -x, so +z is his left
-    else keeper.animate({ state: 'keeperReady', phase: 0, speed: 0, action: 0, dir: 1, time });
-    for (const w of wall) { const jumpH = this.wallJump > 0 ? Math.sin(Math.min(Math.PI, this.wallJump * 5)) * 0.45 : 0; w.root.position.y = jumpH; w.animate({ state: 'idle', phase: 0, speed: 0, action: 0, dir: 1, time }); }
+    if (ks.diveT >= 0) {
+      // keeper faces -x, so +z is his left
+      const toward = Math.sign(ks.diveTarget.z - ks.z) || 1; const side = ks.save ? toward : (ks.diveDir < 0 ? -toward : toward);
+      const hands = ks.save ? { x: L / 2 - 0.6, y: Math.max(0.3, Math.min(2.3, ks.diveTarget.y)), z: ks.diveTarget.z } : { x: L / 2 - 0.6, y: 1.3, z: ks.z + side * 2 };
+      keeper.puppetUpdate(dt, { state: 'dive', t: ks.diveT, duration: 1.25, diveSide: side, hands, ball: { x: b.x, y: b.y, z: b.z } });
+    } else keeper.puppetUpdate(dt, { state: 'keeperReady', ball: { x: b.x, y: b.y, z: b.z } });
+    for (const w of wall) { const jumpH = this.wallJump > 0 ? Math.sin(Math.min(Math.PI, this.wallJump * 5)) * 0.45 : 0; w.root.position.y = jumpH; w.puppetUpdate(dt, { state: 'idle', ball: { x: b.x, y: b.y, z: b.z } }); }
     // aim marker
     this.aimMarker.visible = this.phase === 'aim';
     this.aimMarker.position.set(L / 2 - 0.05, this.aim.y, this.aim.z);

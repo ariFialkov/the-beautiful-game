@@ -211,7 +211,7 @@ export function predictPath(b: BallBody, duration = 3, step = 1 / 30): PathPoint
 }
 
 /* ------------------------------ ground pass tables ------------------------------ */
-const ARRIVE = 4.5;
+const ARRIVE = 6;
 const passTables = new Map<SurfaceId, Array<{ v0: number; dist: number; time: number }>>();
 function passTable(surface: Surface) {
   let t = passTables.get(surface.id);

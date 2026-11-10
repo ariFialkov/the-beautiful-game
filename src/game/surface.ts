@@ -20,11 +20,11 @@ export interface Surface {
 }
 
 export const SURFACES: Record<SurfaceId, Surface> = {
-  dry: { id: 'dry', label: 'Dry pitch', weather: 'clear', bounce: 0.62, mu: 0.45, rollC: 0.055, rollV: 0.075, grip: 1, slide: 1 },
-  firm: { id: 'firm', label: 'Firm, hot day', weather: 'clear', bounce: 0.72, mu: 0.5, rollC: 0.04, rollV: 0.045, grip: 1, slide: 0.9 },
-  wet: { id: 'wet', label: 'Rain, slick pitch', weather: 'rain', bounce: 0.5, mu: 0.2, rollC: 0.035, rollV: 0.04, grip: 0.86, slide: 1.4 },
-  snow: { id: 'snow', label: 'Snow', weather: 'snow', bounce: 0.33, mu: 0.4, rollC: 0.13, rollV: 0.2, grip: 0.78, slide: 1.2 },
-  court: { id: 'court', label: 'Indoor court', weather: 'indoor', bounce: 0.5, mu: 0.55, rollC: 0.025, rollV: 0.035, grip: 1.05, slide: 0.7 },
+  dry: { id: 'dry', label: 'Dry pitch', weather: 'clear', bounce: 0.62, mu: 0.45, rollC: 0.04, rollV: 0.05, grip: 1, slide: 1 },
+  firm: { id: 'firm', label: 'Firm, hot day', weather: 'clear', bounce: 0.72, mu: 0.5, rollC: 0.032, rollV: 0.04, grip: 1, slide: 0.9 },
+  wet: { id: 'wet', label: 'Rain, slick pitch', weather: 'rain', bounce: 0.5, mu: 0.2, rollC: 0.028, rollV: 0.035, grip: 0.86, slide: 1.4 },
+  snow: { id: 'snow', label: 'Snow', weather: 'snow', bounce: 0.33, mu: 0.4, rollC: 0.11, rollV: 0.16, grip: 0.78, slide: 1.2 },
+  court: { id: 'court', label: 'Indoor court', weather: 'indoor', bounce: 0.5, mu: 0.55, rollC: 0.02, rollV: 0.03, grip: 1.05, slide: 0.7 },
 };
 
 export const OUTDOOR_SURFACES: SurfaceId[] = ['dry', 'firm', 'wet', 'snow'];

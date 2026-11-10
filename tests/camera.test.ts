@@ -34,7 +34,7 @@ for (const [label, aspect, futsal] of [['landscape 11-a-side', 16 / 9, false], [
     const r = { accP95: q(acc, 0.95), accP99: q(acc, 0.99), accMax: q(acc, 1), aimP99: q(aim, 0.99), aimMax: q(aim, 1), onScreen: onScreen / inPlay };
     console.log(`  ${label}: acc p95 ${r.accP95.toFixed(1)}, p99 ${r.accP99.toFixed(1)}, max ${r.accMax.toFixed(0)} m/s² · aim p99 ${r.aimP99.toFixed(1)}, max ${r.aimMax.toFixed(1)} °/s · ball on screen ${(r.onScreen * 100).toFixed(1)}%`);
     // The previous camera measured acc p95 81.6, max 2545 m/s² and aim p95 9.2, max 30 °/s on the same kind of run.
-    assert.ok(r.accP95 < 25, 'camera acceleration stays low');
+    assert.ok(r.accP95 < (aspect < 1 ? 30 : 25), 'camera acceleration stays low'); // narrow portrait framing has to track tighter
     assert.ok(r.accP99 < 60, 'rare peaks stay gentle');
     assert.ok(r.accMax < 200, 'no jarring jumps');
     assert.ok(r.aimP99 < 12, 'no whip pans');

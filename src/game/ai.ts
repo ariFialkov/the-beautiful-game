@@ -184,11 +184,15 @@ function press(m: Match, team: TeamState, a: Agent, carrier: Agent, skill: numbe
   if (!a.busy() && a.tackleCooldown <= 0 && a.stunned <= 0) {
     const bd = v2.dist(a.pos, bp); const exposed = v2.dist(carrier.pos, bp) > 0.6;
     const facing = v2.dot(a.heading, v2.norm(v2.sub(bp, a.pos))) > 0.5;
+    // a clear line to the ball: the carrier's legs are not between the tackler and the ball
+    const seg = v2.sub(bp, a.pos); const segL = Math.max(0.01, v2.len(seg)); const rel = v2.sub(carrier.pos, a.pos);
+    const along = Math.max(0, Math.min(segL, v2.dot(rel, seg) / segL));
+    const clear = v2.dist(carrier.pos, v2.add(a.pos, v2.scale(seg, along / segL))) > 0.45;
     const bias = Math.max(-1, Math.min(1, m.mods.tackleBias * (team.index === 0 ? 1 : -1)));
     const timing = Math.max(0.05, Math.min(1, skill + bias * 0.3));
-    if (exposed && facing && bd < 1.15 && rnd() < (2 + 5 * timing) * dt) m.tackle(a, 'tackle');
-    else if (exposed && facing && bd > 1.3 && bd < 2.4 && rnd() < (0.15 + 0.6 * timing) * dt && v2.dot(carrier.heading, v2.norm(v2.sub(a.pos, carrier.pos))) > -0.2) m.tackle(a, 'slide');
-    else if (!exposed && bd < 0.95 && rnd() < (1 - timing) * 0.9 * dt) m.tackle(a, 'tackle'); // mistimed
+    if (exposed && clear && facing && bd < 1.15 && rnd() < (2 + 5 * timing) * dt) m.tackle(a, 'tackle');
+    else if (exposed && clear && facing && bd > 1.3 && bd < 2.4 && rnd() < (0.15 + 0.6 * timing) * dt && v2.dot(carrier.heading, v2.norm(v2.sub(a.pos, carrier.pos))) > -0.2) m.tackle(a, 'slide');
+    else if (!exposed && bd < 0.95 && rnd() < (1 - timing) * 0.35 * dt) m.tackle(a, 'tackle'); // mistimed
   }
   return spot;
 }
@@ -284,7 +288,7 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
   // Pending dive (reaction time elapsed?)
   if (k.ai.dive && m.time >= k.ai.diveAt) {
     const d = k.ai.dive; k.ai.dive = null;
-    k.startAction('dive', 1.25, d.side * dir, d);
+    k.startAction('dive', 1.25, d.side, d);
     return;
   }
   // Read the shot: where will the ball cross my line of defence?
@@ -306,7 +310,10 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
         const reach = 1.0 + handling * 0.6 + (mode === 'wall' ? 0.5 : mode === 'soft' ? -0.4 : 0);
         const travel = Math.max(0, Math.abs(lateral) - reach - 0.3);
         const speed = Math.min(mode === 'wall' ? 7 : 5, Math.max(1.5, travel / Math.max(0.2, t - reaction) * 1.6));
-        k.ai.dive = { side, reach, handY: Math.max(0.3, Math.min(2.3, y)), mode, vel: { x: 0, z: side * speed } };
+        // the motion system wants the side relative to the keeper (+1 = his left) and the point to reach with his hands
+        const yawK = Math.atan2(k.heading.x, k.heading.z); const leftZ = -Math.sin(yawK);
+        const hz = mode === 'soft' ? k.pos.z + side * 1.4 : z;
+        k.ai.dive = { side: Math.sign(side * leftZ) || 1, worldSide: side, mode, vel: { x: 0, z: side * speed }, hands: { x: planeX, y: Math.max(0.3, Math.min(2.3, y)), z: hz } };
         k.ai.diveAt = m.time + reaction;
         return;
       }

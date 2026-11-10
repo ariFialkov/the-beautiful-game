@@ -3,7 +3,7 @@ import type { Kit } from '@shared/teams';
 
 const cache = new Map<string, THREE.CanvasTexture>();
 
-function drawPattern(ctx: CanvasRenderingContext2D, kit: Kit, w: number, h: number) {
+export function drawPattern(ctx: CanvasRenderingContext2D, kit: Kit, w: number, h: number) {
   ctx.fillStyle = kit.primary; ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = kit.secondary;
   switch (kit.pattern) {
@@ -110,4 +110,26 @@ export function textTexture(text: string, bg: string, fg: string, w = 1024, h = 
   ctx.fillStyle = bg; ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = fg; ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, w / 2, h / 2);
   const t = tex(c); t.wrapS = THREE.RepeatWrapping; return t;
+}
+
+/** Wrap-around shirt texture for a cylindrical torso: u = 0 is the chest (front), u = 0.5 the back.
+ *  The back carries the name and number; the front a crest and a small number. */
+export function shirtWrapTexture(kit: Kit, key: string, number: number | null, name: string): THREE.CanvasTexture {
+  const k = `wrap:${key}:${number}:${name}`;
+  let t = cache.get(k); if (t) return t;
+  const W = 512, H = 256; const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d')!;
+  // pattern tiled twice around the body so stripes have a sensible width
+  ctx.save(); drawPattern(ctx, kit, W / 2, H); ctx.translate(W / 2, 0); drawPattern(ctx, kit, W / 2, H); ctx.restore();
+  if (number !== null) {
+    const ink = contrastColor(kit.primary);
+    ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 24px Arial'; ctx.fillText(name.toUpperCase().slice(0, 12), W * 0.5, H * 0.2);
+    ctx.font = '900 120px Arial Black, Arial'; ctx.fillText(String(number), W * 0.5, H * 0.58);
+    // crest on the left chest (u ≈ 0.1) and a small number on the right chest (u ≈ 0.9)
+    ctx.fillStyle = kit.secondary; ctx.beginPath(); ctx.arc(W * 0.1, H * 0.3, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = kit.primary; ctx.beginPath(); ctx.arc(W * 0.1, H * 0.3, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = ink; ctx.font = '900 34px Arial Black, Arial'; ctx.fillText(String(number), W * 0.9, H * 0.36);
+  }
+  t = tex(c); cache.set(k, t); return t;
 }

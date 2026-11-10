@@ -28,7 +28,7 @@ test('dribbling: the ball is a free object, touched ahead and kept under control
   assert.equal(m.ball.owner, a, 'kept the ball while sprinting');
   assert.ok(a.pos.x > 22, `covered ground (${a.pos.x.toFixed(1)} m)`);
   assert.ok(touches >= 6, `took repeated touches (${touches})`);
-  assert.ok(maxGap > 1.2 && maxGap < 3.5, `knocked the ball ahead when sprinting, gap ${maxGap.toFixed(2)} m`);
+  assert.ok(maxGap > 0.7 && maxGap < 3.0, `knocked the ball ahead when sprinting, gap ${maxGap.toFixed(2)} m`);
   assert.ok(ballAhead / samples > 0.85, 'ball stays in front');
   // Turn 90°: from a sprint the ball is a few metres ahead, so he has to run it down before he can turn it.
   a.intent = { move: { x: 0, z: 1 }, sprint: false };

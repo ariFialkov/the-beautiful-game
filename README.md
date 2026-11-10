@@ -64,6 +64,16 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 - **Conditions:** Dry, Firm, Rain, Snow and the futsal Indoor court each change bounce, skid, rolling distance and player grip. Pick them in match setup, or leave it on Random. Rain and snow are drawn on screen, and snow matches use an orange ball.
 - **Dribbling:** the ball is never glued to a player's foot. Each touch pushes it ahead, further when sprinting and less precisely for weaker dribblers, and the player has to run onto it again. Passes and shots are taken when the ball is in reach.
 - **Tackling:** tackles are aimed at the ball's position. Win the ball cleanly and it's yours; catch the man's legs first and it's a foul, which gives a free kick, or a penalty in the box, and sometimes a yellow card. Committing to a tackle has a recovery time, so mashing the button doesn't work.
+- **Athletes:** every player has a full skeleton: pelvis, a three-bone spine, neck, head, collarbones, arms, hands, thighs, shins and feet. A procedural motion system drives it inside the simulation:
+  - **Running:** feet plant and stay put on the ground (no skating), with real contact times, stride length and cadence, a flight phase at a sprint and heel recovery.
+  - **Balance:** the body leans with acceleration and banks into turns, hips and shoulders counter-rotate, and the arms swing opposite the legs.
+  - **Style:** each player gets their own stride, arm carriage, posture and swagger. Dribblers glance up to scan, and some players stand with hands on hips.
+  - **Actions:** kicks, touches, traps, tackles, slides, headers, dives and catches use inverse kinematics, so the boot, head or gloves really reach the ball.
+- **Limb colliders:** each bone carries a capsule collider built from the same pose that's drawn, which drives every contact:
+  - **Planned contacts:** dribble touches, first touches with the foot, thigh or chest, strikes, headers, keeper saves and tackles all happen when the right limb meets the ball.
+  - **Fouls:** a tackling boot that meets an opponent's leg before the ball is a foul.
+  - **Everything else:** the ball rebounds off whichever limb it hits.
+- **Pass assistance:** a pass goes to the best teammate in the general direction you aim, up to about 75° off, favouring nearer, open players with a clear lane. It's led to where the receiver will meet it, and control switches to the receiver, who comes to the ball unless you steer him. The power bar sets the pace: a light pass still reaches a nearby teammate, and a full-power one carries across the pitch.
 - **Camera:** the broadcast camera follows a critically damped focus point driven by the ball. It leans toward the attacking direction of the team in possession and blends between shots without shake.
 
 ## Controls

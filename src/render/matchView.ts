@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import type { Match } from '../game/match';
 import type { Agent } from '../game/player';
-import { Humanoid, type AnimParams, type AnimState } from './humanoid';
+import { Humanoid, setHumanoidQuality } from './humanoid';
+import { Pose } from '../game/skeleton';
 import { Stadium } from './stadium';
 import { makeLighting, type Stage } from './scene';
 import { CameraRig, groundBasis } from './camera';
@@ -41,6 +42,7 @@ export class MatchView {
   private weather: WeatherFx;
   cinematic = false;
   private goalCamT = 0;
+  private pose = new Pose();
   private wasGoal = false;
 
   constructor(private stage: Stage, public match: Match, night: boolean) {
@@ -62,6 +64,7 @@ export class MatchView {
     }
     this.weather = new WeatherFx(surf.weather, low);
     if (this.weather.object) this.scene.add(this.weather.object);
+    setHumanoidQuality(stage.quality === 'high');
     const gkKit = [keeperKit(h.kit, a.kit), keeperKit(a.kit, h.kit)];
     for (const t of match.teams) for (const ag of t.agents) {
       const kit = ag.isGK ? gkKit[t.index] : t.setup.kit;
@@ -82,41 +85,13 @@ export class MatchView {
     match.on((e) => { if (e.type === 'goal') this.stadium.cheer(1); if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5); });
   }
 
-  private animFor(a: Agent, m: Match, dt: number): AnimParams {
-    const act = a.action; let st: AnimState = 'idle'; let action = 0; let dir = 1; let overlay: AnimParams['overlay'] = null;
-    const speed = a.speed();
-    if (act && act.type !== 'touch' && act.type !== 'trap') {
-      action = act.t / act.duration; dir = act.dir;
-      switch (act.type) {
-        case 'kick': st = a.isGK && act.data?.held ? 'throw' : 'kick'; action = Math.min(1, act.t / 0.55); break;
-        case 'tackle': st = 'tackle'; dir = act.data?.foot ?? 1; break;
-        case 'slide': st = 'slide'; break;
-        case 'dive': st = 'dive'; action = Math.min(1, act.t / 0.9); break;
-        case 'fallen': st = 'fallen'; break;
-        case 'stumble': st = 'stumble'; break;
-        case 'header': st = 'header'; break;
-        case 'celebrate': st = 'celebrate'; break;
-        case 'throw': st = 'throw'; break;
-      }
-    } else {
-      if (act && (act.type === 'touch' || act.type === 'trap')) overlay = { kind: act.type, t: act.t / act.duration, foot: act.dir };
-      if (a.isGK && m.ball.held && m.ball.owner === a) st = 'hold';
-      else if (a.intent.jockey && speed < 4) st = 'jockey';
-      else if (speed > 0.5) st = 'run';
-      else if (a.isGK && Math.hypot(m.ball.x - a.pos.x, m.ball.z - a.pos.z) < 30) st = 'keeperReady';
-    }
-    return { state: st, phase: a.animPhase, speed: Math.min(1, speed / a.maxSpeed), action, dir, time: a.animTime, dt, accelFwd: a.accelFwd, accelLat: a.accelLat,
-      carrying: m.ball.owner === a && !m.ball.held, overlay, kick: act?.type === 'kick' ? act.data?.kind : undefined, style: act?.data?.style };
-  }
-
   frame(dt: number, time: number) {
     const m = this.match; const al = m.alpha;
     for (const [a, h] of this.humanoids) {
       const x = a.prevPos.x + (a.pos.x - a.prevPos.x) * al, z = a.prevPos.z + (a.pos.z - a.prevPos.z) * al;
-      h.root.position.set(x, 0, z);
       const ang = lerpAngle(a.prevHeadingAngle, Math.atan2(a.heading.z, a.heading.x), al);
-      h.root.rotation.y = Math.atan2(Math.cos(ang), Math.sin(ang));
-      h.animate(this.animFor(a, m, dt));
+      h.place(x, z, Math.atan2(Math.cos(ang), Math.sin(ang)));
+      if (a.motion) h.applyPose(this.pose.lerp(a.motion.prev, a.motion.pose, al));
       const sel = a === m.controlled && m.humanTeam !== null && !this.cinematic;
       h.setSelected(sel, m.autopilot ? 0xf7c948 : 0x19f5a4);
     }

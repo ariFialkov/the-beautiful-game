@@ -61,8 +61,9 @@ export class CameraRig {
     const fx = this.focusX, fz = this.focusZ;
     // Narrow (portrait) screens: pull back and up so enough of the pitch's length is in view.
     const wide = this.camera.aspect < 1.2 ? 1 + (1.2 - this.camera.aspect) * 0.9 : 1;
-    const back = (W / 2 + 7 * scale) * (0.6 + 0.4 * h);
-    outPos.set(fx * 0.95, (11.5 + fz * 0.05) * h * (0.5 + 0.5 * scale) * wide, -(back + (wide - 1) * 14 * scale) + fz * 0.2);
+    const small = scale < 0.6 ? 1 : 0; // futsal court: a little further back and up so quick high balls stay in shot
+    const back = (W / 2 + 7 * scale) * (0.6 + 0.4 * h) + small * 3;
+    outPos.set(fx * 0.95, ((11.5 + fz * 0.05) * h * (0.5 + 0.5 * scale) + small * 1.5) * wide, -(back + (wide - 1) * 14 * scale) + fz * 0.2);
     outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.6 - 3 * scale, -W / 2, W / 2));
   }
 

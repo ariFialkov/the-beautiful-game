@@ -13,7 +13,7 @@ function rollDistance(surface: SurfaceId, v0: number) {
 test('rolling distance depends on the surface', () => {
   const d = Object.fromEntries((['dry', 'firm', 'wet', 'snow', 'court'] as SurfaceId[]).map((s) => [s, rollDistance(s, 10)]));
   console.log('  roll distance from 10 m/s:', Object.entries(d).map(([k, v]) => `${k} ${v.toFixed(1)}m`).join(', '));
-  assert.ok(d.dry > 12 && d.dry < 30, `dry ${d.dry}`);
+  assert.ok(d.dry > 25 && d.dry < 45, `dry ${d.dry}`);
   assert.ok(d.wet > d.dry && d.firm > d.dry, 'wet and firm pitches run faster');
   assert.ok(d.snow < d.dry * 0.7, 'snow is heavy');
   assert.ok(d.court > d.dry, 'indoor court is quick');
@@ -75,7 +75,7 @@ test('the kick solver hits its target despite drag, curl and dip', () => {
 test('ground pass tables land passes at the requested distance', () => {
   for (const s of ['dry', 'wet', 'snow'] as SurfaceId[]) {
     const v0 = passSpeedFor(20, SURFACES[s]); const b = ball(s); b.vx = v0; b.setRolling();
-    while (b.vx > 4.5) b.integrate(1 / 120);
+    while (b.vx > 6) b.integrate(1 / 120);
     assert.ok(Math.abs(b.x - 20) < 0.8, `${s}: ${b.x}`);
   }
   assert.ok(passSpeedFor(20, SURFACES.snow) > passSpeedFor(20, SURFACES.wet), 'heavier pitch needs a firmer pass');

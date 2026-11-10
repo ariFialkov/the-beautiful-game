@@ -43,14 +43,12 @@ export class Showcase {
   }
   frame(dt: number, time: number, cameraSide = 0.35) {
     this.orbit += dt * 0.08;
-    for (const m of this.models) {
-      m.h.animate({ state: m.mode, phase: 0, speed: 0, action: 0, dir: 1, time: time + m.offset });
-    }
+    for (const m of this.models) m.h.puppetUpdate(dt, { state: m.mode, time: time + m.offset });
     for (let i = 0; i < this.balls.length; i++) {
       const juggler = this.models.find((m) => m.mode === 'juggle'); if (!juggler) continue;
-      const b = this.balls[i]; const t = time + juggler.offset;
-      b.position.y = juggleBallHeight(t) * juggler.h.scale;
-      b.position.x = juggler.h.root.position.x + Math.sin(t * 3.2) * 0.12; b.rotation.x += dt * 3; b.rotation.z += dt * 1.5;
+      const b = this.balls[i]; const t = time + juggler.offset; const r = juggler.h.root;
+      b.position.set(r.position.x + Math.sin(r.rotation.y) * 0.36, juggleBallHeight(t) * juggler.h.scale, r.position.z + Math.cos(r.rotation.y) * 0.36);
+      b.rotation.x += dt * 6; b.rotation.z += dt * 1.5;
     }
     const cam = this.stage.camera;
     const r = 6.4, a = Math.sin(this.orbit) * 0.5 + cameraSide;

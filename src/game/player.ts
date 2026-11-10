@@ -1,5 +1,6 @@
 import type { PlayerCard } from '@shared/types';
 import { v2, type V2 } from './pitch';
+import type { Motion } from './motion';
 
 export type ActionType = 'kick' | 'tackle' | 'slide' | 'dive' | 'fallen' | 'stumble' | 'throw' | 'celebrate' | 'touch' | 'trap' | 'header';
 export interface Action { type: ActionType; t: number; duration: number; fired: boolean; dir: number; data?: any; }
@@ -14,6 +15,8 @@ export interface Intent {
   jockey?: boolean;    // defensive side-step: short quick steps, capped speed
   /** Per-step steering override (dribble assist, stepping up to a kick). Cleared every step; `move` keeps the player's wish. */
   steer?: V2 | null;
+  /** Per-step sprint boost (e.g. recovering a loose touch); cleared every step, doesn't change the player's own wish. */
+  boost?: boolean;
 }
 
 export interface PendingKick { kind: 'pass' | 'through' | 'lob' | 'shoot'; power: number; dir: V2; opts: any; t0: number; }
@@ -49,6 +52,8 @@ export class Agent {
   yellow = 0;
   ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; lapseKey: number; lapse: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, lapseKey: -1, lapse: false };
   keeperHold = 0;
+  /** Skeleton and procedural animation (assigned by the match). */
+  motion?: Motion;
   readonly maxSpeed: number;
   readonly accel: number;
   readonly agility: number;
@@ -105,7 +110,7 @@ export class Agent {
       // Free running: accelerate toward the intended velocity with separate limits for speeding up,
       // braking and cornering, so sharp turns at pace need a plant and a slow-down.
       const m = this.intent.steer ?? this.intent.move; const ml = Math.min(1, v2.len(m));
-      let top = this.maxSpeed * speedMul * (this.intent.sprint ? 1 : 0.7);
+      let top = this.maxSpeed * speedMul * (this.intent.sprint || this.intent.boost ? 1 : 0.7);
       if (this.hasBall) top *= 0.93;
       if (this.intent.jockey) top = Math.min(top, 3.4);
       if (act?.type === 'kick') top *= 0.45;

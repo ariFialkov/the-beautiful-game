@@ -4,8 +4,10 @@ import { Ball, BALL_R, G, passSpeedFor, passTimeFor, predictPath, solveKick, spi
 import { Agent } from './player';
 import { FORMATION_433, FORMATION_FUTSAL, v2, type PitchSpec, type V2 } from './pitch';
 import { Director, FREE_PLAY, OVERRUN_LIMIT, type Modifiers } from './director';
-import { updateTeamAI } from './ai';
+import { updateTeamAI, interceptPoint } from './ai';
 import { SURFACES, type Surface, type SurfaceId } from './surface';
+import { Motion } from './motion';
+import { pointSegment, segmentSegment, type Capsule, type Side } from './skeleton';
 import type { InputManager } from '../input/input';
 
 export interface TeamSetup { team: Team; players: PlayerCard[]; kit: Kit; kitKey: string; name: string; short: string; }
@@ -88,6 +90,7 @@ export class Match {
       t.setup.players.slice(0, formation.length).forEach((card, i) => {
         const a = new Agent(card, t.index, i);
         a.home = { x: formation[i].x, z: formation[i].z }; a.role = formation[i].role; a.isGK = i === 0;
+        a.motion = new Motion(a);
         t.agents.push(a); this.agents.push(a);
       });
     }
@@ -215,10 +218,10 @@ export class Match {
         else if (this.phase === 'halftime') { this.half = 2; this.kickoff(this.firstKickoff === 0 ? 1 : 0); }
       }
     }
-    for (const a of this.agents) a.intent.steer = null;
+    for (const a of this.agents) { a.intent.steer = null; a.intent.boost = false; }
     for (const t of this.teams) updateTeamAI(this, t, h);
     this.applyPhaseConstraints();
-    if (this.phase === 'play') { this.updatePendingKicks(); this.dribbleAssist(); }
+    if (this.phase === 'play') { this.updatePendingKicks(); this.dribbleAssist(); this.scheduleTouch(); this.anticipate(); }
 
     for (const a of this.agents) {
       const mul = this.mods.speedMul[a.team] * this.teamSpeedBonus[a.team] * (this.phase === 'goal' || this.phase === 'dead' ? 0.55 : 1);
@@ -226,8 +229,12 @@ export class Match {
       const lim = { x: this.pitch.length / 2 + 3, z: this.pitch.width / 2 + 3 };
       a.pos.x = Math.max(-lim.x, Math.min(lim.x, a.pos.x)); a.pos.z = Math.max(-lim.z, Math.min(lim.z, a.pos.z));
     }
+    // Animate every body (IK targets track the ball), then resolve contacts against those limbs.
+    this.updateActionTargets();
+    const ballPos = { x: this.ball.x, y: this.ball.y, z: this.ball.z };
+    for (const a of this.agents) a.motion!.update(h, ballPos);
     this.resolveActions();
-    if (this.phase === 'play') { this.updateOwnership(); this.dribble(); this.ballContacts(); }
+    if (this.phase === 'play') { this.updateOwnership(); this.collideBodies(); }
     this.holdBall();
     this.director?.steer(h);
     const ev = this.ball.update(h, this.goals);
@@ -320,6 +327,11 @@ export class Match {
     me.intent.move = move; me.intent.sprint = input.sprint.down; me.intent.face = null; me.intent.jockey = false;
     if (this.phase !== 'play' && this.phase !== 'restart') return;
     const b = this.ball; const bp = { x: b.x, z: b.z };
+    // Receive assist: a pass is on its way to you; with the stick neutral you come to meet it.
+    if (!b.owner && b.lastTouchTeam === me.team && me.ai.expectBall > this.time && v2.len(move) < 0.2) {
+      const meet = interceptPoint(this, me, 1.5); const to = v2.sub(meet, me.pos);
+      if (v2.len(to) > 0.3) { me.intent.move = v2.norm(to); me.intent.sprint = v2.len(to) > 4; }
+    }
     const dBall = v2.dist(me.pos, bp);
     // On the ball, or close enough to a loose ball to strike it first time.
     const canKick = (b.owner === me && !b.held) || (!b.owner && dBall < 2.6 && b.y < 1.4);
@@ -374,35 +386,53 @@ export class Match {
       const mine = b.owner === a;
       if (a.legsBusy() || (b.owner && !mine) || this.time - pk.t0 > 1.4) { a.pendingKick = null; continue; }
       if (a.action?.type === 'kick') continue;
-      const { f, lat, d } = this.ballLocal(a);
       const held = mine && b.held;
-      const inReach = held || (f > -0.1 && f < 1.0 && Math.abs(lat) < 0.75 && b.y < 1.1 && d < 1.1);
+      const strike = held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : 0.15;
+      // where the ball and the player will be at the moment of the strike
+      const c = this.ballAt(strike);
+      const ap = v2.add(a.pos, v2.scale(a.vel, strike * 0.6));
+      const r = v2.sub({ x: c.x, z: c.z }, ap);
+      const f = v2.dot(r, a.heading), lat = r.x * -a.heading.z + r.z * a.heading.x, d = v2.len(r);
+      const inReach = held || (f > -0.05 && f < 0.95 && Math.abs(lat) < 0.6 && c.y < 1.0 && d < 1.0);
       if (inReach) {
-        // Plant and strike: the kicking foot is the one on the ball's side.
-        const foot = lat >= 0 ? 1 : -1;
+        const side: Side = lat >= 0 ? 'R' : 'L'; // strike with the foot on the ball's side
         const relV = Math.hypot(b.vx - a.vel.x, b.vz - a.vel.z);
-        if (mine && !held && relV > 2) { b.vx = a.vel.x * 0.85; b.vz = a.vel.z * 0.85; b.setRolling(); } // set touch
-        const act = a.startAction('kick', pk.kind === 'lob' || pk.kind === 'shoot' ? 0.5 : 0.4, foot, { ...pk, strike: held ? 0.2 : 0.15, held });
+        if (mine && !held && relV > 2.5) { b.vx = a.vel.x * 0.9 + (b.vx - a.vel.x) * 0.3; b.vz = a.vel.z * 0.9 + (b.vz - a.vel.z) * 0.3; b.setRolling(); } // set touch
+        a.startAction('kick', strike + 0.32, side === 'R' ? 1 : -1, { ...pk, strike, held, side, dir: pk.dir, contact: { x: c.x, y: c.y, z: c.z } });
         a.intent.face = pk.dir;
-        void act;
       } else if (d < 4 && (!mine || this.setPiece?.taker === a || d > 1.0)) {
         // step up to the ball (set pieces) or meet it (first-time strikes)
-        const to = v2.sub({ x: b.x - pk.dir.x * 0.4, z: b.z - pk.dir.z * 0.4 }, a.pos);
+        const to = v2.sub({ x: c.x - pk.dir.x * 0.45, z: c.z - pk.dir.z * 0.45 }, a.pos);
         a.intent.steer = v2.len(to) > 0.1 ? v2.scale(v2.norm(to), Math.min(1, v2.len(to) + 0.3)) : { x: 0, z: 0 };
         a.intent.face = pk.dir;
       }
     }
   }
 
-  private pickPassTarget(a: Agent, dir: V2, through: boolean): Agent | null {
-    const t = this.teams[a.team]; let best: Agent | null = null; let bs = -Infinity;
+  /** Where the ball will be in `t` seconds: carried at the dribbler's pace, or along its predicted flight. */
+  ballAt(t: number): V3 {
+    const b = this.ball;
+    if (b.held && b.owner) return { x: b.x, y: b.y, z: b.z };
+    if (t <= 0) return { x: b.x, y: b.y, z: b.z };
+    const path = this.predicted();
+    for (let i = 1; i < path.length; i++) if (path[i].t >= t) { const p = path[i - 1], q = path[i]; const k = (t - p.t) / (q.t - p.t || 1); return { x: p.x + (q.x - p.x) * k, y: p.y + (q.y - p.y) * k, z: p.z + (q.z - p.z) * k }; }
+    const l = path[path.length - 1]; return { x: l.x, y: l.y, z: l.z };
+  }
+
+  /** Pass assistance: the best team-mate in the general direction of the aim (up to ~75° off), favouring nearer,
+   *  unmarked players with a clear lane, and runners in behind for through balls. */
+  pickPassTarget(a: Agent, dir: V2, through: boolean): Agent | null {
+    const t = this.teams[a.team]; const opp = this.opponentsOf(a.team).agents; let best: Agent | null = null; let bs = -Infinity;
     for (const m of t.agents) {
       if (m === a) continue;
-      const d = v2.sub(m.pos, a.pos); const dist = v2.len(d); if (dist < 1.5) continue;
-      const cos = v2.dot(v2.norm(d), dir);
-      if (cos < 0.3) continue;
+      const fut = v2.add(m.pos, v2.scale(m.vel, 0.4));
+      const d = v2.sub(fut, a.pos); const dist = v2.len(d); if (dist < 2) continue;
+      const cos = v2.dot(v2.scale(d, 1 / dist), dir);
+      if (cos < 0.26) continue;
       const fwd = (m.pos.x - a.pos.x) * t.attackDir;
-      const s = cos * 2.2 - dist * (through ? 0.015 : 0.03) + (through ? fwd * 0.03 : 0) - (m.isGK ? 1.5 : 0);
+      let marked = 8; for (const o of opp) marked = Math.min(marked, v2.dist(o.pos, fut));
+      let lane = 1; for (const o of opp) { const r = v2.sub(o.pos, a.pos); const along = v2.dot(r, d) / dist; if (along < 0.5 || along > dist - 0.5) continue; const perp = Math.abs(r.x * d.z - r.z * d.x) / dist; lane = Math.min(lane, Math.max(0, (perp - 0.6) / 1.6)); }
+      const s = cos * cos * 3.2 - dist * (through ? 0.012 : 0.03) + Math.min(marked, 6) * 0.08 + lane * 0.5 + (through ? Math.max(0, fwd) * 0.03 : 0) - (m.isGK ? 1.6 : 0);
       if (s > bs) { bs = s; best = m; }
     }
     return best;
@@ -443,14 +473,19 @@ export class Match {
       const through = kind === 'through';
       const lofted = kind === 'lob' || throwIn || (d.held && kind !== 'pass');
       const target: Agent | null = d.targetAgent ?? (d.clear ? null : this.pickPassTarget(a, dir0, through));
-      let aim: V2;
+      d.passTarget = target;
+      let aim: V2; let tFlight = 1;
       if (target) {
-        const base = v2.dist(target.pos, a.pos);
-        const tFlight = lofted ? Math.sqrt((2 * base) / G) * 0.9 : passTimeFor(base, this.surface);
-        aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 1.8) * (through ? 1 : 0.6)));
-        if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + base * 0.2), z: 0 });
+        // lead the receiver: iterate the meeting point against the ball's travel time
+        aim = target.pos;
+        for (let k = 0; k < 3; k++) {
+          const dd = v2.dist(aim, { x: from.x, z: from.z });
+          tFlight = lofted ? Math.sqrt((2 * Math.max(4, dd)) / G) * 1.15 : passTimeFor(dd * (through ? 1.1 : 1), this.surface);
+          aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 1.8) * (through ? 1 : 0.75)));
+          if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + dd * 0.15), z: 0 });
+        }
         target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
-      } else aim = v2.add(a.pos, v2.scale(dir0, d.clear ? 45 : 12 + d.power * 16));
+      } else aim = v2.add(a.pos, v2.scale(dir0, d.clear ? 45 : human ? 8 + d.power * 40 : 12 + d.power * 16));
       const lim = { x: this.pitch.length / 2 + 2, z: this.pitch.width / 2 + 2 };
       aim = { x: Math.max(-lim.x, Math.min(lim.x, aim.x)), z: Math.max(-lim.z, Math.min(lim.z, aim.z)) };
       const dist = Math.max(2, v2.dist(aim, { x: from.x, z: from.z }));
@@ -462,7 +497,11 @@ export class Match {
         const sol = solveKick(from, { x: aim.x, y: yT, z: aim.z }, speed, 0, throwIn ? 0 : -25, this.surface, theta);
         v = sol.v; w = sol.w;
       } else {
-        const speed = Math.max(6, Math.min(30, passSpeedFor(dist * (through ? 1.1 : 1), this.surface) * (0.92 + d.power * 0.16)));
+        // Human passes: the power bar sets the pace (a soft pass still reaches its man, a full one fizzes across the pitch).
+        const needed = passSpeedFor(dist * (through ? 1.1 : 1), this.surface);
+        const speed = human
+          ? Math.max(6, Math.min(30, Math.max(needed * 0.97, 7 + d.power * 21)))
+          : Math.max(6, Math.min(30, needed * (0.92 + d.power * 0.16)));
         const yaw = Math.atan2(aim.z - from.z, aim.x - from.x);
         v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };
         w = { x: v.z / BALL_R, y: 0, z: -v.x / BALL_R };
@@ -477,6 +516,8 @@ export class Match {
     const nv = { x: Math.cos(yaw) * Math.cos(pitch) * sp, y: Math.sin(pitch) * sp, z: Math.sin(yaw) * Math.cos(pitch) * sp };
     if (d.held || throwIn) { b.x = from.x; b.y = from.y; b.z = from.z; }
     b.strike(nv, w, a, this.time);
+    // the human takes over the intended receiver straight away (FIFA-style pass switching)
+    if (human && kind !== 'shoot' && d.passTarget && this.humanTeam === a.team) this.setControlled(d.passTarget);
     a.hasBall = false; a.cooldown = 0.3; a.pendingKick = null;
     if (this.setPiece?.taker === a) this.setPiece = null;
     this.emit({ type: 'kick', kind, power: d.power, agent: a });
@@ -490,53 +531,86 @@ export class Match {
     const tgt = { x: b.x + b.vx * lead, z: b.z + b.vz * lead };
     let dir = v2.norm(v2.sub(tgt, a.pos)); if (v2.len(dir) < 0.5) dir = a.heading;
     a.heading = dir;
+    const lat = (tgt.x - a.pos.x) * -dir.z + (tgt.z - a.pos.z) * dir.x; const side: Side = lat >= 0 ? 'R' : 'L';
+    const contact = { x: tgt.x, y: b.y, z: tgt.z };
     if (kind === 'slide') {
-      a.startAction('slide', 1.35, 1, { dir, speed: Math.max(a.speed(), 5.5) + 2.5, slideFactor: this.surface.slide, ball: false, foul: false });
+      a.startAction('slide', 1.35, 1, { dir, side, contact, speed: Math.max(a.speed(), 5.5) + 2.5, slideFactor: this.surface.slide, ball: false, foul: false });
       a.tackleCooldown = 1.9;
     } else {
-      a.startAction('tackle', 0.62, 1, { dir, ball: false, foul: false });
+      a.startAction('tackle', 0.62, 1, { dir, side, contact, ball: false, foul: false });
       a.tackleCooldown = 1.0;
     }
     a.pendingKick = null;
     return true;
   }
 
+  /** Keep each action's IK target on the ball (where it will be at the planned contact moment). */
+  private updateActionTargets() {
+    for (const a of this.agents) {
+      const act = a.action; if (!act || !act.data) continue; const d = act.data;
+      switch (act.type) {
+        case 'kick': if (!act.fired) { d.contact = d.held ? { x: this.ball.x, y: this.ball.y, z: this.ball.z } : this.ballAt(Math.max(0, d.strike - act.t)); } break;
+        case 'touch': case 'trap': case 'header': if (!d.done && d.contact) d.contact = this.ballAt(Math.max(0, d.tc - act.t)); break;
+        case 'tackle': case 'slide': if (!d.ball) { const c = this.ballAt(0.08); if (Math.hypot(c.x - a.pos.x, c.z - a.pos.z) < 2.2) d.contact = c; } break;
+      }
+    }
+  }
+
   private resolveActions() {
     const b = this.ball;
     for (const a of this.agents) {
-      const act = a.action; if (!act) continue;
-      if (act.type === 'kick' && !act.fired && act.t >= act.data.strike) {
-        act.fired = true;
-        const { d } = this.ballLocal(a);
-        if ((act.data.held && b.owner === a) || (!b.held && d < 1.15 && b.y < 1.2 && (!b.owner || b.owner === a))) this.fireKick(a, act.data);
-        else a.pendingKick = null; // whiffed: the ball moved away
+      const act = a.action; if (!act) continue; const d = act.data ?? {};
+      const m = a.motion!;
+      if (act.type === 'kick' && !act.fired && act.t >= d.strike - 0.03) {
+        // The kick lands when the boot reaches the ball (a short assist window covers small misses).
+        const fp = m.footPoint(d.side);
+        const dist = Math.hypot(fp.x - b.x, fp.y - b.y, fp.z - b.z);
+        const owns = !b.owner || b.owner === a;
+        if (d.held && b.owner === a && act.t >= d.strike) { act.fired = true; this.fireKick(a, d); }
+        else if (owns && !b.held && dist < BALL_R + 0.12) { act.fired = true; this.fireKick(a, d); }
+        else if (act.t > d.strike + 0.06) { act.fired = true; if (owns && !b.held && dist < 0.5) this.fireKick(a, d); else a.pendingKick = null; }
+      }
+      if ((act.type === 'touch' || act.type === 'trap' || act.type === 'header') && !d.done && d.contact && act.t >= d.tc - 0.04) {
+        const pt = act.type === 'header' ? m.headPoint() : d.part === 'hands' ? m.handPoint('L').lerp(m.handPoint('R'), 0.5) : d.part === 'thigh' ? m.rig.pos(d.side === 'L' ? 15 : 19) : d.part === 'chest' ? m.rig.point(3, 0, 0.1, 0.12) : m.footPoint(d.side);
+        const dist = Math.hypot(pt.x - b.x, pt.y - b.y, pt.z - b.z);
+        const reach = act.type === 'header' ? 0.16 : d.part === 'hands' ? 0.2 : 0.13;
+        const late = act.t > d.tc + 0.07;
+        if (dist < BALL_R + reach || (late && dist < 0.45)) {
+          d.done = true;
+          if (act.type === 'touch') this.applyTouch(a, d.side);
+          else if (act.type === 'header') this.doHeader(a);
+          else if (d.part === 'hands') this.keeperHands(a);
+          else this.firstTouch(a);
+        } else if (late) d.done = true; // missed it
       }
       if ((act.type === 'tackle' || act.type === 'slide') && this.phase === 'play') this.resolveTackle(a);
       if (act.type === 'dive') this.resolveDive(a);
     }
   }
 
+  private legCaps(a: Agent, side?: Side): Capsule[] {
+    return a.motion!.colliders().filter((c) => (c.part === 'foot' || c.part === 'shin' || c.part === 'thigh') && (!side || c.side === side));
+  }
+
   private resolveTackle(a: Agent) {
     const act = a.action!; const d = act.data; const b = this.ball;
     const slide = act.type === 'slide';
-    const [t0, t1] = slide ? [0.06, 0.72] : [0.1, 0.36];
+    const [t0, t1] = slide ? [0.06, 0.72] : [0.1, 0.4];
     if (act.t < t0) return;
     if (act.t > t1) { if (!d.ball && !d.foul && !d.missed) { d.missed = true; if (!slide) a.stunned = 0.35; } return; }
-    const ext = slide ? 0.95 : 0.5 + 0.5 * Math.min(1, (act.t - t0) / (t1 - t0));
-    const foot = v2.add(a.pos, v2.scale(d.dir, ext));
-    // The ball first: a clean contact wins it.
-    if (!d.ball && !b.held && b.y < 0.6 && v2.dist(foot, { x: b.x, z: b.z }) < (slide ? 0.55 : 0.42)) {
+    const leading = this.legCaps(a, d.side).filter((c) => c.part !== 'thigh' || slide);
+    // The ball first: a clean contact with the boot (or shin) wins it.
+    const hitBall = !d.ball && !b.held && leading.some((c) => pointSegment(b.x, b.y, b.z, c).d < c.r + BALL_R + 0.02);
+    if (hitBall) {
       d.ball = true;
       const prev = b.owner;
       const side = { x: -d.dir.z, z: d.dir.x }; const s = Math.random() < 0.5 ? -1 : 1;
       if (slide) {
-        // A slide knocks it loose in the direction of the slide, deflected to one side.
         const speed = Math.max(3, a.speed() * 0.6 + 2.5);
         const kd = v2.norm(v2.add(d.dir, v2.scale(side, s * (0.4 + Math.random() * 0.5))));
         b.strike({ x: kd.x * speed, y: 0.4, z: kd.z * speed }, { x: 0, y: 0, z: 0 }, a, this.time);
         a.cooldown = 0.4;
       } else {
-        // A standing tackle hooks the ball back toward the tackler, who comes away with it.
         const kd = v2.norm(v2.add(v2.scale(d.dir, -0.6), v2.scale(side, s * 0.8)));
         b.strike({ x: kd.x * 2.2 + a.vel.x * 0.3, y: 0, z: kd.z * 2.2 + a.vel.z * 0.3 }, { x: 0, y: 0, z: 0 }, a, this.time);
         b.setRolling(); b.owner = a; a.touchCooldown = 0.2; a.cooldown = 0;
@@ -546,12 +620,17 @@ export class Match {
       this.emit({ type: 'tackle', success: true, agent: a });
       return;
     }
-    // Legs before ball: a foul. After the ball, a slide can still take the man down (no foul).
-    if (d.foul) return;
+    // Legs before ball: the extended tackling boot (and lower shin) genuinely hits an opponent's lower leg.
+    // Brushing legs while standing side by side is not a foul. After the ball, a slide can still take the man (no foul).
+    if (d.foul || act.t < (slide ? 0.12 : 0.15)) return;
+    const strikers = this.legCaps(a, d.side).filter((c) => c.part === 'foot' || c.part === 'shin').map((c) => c.part === 'shin' ? { ...c, ax: (c.ax + c.bx) / 2, ay: (c.ay + c.by) / 2, az: (c.az + c.bz) / 2 } : c);
     for (const o of this.opponentsOf(a.team).agents) {
       if (o.isGK && this.ball.held) continue;
       if (o.action?.type === 'fallen') continue;
-      if (v2.dist(o.pos, foot) < (slide ? 0.6 : 0.4)) {
+      if (v2.dist(o.pos, a.pos) > 2.6) continue;
+      const theirs = this.legCaps(o).filter((c) => c.part !== 'thigh');
+      const contact = strikers.some((c) => theirs.some((t) => segmentSegment(c, t) < (c.r + t.r) * 0.8));
+      if (contact) {
         if (d.ball) { if (slide && Math.random() < 0.5) o.startAction('fallen', 1.1, 1, { dir: v2.norm(o.vel) }); d.foul = true; return; }
         d.foul = true; this.foul(a, o, slide, d.dir);
         return;
@@ -591,16 +670,19 @@ export class Match {
   /** Dives: the keeper's body sweeps from the feet toward outstretched hands; contact with the ball is a save. */
   private resolveDive(k: Agent) {
     const act = k.action!; const d = act.data; const b = this.ball;
-    if (d.done || b.held || act.t < 0.05) return;
-    const prog = Math.min(1, act.t / 0.4);
-    const hands = { x: k.pos.x, y: 0.5 + (d.handY - 0.5) * prog, z: k.pos.z + d.side * (0.4 + d.reach * prog) };
-    const base = { x: k.pos.x, y: 0.5, z: k.pos.z };
-    // distance from ball to the body segment
-    const sx = hands.x - base.x, sy = hands.y - base.y, sz = hands.z - base.z;
-    const L2 = sx * sx + sy * sy + sz * sz;
-    const t = Math.max(0, Math.min(1, ((b.x - base.x) * sx + (b.y - base.y) * sy + (b.z - base.z) * sz) / (L2 || 1)));
-    const dist = Math.hypot(b.x - (base.x + sx * t), b.y - (base.y + sy * t), b.z - (base.z + sz * t));
-    if (dist < BALL_R + 0.22 + (d.mode === 'wall' ? 0.2 : 0) && b.lastTouch !== k) { d.done = true; this.keeperContact(k, d.mode === 'wall'); }
+    if (d.done || b.held || act.t < 0.04 || b.lastTouch === k && this.time - b.lastTouchTime < 0.3) return;
+    const extra = d.mode === 'wall' ? 0.12 : 0;
+    const hit = k.motion!.colliders().some((c) => (c.part === 'hand' || c.part === 'arm' || c.part === 'head' || c.part === 'torso') && pointSegment(b.x, b.y, b.z, c).d < c.r + BALL_R + extra);
+    if (hit) { d.done = true; this.keeperContact(k, d.mode === 'wall'); }
+  }
+
+  /** A keeper's hands meet a ball he went to collect. */
+  private keeperHands(k: Agent) {
+    const b = this.ball;
+    if (b.speed3() > 7 && b.lastTouchTeam !== k.team) { this.keeperContact(k, this.mods.keeper[k.team] === 'wall'); return; }
+    b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0; b.held = true; b.owner = k; k.keeperHold = 0;
+    b.lastTouch = k; b.lastTouchTeam = k.team; b.lastTouchTime = this.time; b.inFlightShot = null;
+    this.emit({ type: 'save', keeper: k, caught: true });
   }
 
   /** Catch or parry depending on pace and handling. */
@@ -652,85 +734,137 @@ export class Match {
     if (!o || b.held || o.legsBusy() || o.action?.type === 'kick') return;
     if (this.setPiece?.taker === o) return;
     const want = this.dribbleDir(o);
-    const { f, lat } = this.ballLocal(o);
-    if (f > 0.05 && f < 0.85 && Math.abs(lat) < 0.5) return; // in touching range: keep running as intended
+    if (o.action?.type === 'touch') return; // a touch is on its way: keep running as intended
     const lead = 0.12;
     const bx = b.x + b.vx * lead, bz = b.z + b.vz * lead;
     const back = want ?? (b.speed() > 0.5 ? v2.norm({ x: b.vx, z: b.vz }) : o.heading);
     const spot = { x: bx - back.x * 0.35, z: bz - back.z * 0.35 };
     const to = v2.sub(spot, o.pos); const dl = v2.len(to);
-    if (dl > 0.15) { const mag = Math.max(v2.len(o.intent.move), b.speed() > 1 ? 1 : 0.6); o.intent.steer = v2.scale(v2.norm(to), Math.min(1, mag)); }
+    if (dl > 0.15) {
+      const mag = Math.max(v2.len(o.intent.move), b.speed() > 1 ? 1 : 0.6); o.intent.steer = v2.scale(v2.norm(to), Math.min(1, mag));
+      // nearly round the ball: open the body to the way he wants to take it
+      if (want && dl < 1.2) o.intent.face = want;
+      // the ball is getting away: sprint to recover it
+      const gap = v2.dist(o.pos, { x: b.x, z: b.z }); const runAway = (b.vx - o.vel.x) * (b.x - o.pos.x) + (b.vz - o.vel.z) * (b.z - o.pos.z) > 0;
+      if (dl > 0.5) o.intent.boost = true; void gap; void runAway;
+    }
   }
 
-  /** Dribble touches: the ball is pushed ahead with each touch, further when sprinting and less precisely for weaker dribblers. */
-  private dribble() {
+  /** Dribbling: when the ball will be in front of the feet, plan a touch so the inside of the boot meets it. */
+  private scheduleTouch() {
     const b = this.ball; const o = b.owner;
-    if (!o || b.held || o.legsBusy() || o.action?.type === 'kick' || o.touchCooldown > 0 || b.y > 0.45) return;
+    if (!o || b.held || o.legsBusy() || o.action || o.touchCooldown > 0 || b.y > 0.45 || o.pendingKick) return;
     if (this.setPiece?.taker === o) { b.vx *= 0.9; b.vz *= 0.9; return; }
-    const { f, lat } = this.ballLocal(o);
-    if (!(f > 0.05 && f < 0.85 && Math.abs(lat) < 0.5)) return;
+    const tc = 0.09;
+    const c = this.ballAt(tc); const ap = v2.add(o.pos, v2.scale(o.vel, tc));
+    const r = v2.sub({ x: c.x, z: c.z }, ap); const f = v2.dot(r, o.heading), lat = r.x * -o.heading.z + r.z * o.heading.x;
+    if (!(f > 0.12 && f < 0.75 && Math.abs(lat) < 0.42)) return;
+    // only touch it again once it has stopped running away from the feet
+    const away = (b.vx - o.vel.x) * o.heading.x + (b.vz - o.vel.z) * o.heading.z;
+    if (away > 0.35) return;
+    const want = this.dribbleDir(o);
+    const rel = Math.hypot(b.vx - o.vel.x, b.vz - o.vel.z);
+    if (!want && rel < 0.4) return; // already under control
+    // alternate feet, but use the foot on the ball's side when it is clearly to one side
+    const side: Side = Math.abs(lat) > 0.12 ? (lat > 0 ? 'R' : 'L') : (o.lastTouchFoot > 0 ? 'L' : 'R');
+    o.startAction('touch', 0.24, side === 'R' ? 1 : -1, { side, tc, contact: c, done: false });
+    o.touchCooldown = 0.12;
+  }
+
+  /** The dribble touch itself: pushed ahead, further when sprinting and less precisely for weaker dribblers. */
+  private applyTouch(o: Agent, side: Side) {
+    const b = this.ball;
+    if (b.owner !== o) return;
     const want = this.dribbleDir(o);
     const sp = o.speed(); const frac = Math.min(1, sp / o.maxSpeed);
-    if (want && !o.pendingKick) {
-      const sprint = o.intent.sprint;
-      const skill = o.skill.dribble;
-      let knock = sprint ? 1.0 + 2.6 * frac : 0.35 + 1.0 * frac;
+    if (want) {
+      const sprint = o.intent.sprint; const skill = o.skill.dribble;
+      let knock = sprint ? 0.6 + 1.3 * frac : 0.2 + 0.5 * frac;
       knock *= 1.25 - skill * 0.5;
-      if (o.intent.jockey) knock = 0.2;
+      if (o.intent.jockey) knock = 0.15;
       const err = (Math.random() + Math.random() - 1) * (0.03 + (1 - skill) * 0.1 + (sprint ? 0.04 : 0));
       const dir = v2.rot(want, err);
       const along = Math.max(sp * Math.max(0, v2.dot(v2.norm(o.vel.x || o.vel.z ? o.vel : dir), dir)), 0.8);
-      const speed = along + knock;
+      // weight the touch for the speed he is heading for, so he doesn't run over his own ball when accelerating
+      const intended = o.maxSpeed * (sprint ? 1 : 0.7) * 0.93 * Math.min(1, v2.len(o.intent.move)) * 0.85;
+      const speed = Math.max(along, Math.min(intended, along + 1.5)) + knock;
       b.vx = dir.x * speed; b.vz = dir.z * speed; b.vy = 0; b.setRolling();
-      o.touchCooldown = sprint ? 0.22 : 0.16;
+      o.touchCooldown = sprint ? 0.2 : 0.14;
     } else {
-      // No direction: cushion and keep it close (sole trap).
-      const rel = Math.hypot(b.vx - o.vel.x, b.vz - o.vel.z);
-      if (rel < 0.4) return;
-      b.vx = o.vel.x * 0.5; b.vz = o.vel.z * 0.5; b.setRolling();
-      o.touchCooldown = 0.25;
+      b.vx = o.vel.x * 0.5; b.vz = o.vel.z * 0.5; b.setRolling(); // sole trap: keep it close
+      o.touchCooldown = 0.22;
     }
-    o.lastTouchFoot = lat >= 0 ? 1 : -1;
+    o.lastTouchFoot = side === 'R' ? 1 : -1;
     b.lastTouch = o; b.lastTouchTeam = o.team; b.lastTouchTime = this.time;
-    if (!o.action) o.startAction('touch', 0.22, o.lastTouchFoot);
   }
 
-  /** Loose-ball contacts: controls (first touch), headers, keeper handling and body blocks. */
-  private ballContacts() {
+  /** Receiving and intercepting: when the ball will come within reach, reach a foot, thigh, chest (or the head, or a
+   *  keeper's hands) to the point where it will arrive. The contact itself happens when that limb meets the ball. */
+  private anticipate() {
     const b = this.ball;
     if (b.held) return;
     if (this.setPiece && b.owner === this.setPiece.taker) return;
-    const bp = { x: b.x, z: b.z };
-    const owner = b.owner;
-    const ownerDist = owner ? v2.dist(owner.pos, bp) : Infinity;
-    if (owner && ownerDist < 1.3) return; // at his feet: you have to tackle for it
-    let best: Agent | null = null; let bestD = Infinity;
+    const owner = b.owner; const bp = { x: b.x, z: b.z };
+    if (owner && v2.dist(owner.pos, bp) < 1.3) return; // at his feet: you have to tackle for it
+    const path = this.predicted();
     for (const a of this.agents) {
       if (a === owner || (owner && a.team === owner.team)) continue;
-      const fresh = b.lastTouch === a && this.time - b.lastTouchTime < 0.25;
-      if (fresh) continue;
-      const dh = v2.dist(a.pos, bp);
-      if (dh > 2.6) continue;
-      // Keepers dive separately; otherwise a goalkeeper can use his hands inside his box.
-      const hands = a.isGK && this.inOwnBox(a, b.x, b.z) && !(this.setPiece);
-      const act = a.action;
-      const canPlay = a.cooldown <= 0 && a.stunned <= 0 && (!act || act.type === 'touch' || act.type === 'trap' || act.type === 'kick');
-      // Back-pass rule: hands only for balls last played by an opponent.
-      if (hands && canPlay && b.y < 2.4 && dh < 0.95 && b.lastTouchTeam !== a.team) {
-        if (b.speed3() > 6 && b.lastTouchTeam !== a.team) { this.keeperContact(a, this.mods.keeper[a.team] === 'wall'); return; }
-        b.vx = b.vy = b.vz = 0; b.held = true; b.owner = a; a.keeperHold = 0; b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; return;
-      }
-      // During a scripted goal window the defending side can misread the ball (it runs under the foot, over the head).
+      if (a.action || a.cooldown > 0 || a.stunned > 0 || a.pendingKick) continue;
+      if (b.lastTouch === a && this.time - b.lastTouchTime < 0.25) continue;
+      if (v2.dist(a.pos, bp) > 7) continue;
       if (this.lapses(a)) continue;
-      // Headers: ball at head height, close to the head.
-      if (canPlay && !a.isGK && b.y > 1.25 && b.y < 2.45 && dh < 0.6 && b.vy < 3) { this.header(a); return; }
-      // Foot/body control
-      const footD = v2.dist(v2.add(a.pos, v2.scale(a.heading, 0.3)), bp);
-      if (canPlay && b.y < 1.2 && footD < 0.7 && footD < bestD) { best = a; bestD = footD; continue; }
-      // Body block: the ball hits a player who isn't playing it.
-      if (dh < 0.32 && b.y < 1.85) this.bodyBlock(a);
+      const hands = a.isGK && this.inOwnBox(a, b.x, b.z) && !this.setPiece && b.lastTouchTeam !== a.team;
+      // scan the next 0.35 s of flight (with sub-samples) for the first point inside the reach envelope
+      let plan: { t: number; x: number; y: number; z: number; part: string } | null = null;
+      for (let i = 1; i < path.length && !plan; i++) {
+        const p0 = path[i - 1], p1 = path[i]; if (p0.t > 0.35) break;
+        for (let k = 1; k <= 4; k++) {
+          const u = k / 4; const t = p0.t + (p1.t - p0.t) * u; if (t < 0.05) continue;
+          const x = p0.x + (p1.x - p0.x) * u, y = p0.y + (p1.y - p0.y) * u, z = p0.z + (p1.z - p0.z) * u;
+          const ax = a.pos.x + a.vel.x * t, az = a.pos.z + a.vel.z * t;
+          const dh = Math.hypot(x - ax, z - az);
+          if (hands && y < 2.4 && dh < 0.95) { plan = { t, x, y, z, part: 'hands' }; break; }
+          if (!a.isGK && y >= 1.35 && y < 2.45 && dh < 0.55) { plan = { t, x, y, z, part: 'head' }; break; }
+          if (y < 1.45 && dh < 0.8) { plan = { t, x, y, z, part: y < 0.55 ? 'foot' : y < 1.0 ? 'thigh' : 'chest' }; break; }
+        }
+      }
+      if (!plan) continue;
+      const lat = (plan.x - a.pos.x) * -a.heading.z + (plan.z - a.pos.z) * a.heading.x; const side: Side = lat >= 0 ? 'R' : 'L';
+      const contact = { x: plan.x, y: plan.y, z: plan.z };
+      if (plan.part === 'head') a.startAction('header', Math.max(0.3, Math.min(0.6, plan.t * 2)), 1, { contact, tc: plan.t, done: false });
+      else a.startAction('trap', plan.t + 0.22, side === 'R' ? 1 : -1, { side, contact, tc: plan.t, part: plan.part, done: false });
     }
-    if (best) this.firstTouch(best);
+  }
+
+  /** Unplanned contacts: the ball rebounds off whichever limb it hits (shins, thighs, torso, arms, heads). */
+  private collideBodies() {
+    const b = this.ball;
+    if (b.held) return;
+    for (const a of this.agents) {
+      if (Math.hypot(a.pos.x - b.x, a.pos.z - b.z) > 1.8 || b.y > 2.6) continue;
+      if (b.lastTouch === a && this.time - b.lastTouchTime < 0.2) continue;
+      const act = a.action;
+      if (act && act.data && !act.data.done && !act.fired && ['kick', 'touch', 'trap', 'header', 'dive', 'tackle', 'slide'].includes(act.type)) continue; // a planned contact owns it
+      const dribbling = b.owner === a;
+      for (const c of a.motion!.colliders()) {
+        if (dribbling && (c.part === 'foot' || c.part === 'shin')) continue; // the dribbler's own touches handle his feet
+        const q = pointSegment(b.x, b.y, b.z, c);
+        const minD = c.r + BALL_R;
+        if (q.d >= minD || q.d < 1e-6) continue;
+        const nx = (b.x - q.cx) / q.d, ny = (b.y - q.cy) / q.d, nz = (b.z - q.cz) / q.d;
+        b.x = q.cx + nx * minD; b.y = Math.max(BALL_R, q.cy + ny * minD); b.z = q.cz + nz * minD;
+        const rvx = b.vx - a.vel.x, rvy = b.vy, rvz = b.vz - a.vel.z; const vn = rvx * nx + rvy * ny + rvz * nz;
+        if (vn < 0) {
+          const e = c.part === 'foot' ? 0.55 : c.part === 'head' ? 0.5 : c.part === 'shin' ? 0.45 : c.part === 'thigh' ? 0.4 : 0.3;
+          b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; b.vz -= (1 + e) * vn * nz;
+          b.vx = a.vel.x + (b.vx - a.vel.x) * 0.9; b.vz = a.vel.z + (b.vz - a.vel.z) * 0.9;
+          b.wx *= 0.4; b.wy *= 0.4; b.wz *= 0.4;
+          if (!dribbling) { b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; if (b.owner && b.owner !== a) b.owner = null; }
+          if (-vn > 3) this.emit({ type: 'touch', agent: a, heavy: true });
+        }
+        break;
+      }
+    }
   }
 
   /** One roll per player per ball touch: does this defender switch off for this ball? (AI players only.) */
@@ -757,7 +891,6 @@ export class Match {
       b.owner = a; b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null;
       a.touchCooldown = 0.18; a.ai.nextDecision = this.time + 0.25 + Math.random() * 0.25;
       this.aimUpfield(a);
-      if (!a.action) a.startAction('trap', 0.3, a.lastTouchFoot);
       if (this.humanTeam === a.team && !a.isHuman && !a.isGK) this.setControlled(a);
       this.emit({ type: 'touch', agent: a, heavy: false });
     } else {
@@ -766,35 +899,24 @@ export class Match {
     }
   }
 
-  private header(a: Agent) {
+  /** The head meets the ball: attackers in range go for goal, everyone else clears it. */
+  private doHeader(a: Agent) {
     const b = this.ball; const team = this.teams[a.team];
     const { length: L, goalWidth, boxDepth } = this.pitch;
     const gx = team.attackDir * L / 2;
     const attacking = Math.abs(a.pos.x - gx) < boxDepth + 4;
-    a.startAction('header', 0.55, 1, { dir: a.heading });
     let v: V3;
     if (attacking) {
       const z = (Math.random() < 0.5 ? -1 : 1) * goalWidth * (0.2 + Math.random() * 0.2);
       const sol = solveKick({ x: b.x, y: b.y, z: b.z }, { x: gx + team.attackDir * 0.3, y: 0.6 + Math.random() * 1.2, z }, 13 + Math.random() * 4, 0, 0, this.surface);
       v = sol.v; b.inFlightShot = { team: a.team, target: { x: gx, y: 1, z } };
     } else {
-      const away = v2.norm({ x: team.attackDir, z: Math.sign(b.z || 1) * 0.6 });
-      v = { x: away.x * 11, y: 6, z: away.z * 11 }; b.inFlightShot = null;
+      const mate = this.pickPassTarget(a, a.heading, false);
+      const aim = mate && v2.dist(mate.pos, a.pos) < 18 ? v2.norm(v2.sub(mate.pos, a.pos)) : v2.norm({ x: team.attackDir, z: Math.sign(b.z || 1) * 0.6 });
+      v = { x: aim.x * 10.5, y: 5.5, z: aim.z * 10.5 }; b.inFlightShot = null;
     }
     b.strike(v, { x: 0, y: 0, z: 0 }, a, this.time); a.cooldown = 0.3;
     this.emit({ type: 'header', agent: a });
-  }
-
-  private bodyBlock(a: Agent) {
-    const b = this.ball;
-    const n = v2.norm({ x: b.x - a.pos.x, z: b.z - a.pos.z });
-    const rvx = b.vx - a.vel.x, rvz = b.vz - a.vel.z; const vn = rvx * n.x + rvz * n.z;
-    if (vn >= -0.5) return;
-    b.vx -= 1.35 * vn * n.x; b.vz -= 1.35 * vn * n.z; b.vx *= 0.75; b.vz *= 0.75; b.vy = Math.abs(b.vy) * 0.4 + 0.3;
-    b.wx *= 0.3; b.wy *= 0.3; b.wz *= 0.3;
-    b.x = a.pos.x + n.x * 0.34; b.z = a.pos.z + n.z * 0.34;
-    b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; b.owner = null;
-    a.cooldown = 0.15;
   }
 
   private deflect(a: Agent, restitution: number) {
