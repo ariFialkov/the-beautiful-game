@@ -4,7 +4,7 @@ import { app } from '../main';
 import { state, fmt, isTouchDevice } from '../app/state';
 import { api } from '../app/api';
 import { audio } from '../app/audio';
-import { el, button, controllerHint, cycleToggle, CONTROL_OPTIONS } from '../ui/components';
+import { el, button, controllerHint, freeKickHint, cycleToggle, CONTROL_OPTIONS } from '../ui/components';
 import { CAM_STYLES } from '../render/camera';
 import { crestSvg } from '../ui/crest';
 import { Match } from '../game/match';
@@ -63,6 +63,7 @@ export class MatchScreen implements Screen {
       <div class="stake-tag">STAKE <b>${fmt(p.stake)}</b> · ${script.mode.toUpperCase()}</div>
       <div class="scoreboard"><div class="team home" style="background:${hk.primary};color:${contrast(hk.primary)}">${crestSvg(home, 22)} <span>${match.teams[0].setup.short}</span></div><div class="score"><span class="h">0</span><span>–</span><span class="a">0</span></div><div class="team away" style="background:${ak.primary};color:${contrast(ak.primary)}"><span>${match.teams[1].setup.short}</span> ${crestSvg(away, 22)}</div><div class="clock">00:00</div></div>
       <div class="banner"></div><div class="toast"></div><div class="power"><i></i></div>
+      <div class="fk-panel"><b>FREE KICK</b><div class="fk-curl"><i></i></div><div class="fk-curl-label">Curl</div></div>
       <div class="controls-hint"></div>
       <div class="pausebtn"></div>`;
     hud.querySelector('.pausebtn')!.appendChild(button('II', 'small', () => this.togglePause()));
@@ -78,7 +79,7 @@ export class MatchScreen implements Screen {
         case 'post': this.showToast(e.bar ? 'Off the crossbar!' : 'Off the post!'); audio.post(); break;
         case 'save': this.showToast(e.caught ? `Held by ${e.keeper.card.shortName}` : `Parried by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
         case 'foul': this.showToast(e.card ? `Yellow card · ${e.by.card.shortName}` : e.penalty ? 'Penalty!' : `Foul by ${e.by.card.shortName}`); audio.whistle(); if (e.penalty) this.showBanner('PENALTY', 1.8); break;
-        case 'setpiece': if (e.kind === 'freekick') this.showToast(`Free kick · ${match.teams[e.team].setup.short}`); else if (e.kind === 'penalty') this.showToast(`Penalty · ${match.teams[e.team].setup.short}`); break;
+        case 'setpiece': if (e.kind === 'freekick') { if (match.freeKick?.taker !== match.controlled) this.showToast(`Free kick · ${match.teams[e.team].setup.short}`); } else if (e.kind === 'penalty') this.showToast(`Penalty · ${match.teams[e.team].setup.short}`); break;
         case 'kickoff': audio.whistle(); break;
         case 'halftime': this.showBanner('HALF TIME', 2.5); audio.whistle(true); break;
         case 'overtime': this.showBanner(e.size === 3 ? 'SUDDEN DEATH · 3 v 3' : e.size === 2 ? 'SUDDEN DEATH · 2 v 2' : 'SUDDEN DEATH · 1 v 1', 2.2); audio.whistle(e.size === 3); break;
@@ -100,9 +101,14 @@ export class MatchScreen implements Screen {
     const sb = this.hud.querySelector('.scoreboard')!;
     sb.querySelector('.h')!.textContent = String(m.teams[0].score); sb.querySelector('.a')!.textContent = String(m.teams[1].score);
     const c = m.clockText(); const clock = sb.querySelector('.clock')!; clock.textContent = c.text; clock.classList.toggle('stoppage', c.stoppage);
-    if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
-    this.touch?.setDefending(!(m.controlled?.hasBall));
-    const hint = this.hud.querySelector('.controls-hint')!; const txt = m.autopilot ? 'AUTO-PILOT · touch the controls to take over' : controllerHint(); if (hint.textContent !== txt) hint.textContent = txt;
+    if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'fk' ? 1.0 : m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
+    // free kick: the taker's panel (curl meter) and hints
+    const fk = m.freeKick && m.freeKick.taker === m.controlled && !m.autopilot ? m.freeKick : null;
+    const panel = this.hud.querySelector('.fk-panel') as HTMLElement; panel.classList.toggle('show', !!fk);
+    if (fk) (panel.querySelector('.fk-curl i') as HTMLElement).style.left = `${50 + fk.curl * 50}%`;
+    this.touch?.setFreeKick(!!fk);
+    this.touch?.setDefending(!(m.controlled?.hasBall) && !fk);
+    const hint = this.hud.querySelector('.controls-hint')!; const txt = m.autopilot ? 'AUTO-PILOT · touch the controls to take over' : fk ? freeKickHint(fk.direct) : controllerHint(); if (hint.textContent !== txt) hint.textContent = txt;
     if (this.bannerTimer > 0) { this.bannerTimer -= dt; if (this.bannerTimer <= 0) this.banner.classList.remove('show'); }
     if (this.toastTimer > 0) { this.toastTimer -= dt; if (this.toastTimer <= 0) this.toast.classList.remove('show'); }
   }

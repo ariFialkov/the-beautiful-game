@@ -94,6 +94,14 @@ export function controllerHint(): string {
   return input.lastSource === 'gamepad' ? `${l.pass} Pass · ${l.shoot} Shoot · ${l.through} Through · ${l.lob} Cross · ${l.sprint} Sprint · ${l.switch} Switch` : input.lastSource === 'touch' ? 'Drag left to move · Buttons to pass, shoot, cross' : 'WASD/Arrows move · Space pass · Z shoot (ZZ low, R+Z finesse) · C through · X cross · Shift sprint · Q switch · E slide';
 }
 
+/** Controls while lining up a free kick (direct: aim on the goal; otherwise a direction to play it). */
+export function freeKickHint(direct: boolean): string {
+  const l = input.buttonLabels(); const aim = direct ? 'aim' : 'direction';
+  return input.lastSource === 'gamepad' ? `Stick ${aim} · ${l.switch}/${l.finesse} curl · Hold ${l.shoot} power, release to strike · ${l.pass} Pass · ${l.lob} Cross`
+    : input.lastSource === 'touch' ? `Drag to ${direct ? 'aim' : 'turn'} · Hold Curl to bend · Hold Shoot for power · Pass / Cross to play it short`
+    : `WASD ${aim} · Q / E curl · Hold Z for power, release to strike · Space pass · X cross · C through`;
+}
+
 /** A settings toggle that cycles through options on click (works with the focus/gamepad navigation). */
 export function cycleToggle<T extends string>(label: string, options: Array<{ id: T; label: string }>, get: () => T, set: (v: T) => void): HTMLButtonElement {
   const b = document.createElement('button'); b.className = 'toggle'; b.setAttribute('data-focus', '');

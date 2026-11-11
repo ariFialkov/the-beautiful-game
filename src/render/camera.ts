@@ -207,8 +207,12 @@ export class CameraRig {
   setFixed(pos: THREE.Vector3, look: THREE.Vector3) { this.pos.copy(pos); this.look.copy(look); this.posDamp.reset(); this.lookDamp.reset(); this.camera.position.copy(pos); this.camera.lookAt(look); }
 
   /** Frame a specific shot (celebrations, set pieces) with soft critically damped motion. */
-  moveTo(dt: number, pos: THREE.Vector3, look: THREE.Vector3, smoothTime = 0.8) {
-    this.zoomTo(1, dt, 0.6);
+  /** Cut straight to a shot (no glide), e.g. the free-kick camera behind the taker. */
+  cutTo(pos: THREE.Vector3, look: THREE.Vector3) {
+    this.pos.copy(pos); this.look.copy(look); this.posDamp.reset(); this.lookDamp.reset(); this.snap();
+  }
+  moveTo(dt: number, pos: THREE.Vector3, look: THREE.Vector3, smoothTime = 0.8, zoom = 1) {
+    this.zoomTo(zoom, dt, 0.6);
     this.posDamp.step(this.pos, pos, smoothTime, 40, dt);
     this.lookDamp.step(this.look, look, smoothTime * 0.8, 40, dt);
     this.camera.position.copy(this.pos); this.camera.lookAt(this.look);

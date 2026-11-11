@@ -22,7 +22,8 @@ export class TouchControls {
         <button class="tbtn through" data-b="lob">Cross</button>
         <button class="tbtn lob" data-b="through">Through</button>
         <button class="tfin" type="button">Finesse</button>
-      </div>`;
+      </div>
+      <div class="tcurl"><button type="button" data-c="-1">◀ Curl</button><button type="button" data-c="1">Curl ▶</button></div>`;
     parent.appendChild(this.el);
     this.zone = this.el.querySelector('.joy-zone')!; this.joy = this.el.querySelector('.joy')!; this.knob = this.joy.querySelector('i')!;
     this.zone.addEventListener('pointerdown', (e) => { if (this.joyId !== null) return; this.joyId = e.pointerId; this.origin = { x: e.clientX, y: e.clientY }; this.joy.style.display = 'block'; this.joy.style.left = `${e.clientX}px`; this.joy.style.top = `${e.clientY}px`; this.zone.setPointerCapture(e.pointerId); input.setTouchMove(0, 0); });
@@ -33,6 +34,15 @@ export class TouchControls {
     this.fin = this.el.querySelector('.tfin')!;
     this.fin.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setFinesse(!this.finesseOn); });
     this.fin.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Free kicks: hold a curl button to bend it
+    this.curlEl = this.el.querySelector('.tcurl')!;
+    for (const c of Array.from(this.curlEl.querySelectorAll<HTMLElement>('button'))) {
+      const v = Number(c.dataset.c);
+      c.addEventListener('pointerdown', (e) => { e.preventDefault(); c.classList.add('pressed'); input.touchCurl = v; this.lastSourceTouch(); });
+      const up = () => { c.classList.remove('pressed'); if (input.touchCurl === v) input.touchCurl = 0; };
+      c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up); c.addEventListener('pointerleave', up);
+      c.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
     for (const b of Array.from(this.el.querySelectorAll<HTMLElement>('.tbtn'))) {
       const name = b.dataset.b!; this.buttons[name] = b;
       // FIFA layout: the left face button crosses when attacking and slides when defending
@@ -46,6 +56,14 @@ export class TouchControls {
     }
   }
   private defending = false;
+  private curlEl!: HTMLElement; private fkOn = false;
+  private lastSourceTouch() { input.lastSource = 'touch'; }
+  /** Free-kick mode: show the curl buttons (finesse is not used). */
+  setFreeKick(on: boolean) {
+    if (on === this.fkOn) return; this.fkOn = on;
+    this.curlEl.classList.toggle('on', on); if (on) this.setFinesse(false); this.fin.style.visibility = on ? 'hidden' : '';
+    if (!on) input.touchCurl = 0;
+  }
   private fin!: HTMLElement; private finesseOn = false; private finTimer = 0;
   private setFinesse(on: boolean) { this.finesseOn = on; this.fin.classList.toggle('on', on); input.setTouchButton('finesse', on); }
   setDefending(d: boolean) {

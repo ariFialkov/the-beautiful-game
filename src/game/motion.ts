@@ -299,6 +299,14 @@ export class Motion {
       }
       case 'header': {
         const j = Math.sin(Math.PI * clamp(t / dur, 0, 1));
+        if (d.wall) {
+          // a free-kick wall jumping together: straight up, arms tucked in front, chin down
+          T.pelvis.y += 0.17 * h * j;
+          for (const s of ['L', 'R'] as Side[]) { const f = T.foot[s]; f.pos.set(x + lw.x * sideSign(s) * 0.1 * h, T.pelvis.y - 0.6 * h, z + lw.z * sideSign(s) * 0.1 * h); f.pitch = -0.5 * j; }
+          T.arm.L.x = -0.35; T.arm.R.x = -0.35; T.arm.L.z = 0.15; T.arm.R.z = -0.15; T.arm.L.elbow = T.arm.R.elbow = 1.4; T.arm.L.ik = T.arm.R.ik = null;
+          T.headPitch = lerp(T.headPitch, 0.35, 0.8);
+          break;
+        }
         T.pelvis.y += 0.38 * h * j;
         for (const s of ['L', 'R'] as Side[]) { const f = T.foot[s]; f.pos.set(x - fw.x * 0.12 * h + lw.x * sideSign(s) * 0.12 * h, T.pelvis.y - 0.62 * h, z - fw.z * 0.12 * h + lw.z * sideSign(s) * 0.12 * h); f.pitch = -0.6; }
         const snap = t / dur < 0.4 ? -0.35 * ease(t / (dur * 0.4)) : -0.35 + 0.85 * ease((t / dur - 0.4) / 0.25);

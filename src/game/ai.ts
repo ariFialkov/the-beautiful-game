@@ -111,9 +111,15 @@ function setPieceDecision(m: Match, team: TeamState, a: Agent, skill: number): b
   const corner = () => (rnd() < 0.5 ? -1 : 1) * goalWidth * (0.28 + rnd() * 0.14);
   switch (sp.kind) {
     case 'penalty': { const z = corner(); m.startKick(a, 'shoot', 0.7 + rnd() * 0.2, v2.norm(v2.sub({ x: goal.x, z }, a.pos)), { botSkill: skill, target: { x: goal.x, z, y: 0.4 + rnd() * 1.4 } }); return true; }
-    case 'freekick':
-      if (dGoal < (m.pitch.futsal ? 14 : 29) && Math.abs(a.pos.z) < 22) { const z = corner(); m.startKick(a, 'shoot', 0.75, v2.norm(v2.sub({ x: goal.x, z }, a.pos)), { finesse: true, botSkill: skill, target: { x: goal.x, z, y: 1.4 + rnd() * 0.7 } }); return true; }
+    case 'freekick': {
+      // lined up like a real one: a pause over the ball, then (in range) a strike that clears the wall
+      const fk = m.freeKick;
+      if (fk && fk.taker === a) {
+        if (m.time < fk.aiAt) return true;
+        if (fk.direct && rnd() < 0.85 && m.aiFreeKick(a, skill)) return true;
+      } else if (dGoal < (m.pitch.futsal ? 14 : 29) && Math.abs(a.pos.z) < 22) { const z = corner(); m.startKick(a, 'shoot', 0.75, v2.norm(v2.sub({ x: goal.x, z }, a.pos)), { finesse: true, botSkill: skill, target: { x: goal.x, z, y: 1.4 + rnd() * 0.7 } }); return true; }
       break;
+    }
     case 'corner': {
       const target = bestTeammate(m, team, a, (t) => !t.isGK && Math.abs(t.pos.x - goal.x) < boxDepth + 3, (t) => t.card.attrs.physical + rnd() * 30);
       if (target && rnd() < 0.8) { m.startKick(a, m.pitch.futsal ? 'pass' : 'lob', 0.75, v2.norm(v2.sub(target.pos, a.pos)), { targetAgent: target, botSkill: skill }); return true; }
@@ -317,6 +323,8 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     }
     if (inPoss && m.mods.pushTeam === team.index && m.mods.pushLevel > 0.4 && ['ST', 'LW', 'RW', 'CAM', 'LM', 'RM'].includes(a.role) && !fixed) { t = { x: t.x + team.attackDir * 8, z: t.z }; sprint = true; }
     if (m.setPiece?.kind === 'corner' && m.setPiece.team === team.index && a !== m.setPiece.taker && a.home.x > -0.3) { const gx = team.attackDir * (m.pitch.length / 2 - (futsal ? 4 : 8)); t = { x: gx, z: a.home.z * 6 }; }
+    // a shooting free kick: the forwards and midfielders gather on the edge of the six-yard box for the rebound
+    if (m.freeKick?.direct && m.freeKick.team === team.index && a !== m.freeKick.taker && a.home.x > -0.3) { const gx = team.attackDir * (m.pitch.length / 2 - (futsal ? 4 : 9)); t = { x: gx, z: a.home.z * (futsal ? 3 : 7) }; }
     targets.set(a, { t, sprint, fixed, arrive });
   }
   // ---- spacing: teammates' spots push apart so nobody stacks up on the same patch ----
@@ -468,6 +476,8 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
     target = v2.add(center, v2.scale(v2.norm(toBall), out));
     target.z = Math.max(-goalWidth / 2 + 0.3, Math.min(goalWidth / 2 - 0.3, target.z));
     k.ai.mode = 'guard';
+    // a free kick in range: set on the line, shaded to the side the wall doesn't cover
+    if (m.freeKick?.direct && m.freeKick.team !== team.index) target = { x: gx + dir * 0.45, z: m.freeKick.keeperZ };
   }
   const d = v2.sub(target, k.pos); const dl = v2.len(d);
   k.intent.move = dl > 0.2 ? v2.scale(v2.norm(d), Math.min(1, dl / 1.2)) : { x: 0, z: 0 };
