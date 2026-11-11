@@ -23,13 +23,15 @@ class Audio {
   startCrowd() {
     this.ensure(); if (!this.ctx || !this.master || this.crowd) return;
     const src = this.noise(4); if (!src) return; src.loop = true;
-    const filter = this.ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 500; filter.Q.value = 0.5;
-    const gain = this.ctx.createGain(); gain.gain.value = 0.05;
+    const filter = this.ctx.createBiquadFilter(); filter.type = 'bandpass'; filter.frequency.value = 900; filter.Q.value = 0.7;
+    const gain = this.ctx.createGain(); gain.gain.value = 0;
     src.connect(filter).connect(gain).connect(this.master); src.start();
     this.crowd = { gain, filter };
   }
   stopCrowd() { if (this.crowd && this.ctx) { this.crowd.gain.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5); setTimeout(() => { this.crowd?.gain.disconnect(); this.crowd = null; }, 600); } }
-  crowdLevel(level: number) { if (this.crowd && this.ctx) this.crowd.gain.gain.setTargetAtTime(0.04 + level * 0.25, this.ctx.currentTime, 0.2); }
+  /** No constant background bed (a looping noise hum reads as cabin noise): the crowd is only heard as a swell when
+   *  something happens — a goal, a big save — and falls silent again. */
+  crowdLevel(level: number) { if (this.crowd && this.ctx) this.crowd.gain.gain.setTargetAtTime(level < 0.3 ? 0 : level * 0.22, this.ctx.currentTime, level < 0.3 ? 0.5 : 0.15); }
   kick(power = 0.5) {
     if (!this.ctx || !this.master || !this.enabled) return;
     const src = this.noise(0.12); if (!src) return;

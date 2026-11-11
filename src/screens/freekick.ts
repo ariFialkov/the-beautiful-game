@@ -107,7 +107,7 @@ export class FreeKickScreen implements Screen {
       switch (e.type) {
         case 'kick': audio.kick(0.9); break;
         case 'goal': showBanner(e.who === 'player' ? 'GOAL!<small>Top class</small>' : 'THEY SCORE<small>Rival levels it</small>', 2); audio.goal(); if (e.who === 'player' && state.settings.vibration && navigator.vibrate) navigator.vibrate(100); break;
-        case 'miss': showBanner(e.who === 'player' ? 'MISS<small>' + e.how + '</small>' : 'RIVAL MISSES<small>' + e.how + '</small>', 2); if (e.how === 'post' || e.how === 'bar') audio.post(); else if (e.how === 'saved') audio.crowdLevel(0.4); break;
+        case 'miss': showBanner(e.who === 'player' ? 'MISS<small>' + e.how + '</small>' : 'RIVAL MISSES<small>' + e.how + '</small>', 2); if (e.how === 'post' || e.how === 'bar') audio.post(); else if (e.how === 'saved') { audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0), 1500); } break;
         case 'phase': if (e.phase === 'aim') showToast(`Round ${game.round + 1} · your kick`); if (e.phase === 'botThink') showToast('Rival steps up…'); pips(); break;
         case 'end': showBanner(e.won ? 'YOU WIN<small>Duel over</small>' : 'DEFEAT<small>Duel over</small>', 3); setTimeout(() => this.finish(false), 2600); break;
       }

@@ -61,8 +61,9 @@ export class MatchScreen implements Screen {
     const hud = el('div', 'hud'); this.hud = hud;
     hud.innerHTML = `
       <div class="stake-tag">STAKE <b>${fmt(p.stake)}</b> · ${script.mode.toUpperCase()}</div>
-      <div class="scoreboard"><div class="team home" style="background:${hk.primary};color:${contrast(hk.primary)}">${crestSvg(home, 22)} <span>${match.teams[0].setup.short}</span></div><div class="score"><span class="h">0</span><span>–</span><span class="a">0</span></div><div class="team away" style="background:${ak.primary};color:${contrast(ak.primary)}"><span>${match.teams[1].setup.short}</span> ${crestSvg(away, 22)}</div><div class="clock">00:00</div></div>
-      <div class="banner"></div><div class="toast"></div><div class="power"><i></i></div>
+      <div class="scoreboard"><div class="team home" style="background:${hk.primary};color:${contrast(hk.primary)}">${crestSvg(home, 22)} <span>${match.teams[0].setup.short}</span><em class="reds"></em></div><div class="score"><span class="h">0</span><span>–</span><span class="a">0</span></div><div class="team away" style="background:${ak.primary};color:${contrast(ak.primary)}"><em class="reds"></em><span>${match.teams[1].setup.short}</span> ${crestSvg(away, 22)}</div><div class="clock">00:00</div></div>
+      <div class="banner"></div><div class="card-pop"><i></i><div><b></b><small></small></div></div><div class="toast"></div><div class="power"><i></i></div>
+      <div class="pen-panel"><b>PENALTY</b><div class="pen-timing"><span class="green"></span><i></i></div><div class="fk-curl-label">Hold shoot for power · press again as he strikes it</div></div>
       <div class="fk-panel"><b>FREE KICK</b><div class="fk-curl"><i></i></div><div class="fk-curl-label">Curl</div></div>
       <div class="controls-hint"></div>
       <div class="replay-tag"><b>REPLAY</b><span class="skip"></span></div>
@@ -80,8 +81,13 @@ export class MatchScreen implements Screen {
         case 'goal': { this.replayDue = true; const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
         case 'post': this.showToast(e.bar ? 'Off the crossbar!' : 'Off the post!'); audio.post(); break;
         case 'save': this.showToast(e.caught ? `Held by ${e.keeper.card.shortName}` : `Parried by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
-        case 'foul': this.showToast(e.card ? `Yellow card · ${e.by.card.shortName}` : e.penalty ? 'Penalty!' : `Foul by ${e.by.card.shortName}`); audio.whistle(); if (e.penalty) this.showBanner('PENALTY', 1.8); break;
+        case 'offside': this.showToast(`Offside · ${e.agent.card.shortName}`); audio.whistle(); this.showBanner('OFFSIDE', 1.4); break;
+        case 'foul':
+          if (e.card) this.showCard(e.card, e.by.card.name, e.secondYellow);
+          else this.showToast(e.penalty ? 'Penalty!' : `Foul by ${e.by.card.shortName}`);
+          audio.whistle(); if (e.penalty) this.showBanner('PENALTY', 1.8); break;
         case 'setpiece': if (e.kind === 'freekick') { if (match.freeKick?.taker !== match.controlled) this.showToast(`Free kick · ${match.teams[e.team].setup.short}`); } else if (e.kind === 'penalty') this.showToast(`Penalty · ${match.teams[e.team].setup.short}`); break;
+        case 'penaltyTiming': if (match.penalty?.taker === match.controlled) this.showToast(e.result === 'green' ? 'Green timing!' : e.result === 'good' ? 'Good timing' : 'Poor timing'); break;
         case 'kickoff':
           // after a goal: the instant replay (skippable), then the restart
           if (this.replayDue && !this.ended && this.view.startReplay(() => this.replayDone())) { this.replayDue = false; match.setPaused(true); this.hud.classList.add('replaying'); this.banner.classList.remove('show'); this.bannerTimer = 0; this.updateSkipHint(); }
@@ -117,19 +123,38 @@ export class MatchScreen implements Screen {
     // HUD
     const sb = this.hud.querySelector('.scoreboard')!;
     sb.querySelector('.h')!.textContent = String(m.teams[0].score); sb.querySelector('.a')!.textContent = String(m.teams[1].score);
+    const reds = sb.querySelectorAll('.reds'); for (let i = 0; i < 2; i++) { const n = m.teams[i].reds; const h = '<i></i>'.repeat(n); if (reds[i].innerHTML !== h) reds[i].innerHTML = h; }
+    if (this.cardTimer > 0) { this.cardTimer -= dt; if (this.cardTimer <= 0) this.hud.querySelector('.card-pop')!.classList.remove('show'); }
     const c = m.clockText(); const clock = sb.querySelector('.clock')!; clock.textContent = c.text; clock.classList.toggle('stoppage', c.stoppage);
-    if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'fk' ? 1.0 : m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
+    if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'fk' || m.charge.kind === 'pen' ? 1.0 : m.charge.kind === 'through' ? 0.6 : m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
     // free kick: the taker's panel (curl meter) and hints
     const fk = m.freeKick && m.freeKick.taker === m.controlled && !m.autopilot ? m.freeKick : null;
     const panel = this.hud.querySelector('.fk-panel') as HTMLElement; panel.classList.toggle('show', !!fk);
     if (fk) (panel.querySelector('.fk-curl i') as HTMLElement).style.left = `${50 + fk.curl * 50}%`;
     this.touch?.setFreeKick(!!fk);
+    // penalty: the taker's panel with the timing bar (and the keeper's hint when facing one)
+    const pen = m.penalty; const penPanel = this.hud.querySelector('.pen-panel') as HTMLElement;
+    const taking = !!pen && pen.taker === m.controlled && !m.autopilot && pen.stage !== 'struck'; const facing = !!pen && pen.team !== m.humanTeam && pen.stage !== 'struck';
+    penPanel.classList.toggle('show', taking || facing);
+    if (taking || facing) {
+      (penPanel.querySelector('.fk-curl-label') as HTMLElement).textContent = taking ? 'Aim with the stick · hold shoot for power · press again as he strikes it' : 'Hold the stick where you want the keeper to dive (or leave it to stay big)';
+      const tm = m.penaltyTiming(); const bar = penPanel.querySelector('.pen-timing') as HTMLElement; bar.style.visibility = tm ? 'visible' : 'hidden';
+      if (tm) { (bar.querySelector('i') as HTMLElement).style.left = `${tm.progress * 100}%`; const g = bar.querySelector('.green') as HTMLElement; g.style.left = `${tm.green[0] * 100}%`; g.style.width = `${(tm.green[1] - tm.green[0]) * 100}%`; }
+    }
     this.touch?.setDefending(!(m.controlled?.hasBall) && !fk);
     const hint = this.hud.querySelector('.controls-hint')!; const txt = m.autopilot ? 'AUTO-PILOT · touch the controls to take over' : fk ? freeKickHint(fk.direct) : controllerHint(); if (hint.textContent !== txt) hint.textContent = txt;
     if (this.bannerTimer > 0) { this.bannerTimer -= dt; if (this.bannerTimer <= 0) this.banner.classList.remove('show'); }
     if (this.toastTimer > 0) { this.toastTimer -= dt; if (this.toastTimer <= 0) this.toast.classList.remove('show'); }
   }
   private showBanner(html: string, secs: number) { this.banner.innerHTML = html; this.banner.classList.add('show'); this.bannerTimer = secs; }
+  private cardTimer = 0;
+  /** A card shown to a player: the card itself, with who and why. */
+  private showCard(kind: 'yellow' | 'red', name: string, second?: boolean) {
+    const el2 = this.hud.querySelector('.card-pop') as HTMLElement; el2.classList.remove('yellow', 'red'); el2.classList.add(kind, 'show');
+    (el2.querySelector('b') as HTMLElement).textContent = kind === 'red' ? (second ? 'SECOND YELLOW · RED CARD' : 'RED CARD') : 'YELLOW CARD';
+    (el2.querySelector('small') as HTMLElement).textContent = name + (kind === 'red' ? ' is sent off' : ' is booked');
+    this.cardTimer = 2.6;
+  }
   private showToast(text: string) { this.toast.textContent = text; this.toast.classList.add('show'); this.toastTimer = 1.8; }
 
   private togglePause() {

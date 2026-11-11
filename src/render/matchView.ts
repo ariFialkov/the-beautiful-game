@@ -42,6 +42,19 @@ function reticleTexture(): THREE.CanvasTexture {
   reticleTex = new THREE.CanvasTexture(c); reticleTex.anisotropy = 4; reticleTex.premultiplyAlpha = true; return reticleTex; // (no dark fringe)
 }
 
+/** A referee's card: rounded, glossy, with a thin white edge. */
+const cardTex: Record<string, THREE.CanvasTexture> = {};
+function cardTexture(kind: 'yellow' | 'red') {
+  if (cardTex[kind]) return cardTex[kind];
+  const c = document.createElement('canvas'); c.width = 64; c.height = 88; const g = c.getContext('2d')!;
+  g.fillStyle = '#ffffff'; g.beginPath(); g.roundRect(2, 2, 60, 84, 7); g.fill();
+  const grd = g.createLinearGradient(0, 0, 64, 88);
+  if (kind === 'yellow') { grd.addColorStop(0, '#fff07a'); grd.addColorStop(1, '#f0b800'); } else { grd.addColorStop(0, '#ff5a5a'); grd.addColorStop(1, '#b80c18'); }
+  g.fillStyle = grd; g.beginPath(); g.roundRect(5, 5, 54, 78, 5); g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.28)'; g.beginPath(); g.moveTo(5, 5); g.lineTo(59, 5); g.lineTo(5, 50); g.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return (cardTex[kind] = t);
+}
+
 /** Free-kick aim marker: a bold gold ring and dot with a soft shadow, readable against the white net at 30 m. */
 let aimTex: THREE.CanvasTexture | null = null;
 function aimTexture(): THREE.CanvasTexture {
@@ -91,8 +104,11 @@ export class MatchView {
   private replay: { frames: MatchView['rec']; tau: number; t1: number; goalT: number; side: number; shot: number; onEnd: () => void } | null = null;
   private poseA = new Pose(); private poseB = new Pose();
   /** Free kicks: the aim marker on the goal, and whether the third-person free-kick camera is on. */
-  private aimMark: THREE.Mesh; private fkCam: object | null = null; private fkSide = 0;
+  private aimMark: THREE.Mesh; private fkCam: object | null = null; private fkSide = 0; private penFk: { src: object; fk: any } | null = null;
 
+  /** Booked players carry a small yellow card over their head; a card being shown pops up over the offender. */
+  private bookings = new Map<Agent, THREE.Sprite>();
+  private shown: { sprite: THREE.Sprite; agent: Agent; t: number } | null = null;
   constructor(private stage: Stage, public match: Match, night: boolean) {
     const [h, a] = match.opts.teams;
     const low = stage.quality === 'low';
@@ -136,10 +152,42 @@ export class MatchView {
     this.rig = new CameraRig(stage.camera, match.pitch.length, match.pitch.width);
     this.rig.heightMul = state.settings.cameraHeight;
     this.rig.setFixed(new THREE.Vector3(0, 12, -(match.pitch.width / 2 + 9)), new THREE.Vector3(0, 0.4, -3));
-    match.on((e) => { if (e.type === 'goal') this.stadium.cheer(1); if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5); });
+    match.on((e) => {
+      if (e.type === 'goal') this.stadium.cheer(1); if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5);
+      if (e.type === 'foul' && e.card) this.showCard(e.by, e.card);
+    });
   }
 
   get replaying() { return !!this.replay; }
+
+  private showCard(a: Agent, kind: 'yellow' | 'red') {
+    if (this.shown) this.scene.remove(this.shown.sprite);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: cardTexture(kind), transparent: true, depthTest: false, sizeAttenuation: false }));
+    sp.renderOrder = 5; this.scene.add(sp); this.shown = { sprite: sp, agent: a, t: 0 };
+    if (kind === 'yellow' && !this.bookings.has(a)) {
+      // a fixed size on screen (a small badge), however near or far the camera is
+      const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: cardTexture('yellow'), transparent: true, depthTest: false, sizeAttenuation: false }));
+      tag.scale.set(0.017, 0.024, 1); tag.renderOrder = 4; tag.visible = false; this.scene.add(tag); this.bookings.set(a, tag);
+    }
+    if (kind === 'red') { const tag = this.bookings.get(a); if (tag) { this.scene.remove(tag); this.bookings.delete(a); } }
+  }
+  /** The card animation (flips up out of the referee's pocket, holds, fades) and the booking tags. */
+  private updateCards(dt: number) {
+    const al = this.match.alpha;
+    const at = (a: Agent) => new THREE.Vector3(a.prevPos.x + (a.pos.x - a.prevPos.x) * al, 0, a.prevPos.z + (a.pos.z - a.prevPos.z) * al);
+    const cam = this.stage.camera.position;
+    for (const [a, tag] of this.bookings) { tag.position.copy(at(a)).setY(2.25); tag.visible = (!this.shown || this.shown.agent !== a) && tag.position.distanceTo(cam) > 5; }
+    const c = this.shown; if (!c) return;
+    c.t += dt; const t = c.t; c.sprite.visible = true;
+    const pop = Math.min(1, t / 0.35); const s = (1 - Math.pow(1 - pop, 3)) * (1 + 0.25 * Math.sin(pop * Math.PI));
+    const fade = t > 2.3 ? Math.max(0, 1 - (t - 2.3) / 0.5) : 1;
+    c.sprite.scale.set(0.05 * s, 0.069 * s, 1); // (screen-sized: as clear from the broadcast camera as up close)
+    c.sprite.material.rotation = (1 - pop) * 1.8 + Math.sin(t * 2.2) * 0.06; // spins up, then a gentle sway in the raised hand
+    c.sprite.material.opacity = fade;
+    c.sprite.position.copy(at(c.agent)).setY(2.4 + 0.5 * pop);
+    if (c.sprite.position.distanceTo(this.stage.camera.position) < 4) c.sprite.visible = false;
+    if (fade <= 0) { this.scene.remove(c.sprite); this.shown = null; }
+  }
 
   frame(dt: number, time: number) {
     const m = this.match; const al = m.alpha;
@@ -170,6 +218,7 @@ export class MatchView {
     const sh = Math.max(0.3, 1 - (by - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.35 * sh;
     this.updateReticle(dt);
+    this.updateCards(dt);
 
     // Camera: ball-driven broadcast framing, biased toward the direction of play of the team in possession.
     const target = new THREE.Vector3(bx, by, bz);
@@ -205,6 +254,7 @@ export class MatchView {
     const gf = frames.reduce((a, f) => (Math.abs(f.t - goalT) < Math.abs(a.t - goalT) ? f : a));
     this.replay = { frames, tau: t0, t1: frames[frames.length - 1].t, goalT, side: Math.sign(gf.ball[0]) || 1, shot: -1, onEnd };
     this.reticle.visible = false; this.aimMark.visible = false;
+    for (const tag of this.bookings.values()) tag.visible = false; if (this.shown) this.shown.sprite.visible = false;
     return true;
   }
   /** End the replay now (skipped) and cut back to the match camera. */
@@ -253,7 +303,11 @@ export class MatchView {
    *  he's facing for one that can only be played in), and stays on the strike for a moment before blending back. The
    *  human's aim shows as a marker on the goal. Returns false when the broadcast camera should run. */
   private freeKickCamera(dt: number, ball: THREE.Vector3): boolean {
-    const m = this.match; const fk = m.freeKick; const lf = m.lastFreeKick;
+    const m = this.match; const lf = m.lastFreeKick;
+    // a penalty is framed like a direct free kick (behind the taker, looking at goal, the aim on the goal)
+    const pen = m.penalty && m.penalty.stage !== 'struck' ? m.penalty : null;
+    if (pen && m.setPiece?.kind === 'penalty' && this.penFk?.src !== pen) this.penFk = { src: pen, fk: { team: pen.team, pos: { ...m.setPiece.pos }, direct: true, aim: pen.aim, dir: { x: m.teams[pen.team].attackDir, z: 0 }, taker: pen.taker } };
+    const fk = m.freeKick ?? (pen && this.penFk?.src === pen ? this.penFk.fk : null);
     const mine = (t: number) => m.humanTeam === t;
     const live = fk && m.humanTeam !== null && (fk.direct || mine(fk.team)) && (m.phase === 'restart' || m.phase === 'play') ? fk : null;
     const follow = !live && this.fkCam && lf && m.time - lf.at < 0.8 && m.phase === 'play';

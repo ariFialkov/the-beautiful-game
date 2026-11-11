@@ -162,11 +162,21 @@ test('double-tap pass: a bounce pass that hops on its way and still reaches its 
   assert.ok(m.ball.owner === mate || m.ball.lastTouch === mate, 'and reached its man');
 });
 
+test('through balls: with two runners the same way, a short hold finds the near one, a long hold the far one', () => {
+  const { m, passer } = sandbox(); const mates = m.teams[0].agents; const dir = m.teams[0].attackDir;
+  place(passer, 0, 0, dir, 0);
+  const near = mates[9], far = mates[10]; place(near, dir * 8, 3, dir, 0); place(far, dir * 26, 5, dir, 0);
+  near.vel = { x: dir * 5, z: 0 }; far.vel = { x: dir * 5, z: 0 };
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: dir, z: 0.15 }), true, false, 0.1), near);
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: dir, z: 0.15 }), true, false, 0.95), far);
+});
+
 test('LB + through ball is lofted over the top; LB + shoot is a chip', () => {
   const { m, passer, mate } = sandbox(); const dir = m.teams[0].attackDir;
   place(passer, 0, 0, dir, 0); place(mate, dir * 12, 5, dir, 0);
   (m as any).setControlled(passer); m.ball.reset(dir * 0.4, 0); m.ball.owner = passer;
   m.update(1 / 60, { ...press_('through', true, true, false, { x: dir, y: 0.3 }), loft: { down: true, justPressed: false, justReleased: false } });
+  m.update(1 / 60, { ...press_('through', false, false, true, { x: dir, y: 0.3 }), loft: { down: true, justPressed: false, justReleased: false } });
   let apex = 0; for (let i = 0; i < 60 * 2; i++) { m.update(1 / 60, neutral()); if (m.ball.lastTouch === passer && !m.ball.owner) apex = Math.max(apex, m.ball.y); }
   assert.ok(apex > 3, `lofted (apex ${apex.toFixed(1)} m)`);
   // the chip

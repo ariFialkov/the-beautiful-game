@@ -194,6 +194,11 @@ export class Motion {
       ar.ik = null; ar.ikW = 0;
       if (!this.gaitOn && st.swagger > 0.7 && !a.isGK && atype !== 'celebrate') { ar.x = 0.25; ar.z = sg * 0.75; ar.elbow = 1.7; } // hands on hips
     }
+    // a throw-in: holding the ball up behind the head in both hands
+    if (a.throwHold && atype !== 'kick') {
+      for (const s of ['L', 'R'] as Side[]) { const ar = T.arm[s]; ar.x = -2.75; ar.z = sideSign(s) * 0.3; ar.y = 0; ar.elbow = 1.95; ar.ik = null; ar.ikW = 0; }
+      T.sPitch -= 0.08;
+    }
     // head: watch the ball, keep the eyes level; dribblers glance up to scan
     this.scanT += dt;
     let lookX = ball.x, lookY = ball.y, lookZ = ball.z;
@@ -219,6 +224,17 @@ export class Motion {
     const contact = d.contact as { x: number; y: number; z: number } | undefined;
     switch (act.type) {
       case 'kick': {
+        if (d.throwIn) {
+          // the throw: lean back with the ball cocked behind the head, then heave it with both arms, releasing at the top
+          const ts = d.strike ?? 0.42; const wind = ease(t / (ts * 0.55)); const heave = t < ts * 0.55 ? 0 : ease((t - ts * 0.55) / (ts * 0.45)); const follow = t > ts ? ease((t - ts) / 0.25) : 0;
+          for (const s of ['L', 'R'] as Side[]) {
+            const ar = T.arm[s]; ar.z = sideSign(s) * 0.3; ar.y = 0; ar.ik = null; ar.ikW = 0;
+            ar.x = lerp(lerp(-2.75, -3.0, wind), -1.6, heave) + 0.6 * follow; ar.elbow = lerp(lerp(1.95, 2.35, wind), 0.3, heave);
+          }
+          T.sPitch += lerp(lerp(-0.08, -0.45, wind), 0.3, heave) - 0.1 * follow; T.pPitch += lerp(-0.12 * wind, 0.1, heave);
+          T.pelvis.y -= 0.04 * h * wind; // (knees give a little in the wind-up)
+          break;
+        }
         if (d.keeperThrow) {
           // a keeper's throw: an underarm bowl along the floor, or an overarm sling over the top
           const k = clamp(t / Math.max(0.05, dur), 0, 1); const ts = d.strike ?? 0.2; const sw = t < ts ? ease(t / ts) : 1;

@@ -54,10 +54,12 @@ export type MatchEvent =
   | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' } | { type: 'overtime'; size: number }
   | { type: 'out'; kind: 'throw' | 'corner' | 'goalkick' } | { type: 'kick'; kind: KickKind; power: number; agent: Agent }
   | { type: 'tackle'; success: boolean; agent: Agent } | { type: 'switch'; agent: Agent } | { type: 'touch'; agent: Agent; heavy: boolean }
-  | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent } | { type: 'skill'; agent: Agent; move: SkillMove };
+  | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: 'yellow' | 'red' | null; secondYellow?: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent } | { type: 'skill'; agent: Agent; move: SkillMove } | { type: 'penaltyTiming'; result: 'green' | 'good' | 'poor' } | { type: 'offside'; agent: Agent };
 
 export class TeamState {
   score = 0; agents: Agent[] = []; kickoffs = 0;
+  /** Players sent off. */
+  reds = 0;
   constructor(public index: number, public attackDir: 1 | -1, public setup: TeamSetup) {}
 }
 
@@ -88,7 +90,11 @@ export class Match {
   director: Director | null = null;
   mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1] };
   teamSpeedBonus: [number, number] = [1, 1];
-  charge: { kind: 'shoot' | 'pass' | 'lob' | 'fk'; t: number; low?: boolean } | null = null;
+  charge: { kind: 'shoot' | 'pass' | 'lob' | 'fk' | 'through' | 'pen'; t: number; low?: boolean } | null = null;
+  /** A penalty (FIFA style): aim cursor on the goal (springs back to the middle), power, the timed second press, and
+   *  the defending keeper's chosen dive. Null otherwise. */
+  penalty: { team: number; taker: Agent; aim: { z: number; y: number }; stage: 'aim' | 'runup' | 'struck'; power: number; releasedAt: number; pressAt: number; strikeAt: number;
+    guess: { z: number; y: number } | null; aiAt: number; result?: 'green' | 'good' | 'poor' } | null = null;
   /** The free kick being lined up (null otherwise); cleared the moment it is taken. */
   freeKick: FreeKick | null = null;
   /** When the last free kick was struck, and from where (the renderer follows it with the free-kick camera briefly). */
@@ -233,6 +239,12 @@ export class Match {
     }
     this.setPiece = { kind, team: teamIdx, taker, pos };
     if (kind === 'freekick') this.setupFreeKick(teamIdx, pos, taker);
+    this.penalty = null;
+    if (kind === 'penalty') {
+      // a run-up: the taker stands a few strides back, a little to one side
+      const side = Math.random() < 0.5 ? 1 : -1; taker.pos = v2.add(pos, v2.add(v2.scale(into, -2.3), { x: -into.z * side * 0.8, z: into.x * side * 0.8 })); taker.prevPos = { ...taker.pos }; taker.heading = into;
+      this.penalty = { team: teamIdx, taker, aim: { z: 0, y: 1.0 }, stage: 'aim', power: 0, releasedAt: -1, pressAt: -1, strikeAt: -1, guess: null, aiAt: this.time + 2.6 };
+    }
     this.phase = 'restart'; this.phaseTimer = kind === 'penalty' ? 1.8 : kind === 'goalkick' ? 1.2 : 1.0; this.restartAt = this.time;
     this.possessionTeam = teamIdx;
     if (this.humanTeam === teamIdx && (!taker.isGK || kind === 'goalkick')) this.setControlled(taker); // (goal kicks too: you take them with the keeper)
@@ -410,6 +422,7 @@ export class Match {
   private step(h: number) {
     this.stepCount++;
     if (this.freeKick && (this.setPiece?.kind !== 'freekick' || this.setPiece.taker !== this.freeKick.taker)) this.freeKick = null;
+    if (this.penalty && ((this.penalty.stage === 'struck' && this.time - this.penalty.strikeAt > 2.5) || this.phase === 'kickoff' || (this.phase === 'dead' && this.penalty.stage !== 'struck'))) this.penalty = null;
     this.time += h;
     if (this.phase === 'play' || this.phase === 'restart' || this.phase === 'dead') this.clock += h;
     this.director?.update(h);
@@ -454,6 +467,7 @@ export class Match {
     this.expirePassAssist();
     const ev = this.ball.update(h, this.goals);
     if (ev === 'post' || ev === 'bar') { this.emit({ type: 'post', bar: ev === 'bar' }); if (this.ball.inFlightShot) this.ball.inFlightShot = null; }
+    if (this.phase === 'play') this.checkOffside();
     if (this.phase === 'play') this.checkBounds();
     this.separateAgents();
     for (const a of this.agents) a.hasBall = this.ball.owner === a;
@@ -629,7 +643,7 @@ export class Match {
   /** Give a player control of a (stationary) ball, e.g. a set-piece taker. */
   private giveControl(a: Agent) {
     const b = this.ball;
-    if (a.isGK && this.setPiece?.kind !== 'goalkick' && this.inOwnBox(a, b.x, b.z)) { b.held = true; }
+    b.held = a.isGK && this.setPiece?.kind !== 'goalkick' && this.inOwnBox(a, b.x, b.z);
     b.owner = a; b.lastTouch = a; b.lastTouchTeam = a.team; this.possessionTeam = a.team;
     a.ai.nextDecision = this.time + (this.setPiece?.kind === 'kickoff' ? 0.1 : 0.35 + Math.random() * 0.3);
     this.aimUpfield(a);
@@ -663,6 +677,7 @@ export class Match {
       && (input.pass.down || input.shoot.down || input.lob.down || input.through.justPressed)) { this.phase = 'play'; this.phaseTimer = 0; this.giveControl(me); }
     if (this.phase !== 'play' && this.phase !== 'restart') return;
     if (this.freeKick?.taker === me) { this.freeKickInput(input, dt); return; }
+    if (this.penalty) { if (this.penaltyInput(input, dt, me)) return; }
     const b = this.ball; const bp = { x: b.x, z: b.z };
     // Receive assist: a pass is on its way to you. With the stick neutral, or still held the way the pass was aimed,
     // you come to meet it; a new direction on the stick takes over.
@@ -735,22 +750,24 @@ export class Match {
     }
     // double tap (pass or through ball): the pass just asked for becomes a bounce pass (played with a hop over legs)
     if ((input.pass.justPressed || input.through.justPressed) && this.phase === 'play' && this.makeBounce(me, input.pass.justPressed ? 'pass' : 'through')) {
-      if (input.pass.justPressed) this.swallowPass = true; this.charge = null; return;
+      if (input.pass.justPressed) this.swallowPass = true; else this.swallowThrough = true; this.charge = null; return;
     }
     if (this.swallowPass) { if (!input.pass.down) this.swallowPass = false; this.charge = null; if (incoming || canKick) return; }
+    if (this.swallowThrough) { if (!input.through.down) this.swallowThrough = false; this.charge = null; if (incoming || canKick) return; }
     const lobMod = !!input.loft?.down; // LB / L1 (Q), or the touch Loft toggle
     if (incoming && !canKick && this.phase === 'play') {
       if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
       if (input.pass.down) { if (!this.charge || this.charge.kind !== 'pass') this.charge = { kind: 'pass', t: 0 }; else this.charge.t += dt; }
       if (input.lob.down) { if (!this.charge || this.charge.kind !== 'lob') this.charge = { kind: 'lob', t: 0 }; else this.charge.t += dt; }
+      if (input.through.down) { if (!this.charge || this.charge.kind !== 'through') this.charge = { kind: 'through', t: 0 }; else this.charge.t += dt; }
       const c = this.charge; const at = this.time;
       if (input.shoot.justReleased) this.queued = { agent: me, kind: 'shoot', power: Math.min(1, Math.max(0.22, c?.t ?? 0.3) / 0.9), dir: aimDir, finesse: input.finesse.down && !lobMod, chip: lobMod, at };
       else if (input.pass.justReleased) this.queued = { agent: me, kind: 'pass', power: Math.min(1, Math.max(0.2, c?.t ?? 0.2) / 0.5), dir: aimDir, driven: input.finesse.down, at };
-      else if (input.through.justPressed) this.queued = { agent: me, kind: 'through', power: 0.7, dir: aimDir, lofted: lobMod, at };
+      else if (input.through.justReleased) this.queued = { agent: me, kind: 'through', power: Math.min(1, Math.max(0.15, c?.t ?? 0.15) / 0.6), dir: aimDir, lofted: lobMod, at };
       else if (input.lob.justReleased) this.queued = { agent: me, kind: 'lob', power: Math.min(1, Math.max(0.15, c?.t ?? 0.15) / 0.7), dir: aimDir, at };
       // a press arriving just as he's already rising to a header still decides it
       const ha = me.action; if (this.queued && ha?.type === 'header' && !ha.data?.done) { ha.data.intent = this.queued; ha.data.control = false; this.queued = null; }
-      if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
+      if (!input.shoot.down && !input.pass.down && !input.lob.down && !input.through.down) this.charge = null;
       return; // (no tackling your own team-mate's pass)
     }
     // the skill stick (right stick / arrow keys / a swipe): read relative to where he's facing
@@ -772,6 +789,7 @@ export class Match {
       else if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
       if (input.pass.down) { if (!this.charge || this.charge.kind !== 'pass') this.charge = { kind: 'pass', t: 0 }; else this.charge.t += dt; }
       if (input.lob.down) { if (!this.charge || this.charge.kind !== 'lob') this.charge = { kind: 'lob', t: 0 }; else this.charge.t += dt; }
+      if (input.through.down) { if (!this.charge || this.charge.kind !== 'through') this.charge = { kind: 'through', t: 0 }; else this.charge.t += dt; }
       const throwIn = this.setPiece?.kind === 'throw';
       if (input.shoot.justReleased && !me.busy()) {
         const held = this.charge?.t ?? 0.3; const low = !!this.charge?.low; const p = Math.min(1, Math.max(0.22, held) / 0.9);
@@ -786,10 +804,10 @@ export class Match {
       // (RB + pass: a driven pass, fizzed along the floor)
       else if (input.pass.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.2, this.charge?.t ?? 0.2) / 0.5); this.startKick(me, 'pass', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, false, p) ?? undefined, driven: input.finesse.down }); this.charge = null; }
       // (LB + through ball: lofted over the top into the runner's path)
-      else if (input.through.justPressed && !me.busy()) this.startKick(me, 'through', 0.7, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, true, lobMod) ?? undefined, lofted: lobMod });
+      else if (input.through.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.15, this.charge?.t ?? 0.15) / 0.6); this.startKick(me, 'through', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, true, lobMod, p) ?? undefined, lofted: lobMod }); this.charge = null; }
       else if (input.lob.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.15, this.charge?.t ?? 0.15) / 0.7); this.startKick(me, 'lob', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, true, p) ?? undefined }); this.charge = null; }
       if (input.shield.down && b.owner === me) { me.intent.sprint = false; me.intent.move = v2.scale(move, 0.35); me.intent.jockey = true; }
-      if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
+      if (!input.shoot.down && !input.pass.down && !input.lob.down && !input.through.down) this.charge = null;
       return;
     }
     this.charge = null;
@@ -878,16 +896,56 @@ export class Match {
     }
   }
 
+  /** Penalties, FIFA style. Taking one: the stick moves an aim cursor on the goal that springs back to the middle when
+   *  let go; hold shoot for power and release to start the run-up; press shoot again just as he's about to strike it -
+   *  green timing is accurate, early or late isn't (and no press is worst). Facing one: hold the stick the way you want
+   *  the keeper to dive (up for high, down for low), or leave it to stay big in the middle. Returns true if it used the input. */
+  private penaltyInput(input: InputManager, dt: number, me: Agent): boolean {
+    const pen = this.penalty!; const { goalWidth: gw, goalHeight: gh } = this.pitch;
+    const r = this.stickToWorld(1, 0); const sz = Math.abs(r.z) > 0.3 ? Math.sign(r.z) : this.teams[pen.team].attackDir; // screen right, across the goal
+    const st = input.move;
+    if (pen.team !== this.humanTeam) {
+      // defending: the dive (decided by where the stick is held when the ball is struck)
+      pen.guess = Math.hypot(st.x, st.y) < 0.3 ? { z: 0, y: 1.0 } : { z: -this.teams[pen.team].attackDir * 0 + st.x * sz * (gw / 2 - 0.3), y: Math.max(0.3, Math.min(2.0, 1.0 + st.y * 0.9)) };
+      return false;
+    }
+    if (pen.taker !== me || pen.stage === 'struck') return false;
+    me.intent.move = { x: 0, z: 0 }; me.intent.sprint = false;
+    // the cursor: pulled to where the stick points, and back to the middle when it's let go
+    const tz = st.x * sz * (gw / 2 + 0.6), ty = 1.0 + st.y * (gh / 2 + 0.3);
+    const k = 1 - Math.exp(-dt * 7); pen.aim.z += (tz - pen.aim.z) * k; pen.aim.y += (ty - pen.aim.y) * k;
+    if (pen.stage === 'aim') {
+      if (this.phase !== 'play' || this.ball.owner !== me) return true;
+      if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'pen') this.charge = { kind: 'pen', t: 0 }; else this.charge.t += dt; }
+      if (input.shoot.justReleased && this.charge?.kind === 'pen') {
+        pen.power = Math.max(0.15, Math.min(1, this.charge.t / 1.0)); pen.stage = 'runup'; pen.releasedAt = this.time; this.charge = null;
+        const gx = this.teams[pen.team].attackDir * this.pitch.length / 2;
+        this.startKick(me, 'shoot', pen.power, v2.norm({ x: gx - this.ball.x, z: pen.aim.z - this.ball.z }), { pen: true });
+      }
+      return true;
+    }
+    // the run-up: the second press, timed to the strike
+    if (input.shoot.justPressed && pen.pressAt < 0) pen.pressAt = this.time;
+    return true;
+  }
+  /** For the HUD: how far through the run-up (0..1) and where the green zone is. */
+  penaltyTiming(): { progress: number; green: [number, number] } | null {
+    const pen = this.penalty; if (!pen || pen.stage !== 'runup') return null;
+    const act = pen.taker.action; const strikeAt = act?.type === 'kick' ? this.time - act.t + (act.data.strike ?? 0.2) : pen.releasedAt + 0.7;
+    const total = Math.max(0.2, strikeAt - pen.releasedAt);
+    return { progress: Math.min(1, (this.time - pen.releasedAt) / total), green: [Math.max(0, (total - 0.13) / total), Math.min(1, (total - 0.01) / total)] };
+  }
+
   /** A first-time pass or shot queued while the ball was on its way. */
   queued: { agent: Agent; kind: KickKind; power: number; dir: V2; finesse?: boolean; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; at: number } | null = null;
   /** A queued action for a ball arriving at head height: the header (at goal, or on to a team-mate) it becomes. */
   headerIntent: { agent: Agent; q: NonNullable<Match['queued']>; until: number } | null = null;
   /** The release of a double-tapped pass is swallowed (the first tap's pass has become a bounce pass). */
-  private swallowPass = false;
+  private swallowPass = false; private swallowThrough = false;
   private playQueued(me: Agent, q: NonNullable<Match['queued']>) {
     // the receiver is picked now, from where everyone is at the moment of the strike
     const opts = q.kind === 'shoot' ? { finesse: q.finesse, chip: q.chip }
-      : { targetAgent: this.pickPassTarget(me, q.dir, q.kind === 'through', q.kind === 'lob' || !!q.lofted, q.kind === 'through' ? undefined : q.power) ?? undefined, driven: q.driven, lofted: q.lofted, bounce: q.bounce };
+      : { targetAgent: this.pickPassTarget(me, q.dir, q.kind === 'through', q.kind === 'lob' || !!q.lofted, q.power) ?? undefined, driven: q.driven, lofted: q.lofted, bounce: q.bounce };
     this.startKick(me, q.kind, q.power, q.dir, opts);
   }
   /** Double tap: turn the pass (or through ball) just asked for - not yet struck - into a bounce pass. */
@@ -903,7 +961,7 @@ export class Match {
 
   /* ------------------------------ kicking ------------------------------ */
   /** Request a kick. The player takes it as soon as the ball is in reach (approaching it if needed). */
-  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; keeperThrow?: 'roll' | 'overarm'; punt?: boolean; neutral?: boolean }) {
+  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; keeperThrow?: 'roll' | 'overarm'; punt?: boolean; neutral?: boolean; pen?: boolean }) {
     if (a.busy()) return;
     if (a === this.controlled) this.shotTap = null;
     a.pendingKick = { kind, power, dir, opts, t0: this.time };
@@ -962,7 +1020,8 @@ export class Match {
       if (a.legsBusy() || (b.owner && !mine) || this.time - pk.t0 > 1.4) { a.pendingKick = null; continue; }
       if (a.action?.type === 'kick') continue;
       const held = mine && b.held;
-      const strike = held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : a === this.controlled && !this.autopilot ? 0.16 : 0.13;
+      const throwing = a.throwHold; // (a throw-in: the full wind-up and heave)
+      const strike = throwing ? 0.42 : held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : a === this.controlled && !this.autopilot ? 0.16 : 0.13;
       // where the ball and the player will be at the moment of the strike
       const c = this.ballAt(strike);
       // (a taker stepping up to a placed ball strikes it from where he actually is, not where his run-up would carry him)
@@ -970,12 +1029,12 @@ export class Match {
       const ap = placed ? v2.add(a.pos, v2.scale(a.vel, strike * 0.2)) : v2.add(a.pos, v2.scale(a.vel, strike * 0.6));
       const r = v2.sub({ x: c.x, z: c.z }, ap);
       const f = v2.dot(r, a.heading), lat = r.x * -a.heading.z + r.z * a.heading.x, d = v2.len(r);
-      const inReach = held || (f > -0.05 && f < 0.95 && Math.abs(lat) < 0.6 && c.y < (pk.kind === 'shoot' ? 1.25 : 1.0) && d < 1.0);
+      const inReach = held || throwing || (f > -0.05 && f < 0.95 && Math.abs(lat) < 0.6 && c.y < (pk.kind === 'shoot' ? 1.25 : 1.0) && d < 1.0);
       if (inReach) {
         const side: Side = lat >= 0 ? 'R' : 'L'; // strike with the foot on the ball's side
         const relV = Math.hypot(b.vx - a.vel.x, b.vz - a.vel.z);
         if (mine && !held && relV > 2.5) { b.vx = a.vel.x * 0.9 + (b.vx - a.vel.x) * 0.3; b.vz = a.vel.z * 0.9 + (b.vz - a.vel.z) * 0.3; b.setRolling(); } // set touch
-        a.startAction('kick', strike + 0.32, side === 'R' ? 1 : -1, { ...pk.opts, ...pk, strike, held, side, dir: pk.dir, contact: { x: c.x, y: c.y, z: c.z } });
+        a.startAction('kick', strike + 0.32, side === 'R' ? 1 : -1, { ...pk.opts, ...pk, strike, held, side, dir: pk.dir, contact: { x: c.x, y: c.y, z: c.z }, throwIn: throwing });
         a.intent.face = pk.dir;
       } else if (d < 4 && (!mine || this.setPiece?.taker === a || d > 1.0)) {
         // step up to the ball (set pieces) or meet it (first-time strikes)
@@ -1019,7 +1078,7 @@ export class Match {
       const inBox = Math.abs(m.pos.x - t.attackDir * L / 2) < this.pitch.boxDepth && Math.abs(m.pos.z) < this.pitch.boxWidth / 2;
       // the power bar says how far: it picks between team-mates at similar angles
       // the power bar says how far: it picks between team-mates at similar angles (a harder cross finds the further man)
-      const depth = power === undefined || through ? 0 : lofted ? Math.abs(dist - (10 + 45 * power)) * 0.04 : Math.abs(dist - (4 + 34 * power)) * 0.025;
+      const depth = power === undefined ? 0 : through ? Math.abs(dist - (8 + 36 * power)) * 0.035 : lofted ? Math.abs(dist - (10 + 45 * power)) * 0.04 : Math.abs(dist - (4 + 34 * power)) * 0.025;
       const s = -ang * (semi ? 8 : 4.5) - depth - dist * (lofted ? 0.006 : through ? 0.01 : 0.02) - (through ? Math.max(0, dist - 32) * 0.06 : 0) + Math.min(marked, 6) * 0.06 + lane * 0.4
         + (through ? Math.max(0, fwd) * 0.02 : 0) + (lofted && inBox ? 0.5 : 0) - (m.isGK ? (ang < 0.35 && !lofted && !through ? 0.1 : 2) : 0); // (the keeper: the 12th man, when you aim at him)
       if (s > bs) { bs = s; best = m; }
@@ -1100,11 +1159,23 @@ export class Match {
     const human = a.isHuman && !this.autopilot; const skill = d.botSkill ?? 0.55;
     const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.15;
     const throwIn = this.setPiece?.kind === 'throw' && this.setPiece.taker === a && !this.pitch.futsal; // futsal restarts with a kick-in
-    const from: V3 = throwIn ? { x: b.x, y: 2.0, z: b.z } : d.keeperThrow === 'overarm' ? { x: a.pos.x + a.heading.x * 0.3, y: 2.1, z: a.pos.z + a.heading.z * 0.3 }
+    const from: V3 = throwIn ? { x: b.x, y: Math.max(1.6, b.y), z: b.z } : d.keeperThrow === 'overarm' ? { x: a.pos.x + a.heading.x * 0.3, y: 2.1, z: a.pos.z + a.heading.z * 0.3 }
       : d.keeperThrow === 'roll' ? { x: a.pos.x + a.heading.x * 0.5, y: 0.25, z: a.pos.z + a.heading.z * 0.5 } : d.held ? { x: a.pos.x + a.heading.x * 0.35, y: d.punt ? 0.55 : 1.0, z: a.pos.z + a.heading.z * 0.35 } : { x: b.x, y: b.y, z: b.z };
     const sprinting = a.speed() > a.maxSpeed * 0.75;
     let v: V3; let w: V3; let yawErr = 0, pitchErr = 0;
-    if (kind === 'shoot' && d.fk) {
+    if (kind === 'shoot' && d.pen && this.penalty) {
+      // a penalty: struck at the cursor; the timing of the second press decides how true it goes
+      const pen = this.penalty; const gx = team.attackDir * (this.pitch.length / 2 + 0.2); const { goalHeight: gh2 } = this.pitch;
+      const diff = pen.pressAt < 0 ? 9 : pen.pressAt - (this.time - 0.06);
+      pen.result = Math.abs(diff) < 0.07 ? 'green' : Math.abs(diff) < 0.17 ? 'good' : 'poor';
+      const speed = 17 + d.power * 13; const tz = pen.aim.z, ty = Math.max(0.15, Math.min(gh2 + 0.8, pen.aim.y));
+      const sol = solveKick(from, { x: gx, y: ty, z: tz }, speed, 0, 4, this.surface); v = sol.v; w = sol.w;
+      const sigma = (0.018 + d.power * 0.012) * (1.25 - a.skill.shoot * 0.5) * (pen.result === 'green' ? 0.25 : pen.result === 'good' ? 1 : 2.4);
+      yawErr = gauss() * sigma; pitchErr = gauss() * sigma * 0.5 + Math.max(0, d.power - 0.85) * 0.35 + (pen.result === 'poor' ? Math.abs(gauss()) * 0.03 : 0);
+      b.inFlightShot = { team: a.team, target: { x: gx, y: ty, z: tz } };
+      pen.stage = 'struck'; pen.strikeAt = this.time;
+      this.emit({ type: 'penaltyTiming', result: pen.result });
+    } else if (kind === 'shoot' && d.fk) {
       // A free kick: struck at the aim point with the chosen pace and curl (the solver finds the launch; the error grows
       // with power and curl, and an overhit one rises over the bar).
       const f = d.fk as { z: number; y: number; curl: number; speed: number };
@@ -1290,7 +1361,13 @@ export class Match {
       this.lastFreeKick = { at: this.time, team: fk.team, direct: fk.direct, dir: this.freeKickAimDir(fk), pos: fk.pos };
       this.freeKick = null;
     }
+    // (no offside from a throw-in, goal kick or corner)
+    this.markOffside(a, kind, throwIn || (this.setPiece?.taker === a && (this.setPiece.kind === 'goalkick' || this.setPiece.kind === 'corner' || this.setPiece.kind === 'throw')));
     if (this.setPiece?.taker === a) this.setPiece = null;
+    if (this.penalty && this.penalty.taker === a) {
+      this.penalty.stage = 'struck'; if (this.penalty.strikeAt < 0) this.penalty.strikeAt = this.time;
+      this.lastFreeKick = { at: this.time, team: a.team, direct: true, dir: dir0, pos: { x: from.x, z: from.z } }; // (the camera stays on the kick a moment)
+    }
     this.emit({ type: 'kick', kind, power: d.power, agent: a });
   }
 
@@ -1337,10 +1414,12 @@ export class Match {
         const fp = m.footPoint(d.side);
         const dist = Math.hypot(fp.x - b.x, fp.y - b.y, fp.z - b.z);
         const owns = !b.owner || b.owner === a;
-        if (d.held && b.owner === a && act.t >= d.strike) { act.fired = true; this.fireKick(a, d); }
+        if ((d.held || d.throwIn) && b.owner === a && act.t >= d.strike) { act.fired = true; this.fireKick(a, d); }
         else if (owns && !b.held && dist < BALL_R + 0.12) { act.fired = true; this.fireKick(a, d); }
         else if (act.t > d.strike + 0.06) { act.fired = true; if (owns && !b.held && dist < 0.5) this.fireKick(a, d); else a.pendingKick = null; }
       }
+      // (a ball in the keeper's hands is his: a planned touch on it is off)
+      if ((act.type === 'touch' || act.type === 'trap' || act.type === 'header') && !d.done && b.held && b.owner !== a) d.done = true;
       if ((act.type === 'touch' || act.type === 'trap' || act.type === 'header') && !d.done && d.contact && act.t >= d.tc - 0.04) {
         const pt = act.type === 'header' ? m.headPoint() : d.part === 'hands' ? m.handPoint('L').lerp(m.handPoint('R'), 0.5) : d.part === 'thigh' ? m.rig.pos(d.side === 'L' ? 15 : 19) : d.part === 'chest' ? m.rig.point(3, 0, 0.1, 0.12) : m.footPoint(d.side);
         const dist = Math.hypot(pt.x - b.x, pt.y - b.y, pt.z - b.z);
@@ -1417,12 +1496,65 @@ export class Match {
     const goalX = victimTeam.attackDir * L / 2;
     const penalty = Math.abs(spot.x - goalX) < boxDepth && Math.abs(spot.z) < boxWidth / 2;
     const fromBehind = v2.dot(dir, on.heading) > 0.5;
-    const card = slide && (fromBehind || by.yellow > 0 || Math.random() < 0.3);
-    if (card) by.yellow++;
-    this.emit({ type: 'foul', by, on, penalty, card });
+    // the last man (nobody but the keeper between the attacker and goal) bringing someone down through on goal
+    const defenders = this.teams[by.team].agents.filter((a) => !a.isGK && a !== by);
+    const lastMan = defenders.every((d) => (d.pos.x - on.pos.x) * victimTeam.attackDir < 0) && Math.abs(on.pos.x - goalX) < L * 0.4;
+    let card: 'yellow' | 'red' | null = null; let secondYellow = false;
+    if (slide && lastMan && (fromBehind || Math.random() < 0.6)) card = 'red';
+    else if (slide && fromBehind && Math.random() < 0.08) card = 'red'; // (reckless)
+    else if ((slide && (fromBehind || Math.random() < 0.3)) || (!slide && fromBehind && Math.random() < 0.15)) { card = 'yellow'; by.yellow++; if (by.yellow >= 2) { card = 'red'; secondYellow = true; } }
+    if (card === 'red' && by.isGK) { card = 'yellow'; secondYellow = false; } // (keepers aren't sent off here: no spare keeper)
+    this.emit({ type: 'foul', by, on, penalty, card, secondYellow });
+    if (card === 'red') this.sendOff(by);
     const lim = { x: L / 2 - 1, z: this.pitch.width / 2 - 1 };
     const pos = penalty ? { x: goalX - victimTeam.attackDir * (this.pitch.futsal ? 6 : 11), z: 0 } : { x: Math.max(-lim.x, Math.min(lim.x, spot.x)), z: Math.max(-lim.z, Math.min(lim.z, spot.z)) };
     this.deadBall(1.3, () => this.restart(penalty ? 'penalty' : 'freekick', on.team, pos, on));
+  }
+
+  /* ------------------------------ offside ------------------------------ */
+  /** Team-mates of a passer who were offside when the ball was played (judged at that moment, as the assistant does). */
+  offsideWatch: { passer: Agent; at: number; marks: Set<Agent> } | null = null;
+  /** How far up the pitch (along `team`'s attack) the offside line is: the second-last opponent, or the ball if further. */
+  offsideLine(teamIdx: number): number {
+    const dir = this.teams[teamIdx].attackDir;
+    const xs = this.opponentsOf(teamIdx).agents.map((o) => o.pos.x * dir).sort((p, q) => q - p);
+    return Math.max(0, xs.length > 1 ? xs[1] : xs[0] ?? 0, this.ball.x * dir);
+  }
+  inOffsidePosition(a: Agent): boolean {
+    if (this.pitch.futsal || a.isGK) return false;
+    return a.pos.x * this.teams[a.team].attackDir > this.offsideLine(a.team) + 0.15;
+  }
+  private markOffside(a: Agent, kind: KickKind, exempt: boolean) {
+    this.offsideWatch = null;
+    if (this.pitch.futsal || kind === 'shoot' || exempt) return;
+    const marks = new Set(this.teams[a.team].agents.filter((t) => t !== a && this.inOffsidePosition(t)));
+    if (marks.size) this.offsideWatch = { passer: a, at: this.time, marks };
+  }
+  /** The flag goes up when a player who was offside when it was played is the next to touch the ball. */
+  private checkOffside() {
+    const w = this.offsideWatch; if (!w) return;
+    const b = this.ball;
+    if (this.phase !== 'play' || this.time - w.at > 8) { this.offsideWatch = null; return; }
+    if (b.lastTouchTime <= w.at + 1e-6 || b.lastTouch === w.passer) return;
+    this.offsideWatch = null;
+    const who = b.lastTouch;
+    if (!who || !w.marks.has(who)) return;
+    this.emit({ type: 'offside', agent: who });
+    const lim = { x: this.pitch.length / 2 - 1, z: this.pitch.width / 2 - 1 };
+    const pos = { x: Math.max(-lim.x, Math.min(lim.x, who.pos.x)), z: Math.max(-lim.z, Math.min(lim.z, who.pos.z)) };
+    b.vx *= 0.3; b.vz *= 0.3;
+    this.deadBall(1.2, () => this.restart('freekick', 1 - who.team, pos));
+  }
+
+  /** Sent off: he walks off to the touchline and his side plays on a man down. */
+  private sendOff(a: Agent) {
+    const t = this.teams[a.team]; t.reds++;
+    t.agents = t.agents.filter((x) => x !== a); this.agents = this.agents.filter((x) => x !== a);
+    a.action = null; a.pendingKick = null; a.hasBall = false; a.isHuman = false; a.sentOff = true;
+    if (this.ball.owner === a) { this.ball.owner = null; this.ball.held = false; }
+    a.ai.target = { x: Math.max(-this.pitch.length / 2 + 2, Math.min(this.pitch.length / 2 - 2, a.pos.x)), z: Math.sign(a.pos.z || 1) * (this.pitch.width / 2 + 2.5) };
+    this.benched.push(a);
+    if (this.controlled === a) { this.controlled = null; this.setControlled(this.closestToBall(a.team)); }
   }
 
   private deadBall(seconds: number, then: () => void) {
@@ -1478,7 +1610,19 @@ export class Match {
   }
 
   private holdBall() {
-    const b = this.ball; const k = b.owner;
+    const b = this.ball;
+    // a throw-in: the ball is in the thrower's hands, behind his head, until he lets it go
+    const sp = this.setPiece; const thrower = sp?.kind === 'throw' && !this.pitch.futsal ? sp.taker : null;
+    for (const a of this.agents) a.throwHold = a === thrower && !(a.action?.type === 'kick' && a.action.fired) && (this.phase === 'restart' || b.owner === a);
+    if (thrower?.throwHold) {
+      const m = thrower.motion!; const l = m.handPoint('L'), r = m.handPoint('R');
+      b.x = (l.x + r.x) / 2; b.y = Math.max(BALL_R, (l.y + r.y) / 2 + 0.06); b.z = (l.z + r.z) / 2; b.vx = thrower.vel.x; b.vz = thrower.vel.z; b.vy = 0; b.wx = b.wy = b.wz = 0;
+      b.px = b.x; b.py = b.y; b.pz = b.z;
+      return;
+    }
+    const k = b.owner;
+    // only a keeper holds the ball in his hands: anyone else who ends up with a 'held' ball has it at his feet
+    if (b.held && (!k || !k.isGK)) { b.held = false; if (k) { b.x = k.pos.x + k.heading.x * 0.45; b.z = k.pos.z + k.heading.z * 0.45; b.y = BALL_R; b.vx = k.vel.x; b.vz = k.vel.z; b.vy = 0; b.px = b.x; b.py = b.y; b.pz = b.z; } }
     if (!b.held || !k) return;
     if (k.action?.type === 'kick' && k.action.fired) return;
     b.x = k.pos.x + k.heading.x * 0.3; b.z = k.pos.z + k.heading.z * 0.3; b.y = k.action?.type === 'dive' ? 0.4 : 1.05;
@@ -1489,7 +1633,7 @@ export class Match {
   /** Who controls the ball: the dribbler keeps it while it is near him and nobody is closer. */
   private updateOwnership() {
     const b = this.ball; const o = b.owner;
-    if (!o || b.held) return;
+    if (!o || b.held || o.throwHold) return; // (a throw-in is held up in the hands)
     const d = v2.dist(o.pos, { x: b.x, z: b.z });
     if (d > 3.4 || (b.y > 1.6 && o.action?.type !== 'skill') || (o.legsBusy() && o.action?.type !== 'skill')) b.owner = null;
   }
@@ -1641,15 +1785,26 @@ export class Match {
       if (!plan) continue;
       const lat = (plan.x - a.pos.x) * -a.heading.z + (plan.z - a.pos.z) * a.heading.x; const side: Side = lat >= 0 ? 'R' : 'L';
       const contact = { x: plan.x, y: plan.y, z: plan.z };
+      // On your side, a ball in the air from your own team (a cross, a pass, a shot that's lost its legs) or dropping in
+      // the attacking third is yours to play: control moves to whoever meets it, and he only heads or volleys it if
+      // you press for it (nothing is finished for you).
+      const goalX = this.teams[a.team].attackDir * this.pitch.length / 2;
+      const yours = this.humanTeam === a.team && !this.autopilot && !a.isGK && ((plan.y > 0.55 && (b.lastTouchTeam === a.team || Math.abs(plan.x - goalX) < 30)) || b.inFlightShot?.team === a.team);
+      if (yours && a !== this.controlled) {
+        const prev = this.controlled; this.setControlled(a);
+        if (this.queued && this.queued.agent === prev) this.queued.agent = a;
+        if (this.headerIntent && this.headerIntent.agent === prev) this.headerIntent.agent = a;
+      }
       if (plan.part === 'head') {
         // the player you control only heads it where you said (shoot: at goal, pass: on to a team-mate); with nothing
         // pressed he cushions it down to his feet
         const ctl = a === this.controlled && !this.autopilot;
-        const hi = ctl && this.headerIntent?.agent === a && this.time < this.headerIntent.until ? this.headerIntent : null;
+        const hi = ctl && this.headerIntent?.agent === a && this.time < this.headerIntent.until ? this.headerIntent
+          : ctl && this.queued?.agent === a && this.time - this.queued.at < 3 ? { q: this.queued } : null;
         // jump just as high as the ball needs, peaking at the moment of contact
         const jump = Math.max(0, Math.min(0.7, plan.y - a.motion!.headPoint().y + 0.04));
-        a.startAction('header', Math.max(0.3, plan.t * 2), 1, { contact, tc: plan.t, done: false, jump, intent: hi?.q ?? null, control: ctl && !hi && b.lastTouchTeam === a.team });
-        if (hi) this.headerIntent = null;
+        a.startAction('header', Math.max(0.3, plan.t * 2), 1, { contact, tc: plan.t, done: false, jump, intent: hi?.q ?? null, control: ctl && !hi && (b.lastTouchTeam === a.team || yours) });
+        if (hi) { this.headerIntent = null; if (this.queued === hi.q) this.queued = null; }
       }
       else a.startAction('trap', plan.t + 0.22, side === 'R' ? 1 : -1, { side, contact, tc: plan.t, part: plan.part, done: false });
     }
@@ -1706,6 +1861,7 @@ export class Match {
    *  a few metres ahead of him, but only a really hard one comes off him like a rebound. */
   private firstTouch(a: Agent) {
     const b = this.ball;
+    if (b.held && b.owner !== a) return;
     const rel = Math.hypot(b.vx - a.vel.x, b.vy * 0.5, b.vz - a.vel.z);
     const teamSkill = a.team === 0 ? this.mods.homeAiSkill : this.mods.botSkill;
     const skill = a.isHuman && !this.autopilot ? a.skill.control : a.skill.control * (0.7 + 0.6 * teamSkill);

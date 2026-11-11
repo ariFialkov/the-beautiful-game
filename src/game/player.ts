@@ -41,6 +41,8 @@ export class Agent {
   /** Seconds before another tackle can start: committing to a tackle has a price, so mashing does nothing. */
   tackleCooldown = 0;
   stunned = 0;
+  /** Holding the ball for a throw-in (both hands, behind the head). */
+  throwHold = false;
   home: V2 = { x: 0, z: 0 };
   role = 'CM';
   isGK = false;
@@ -52,7 +54,8 @@ export class Agent {
   accelFwd = 0; accelLat = 0; turnRate = 0;
   lastTouchFoot = 1;
   yellow = 0;
-  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; shotKey: number; lapseKey: number; lapse: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, shotKey: -1, lapseKey: -1, lapse: false };
+  sentOff = false;
+  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; shotKey: number; lapseKey: number; lapse: boolean; penDone?: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, shotKey: -1, lapseKey: -1, lapse: false };
   keeperHold = 0;
   /** Skeleton and procedural animation (assigned by the match). */
   motion?: Motion;

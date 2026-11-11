@@ -111,7 +111,11 @@ function setPieceDecision(m: Match, team: TeamState, a: Agent, skill: number): b
   const dGoal = v2.dist(a.pos, goal);
   const corner = () => (rnd() < 0.5 ? -1 : 1) * goalWidth * (0.28 + rnd() * 0.14);
   switch (sp.kind) {
-    case 'penalty': { const z = corner(); m.startKick(a, 'shoot', 0.7 + rnd() * 0.2, v2.norm(v2.sub({ x: goal.x, z }, a.pos)), { botSkill: skill, target: { x: goal.x, z, y: 0.4 + rnd() * 1.4 } }); return true; }
+    case 'penalty': {
+      // a moment over the ball first, then a corner
+      if (m.penalty && m.penalty.taker === a && m.time < m.penalty.aiAt) return true;
+      const z = corner(); m.startKick(a, 'shoot', 0.7 + rnd() * 0.2, v2.norm(v2.sub({ x: goal.x, z }, a.pos)), { botSkill: skill, target: { x: goal.x, z, y: 0.4 + rnd() * 1.4 } }); return true;
+    }
     case 'freekick': {
       // lined up like a real one: a pause over the ball, then (in range) a strike that clears the wall
       const fk = m.freeKick;
@@ -180,6 +184,7 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
   let bestPass: { agent: Agent; score: number; kind: 'pass' | 'through' | 'lob' } | null = null;
   for (const t of team.agents) {
     if (t === a || t.isGK) continue;
+    if (m.inOffsidePosition(t)) continue; // (the flag would go up)
     const d = v2.dist(t.pos, a.pos);
     if (d < 4 || d > (futsal ? 22 : 40)) continue;
     const forward = ((t.pos.x - a.pos.x) * dir) / d;
@@ -358,6 +363,11 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
       v.sprint = v.sprint && !own; void a;
     }
   }
+  // ---- stay onside: runs are held on the line (the second-last defender, or the ball) until the pass is played ----
+  if (!futsal && !dead && sp?.kind !== 'corner' && !m.freeKick?.direct) {
+    const line = m.offsideLine(team.index) - 0.6; const dir = team.attackDir;
+    for (const [, v] of targets) if (!v.fixed && v.t.x * dir > line) v.t = { x: line * dir, z: v.t.z };
+  }
   // ---- carriers decide; everyone else moves to their spot (jogging unless far away) ----
   for (const a of ai) {
     a.intent.face = null; a.intent.jockey = false;
@@ -436,6 +446,20 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
     return;
   }
   k.keeperHold = 0;
+  // A penalty: keepers commit as it's struck - the human's chosen dive, or a guess
+  const pen = m.penalty;
+  if (pen && pen.team !== team.index && pen.stage === 'struck' && !k.ai.penDone && m.time - pen.strikeAt < 0.5) {
+    k.ai.penDone = true;
+    const human = m.humanTeam === team.index;
+    const g = human && pen.guess ? pen.guess : rnd() < 0.2 ? { z: 0, y: 1.0 } : { z: (rnd() < 0.5 ? -1 : 1) * (goalWidth / 2 - 0.6), y: 0.4 + rnd() * 1.3 };
+    const lat = g.z - k.pos.z;
+    if (Math.abs(lat) > 0.6) {
+      const side = Math.sign(lat); const yawK = Math.atan2(k.heading.x, k.heading.z); const leftZ = -Math.sin(yawK);
+      k.ai.dive = { side: Math.sign(side * leftZ) || 1, worldSide: side, mode: 'normal', flight: 0.42, vel: { x: 0, z: side * Math.min(5.5, Math.abs(lat) / 0.42) }, hands: { x: gx + dir * 0.3, y: g.y, z: g.z }, high: g.y, lat: Math.abs(lat) };
+      k.ai.diveAt = m.time + 0.02; k.ai.shotKey = ball.lastTouchTime;
+    } else { k.ai.shotKey = ball.lastTouchTime; k.intent.move = { x: 0, z: 0 }; return; } // stays big in the middle
+  }
+  if (!pen) k.ai.penDone = false;
   // Pending dive (reaction time elapsed?)
   if (k.ai.dive && m.time >= k.ai.diveAt) {
     const d = k.ai.dive; k.ai.dive = null;

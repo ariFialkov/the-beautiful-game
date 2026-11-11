@@ -109,3 +109,130 @@ test('free kick: a bot taker lines it up, then strikes over or round the wall', 
   assert.ok(waited, 'the taker takes a moment over it');
   assert.ok(shots >= 5 && cleared >= shots * 0.8, `cleared the wall ${cleared}/${shots}`);
 });
+
+// ---------------------------------------------------------------- penalties
+function penaltyMatch(human: number | null) {
+  const m = match(human); const at = m.teams[0].attackDir;
+  (m as any).restart('penalty', 0, { x: at * (52.5 - 11), z: 0 });
+  m.controlBasis = { right: { x: 0, z: at }, forward: { x: at, z: 0 } };
+  return { m, at, pen: m.penalty! };
+}
+test('penalty: you aim (the cursor springs back to the middle), hold for power, and a well-timed second press puts it where you aimed', () => {
+  let greens = 0, goals = 0;
+  for (let k = 0; k < 6; k++) {
+    const { m, pen } = penaltyMatch(0);
+    for (let i = 0; i < 60 * 3 && m.phase !== 'play'; i++) m.update(1 / 60, pad());
+    // the cursor follows the stick, then comes back when it's let go
+    for (let i = 0; i < 30; i++) m.update(1 / 60, pad({ move: { x: 1, y: 0 } }));
+    assert.ok(Math.abs(pen.aim.z) > 3, 'the cursor went to the side');
+    for (let i = 0; i < 40; i++) m.update(1 / 60, pad());
+    assert.ok(Math.abs(pen.aim.z) < 0.4, 'and sprang back to the middle');
+    // aim bottom right, hold for power, release, then the second press timed to the strike
+    const aimIn = { x: 0.85, y: -0.6 };
+    for (let i = 0; i < 30; i++) m.update(1 / 60, pad({ move: aimIn, shoot: btn(true, i === 0) }));
+    m.update(1 / 60, pad({ move: aimIn, shoot: btn(false, false, true) }));
+    assert.equal(pen.stage, 'runup');
+    let pressed = false, scored = false; m.on((e) => { if (e.type === 'goal' && e.team === 0) scored = true; });
+    for (let i = 0; i < 60 * 3; i++) {
+      const tm = m.penaltyTiming(); const now = !pressed && tm && tm.progress >= (tm.green[0] + tm.green[1]) / 2;
+      m.update(1 / 60, pad({ move: aimIn, shoot: btn(!!now, !!now) })); if (now) pressed = true;
+      if (scored) break;
+    }
+    if (pen.result === 'green') greens++; if (scored) goals++;
+  }
+  console.log(`  ${greens}/6 green, ${goals}/6 scored`);
+  assert.ok(greens >= 4, 'pressing on the green zone is green timing');
+  assert.ok(goals >= 4, 'well-taken penalties go in');
+});
+test("penalty: facing one, the stick picks the keeper's dive", () => {
+  const { m, pen, at } = penaltyMatch(1); // (the human defends)
+  const gk = m.teams[1].agents[0];
+  for (let i = 0; i < 60 * 6 && pen.stage !== 'struck'; i++) m.update(1 / 60, pad({ move: { x: -1, y: 0 } }));
+  assert.equal(pen.stage, 'struck', 'the bot took it');
+  const z0 = gk.pos.z; for (let i = 0; i < 30; i++) m.update(1 / 60, pad({ move: { x: -1, y: 0 } }));
+  const right = m.stickToWorld(1, 0); void at;
+  assert.ok((gk.pos.z - z0) * Math.sign(right.z) < -0.8, `the keeper went the way chosen (moved ${(gk.pos.z - z0).toFixed(2)})`);
+});
+
+test('cards: a second yellow is a red, the player walks off and his side plays a man down', () => {
+  const m = match(1); const events: any[] = []; m.on((e) => events.push(e));
+  const by = m.teams[1].agents.find((a) => !a.isGK)!; const on = m.teams[0].agents.find((a) => !a.isGK)!;
+  const n = m.teams[1].agents.length; const rnd = Math.random; Math.random = () => 0.5;
+  try {
+    m.setControlled(by);
+    on.pos = { x: 0, z: 5 }; on.heading = { x: 1, z: 0 }; // midfield: not the last man
+    (m as any).foul(by, on, true, { x: 1, z: 0 });
+    assert.equal(events.filter((e) => e.type === 'foul').at(-1).card, 'yellow');
+    assert.equal(by.yellow, 1); assert.equal(m.teams[1].agents.length, n);
+    for (let i = 0; i < 200; i++) m.update(1 / 60, pad());
+    on.pos = { x: 0, z: 5 }; on.heading = { x: 1, z: 0 };
+    (m as any).foul(by, on, true, { x: 1, z: 0 });
+    const e = events.filter((x) => x.type === 'foul').at(-1);
+    assert.equal(e.card, 'red'); assert.ok(e.secondYellow);
+    assert.equal(m.teams[1].reds, 1); assert.equal(m.teams[1].agents.length, n - 1);
+    assert.ok(!m.agents.includes(by) && m.benched.includes(by));
+    assert.notEqual(m.controlled, by, 'control moves to a teammate');
+    assert.equal(m.controlled!.team, 1);
+  } finally { Math.random = rnd; }
+  for (let i = 0; i < 600; i++) m.update(1 / 60, pad());
+  assert.ok(Math.abs(by.pos.z) > m.pitch.width / 2, 'off the pitch');
+});
+
+test('a ball the keeper catches stays his: a team-mate shaping to take it does not end up holding it', () => {
+  const m = match(0); const b = m.ball;
+  const gk = m.teams[0].agents.find((a) => a.isGK)!; const def = m.teams[0].agents.find((a) => !a.isGK)!;
+  const gx = -m.teams[0].attackDir * 52.5;
+  gk.pos = { x: gx * 0.9, z: 0 }; def.pos = { x: gx * 0.9 + m.teams[0].attackDir * 0.8, z: 0.3 };
+  b.reset(gk.pos.x + m.teams[0].attackDir * 0.4, 0.2); b.y = 0.9;
+  def.startAction('trap', 0.4, 1, { side: 'R', contact: { x: b.x, y: b.y, z: b.z }, tc: 0.05, part: 'chest', done: false });
+  (m as any).keeperHands(gk);
+  for (let i = 0; i < 30; i++) m.update(1 / 60, pad());
+  assert.ok(b.owner === gk || !b.held, 'nobody but the keeper has it in his hands');
+  // and if it ever happens, it is dropped to his feet and playable
+  b.owner = def; b.held = true;
+  m.update(1 / 60, pad());
+  assert.equal(b.held, false); assert.ok(b.y < 0.3);
+});
+
+test('offside: a team-mate beyond the second-last defender when it is played is flagged when he touches it; one level is not', () => {
+  const m = match(0); const events: any[] = []; m.on((e) => events.push(e));
+  (m as any).phase = 'play'; (m as any).setPiece = null;
+  const dir = m.teams[0].attackDir; const [passer, fwd] = m.teams[0].agents.filter((a) => !a.isGK);
+  passer.pos = { x: dir * 5, z: 0 }; m.ball.reset(passer.pos.x + dir * 0.4, 0);
+  const line = m.offsideLine(0);
+  fwd.pos = { x: dir * (line - 1), z: 4 };
+  (m as any).markOffside(passer, 'through', false);
+  assert.ok(!m.offsideWatch?.marks.has(fwd), 'level/behind: onside');
+  fwd.pos = { x: dir * (line + 3), z: 4 };
+  assert.ok(m.inOffsidePosition(fwd));
+  (m as any).markOffside(passer, 'through', false);
+  assert.ok(m.offsideWatch?.marks.has(fwd));
+  (m as any).markOffside(passer, 'through', true); // (a throw-in, goal kick or corner)
+  assert.equal(m.offsideWatch, null);
+  (m as any).markOffside(passer, 'through', false);
+  m.ball.lastTouch = fwd; m.ball.lastTouchTeam = 0; m.ball.lastTouchTime = m.time + 0.01;
+  (m as any).checkOffside();
+  assert.equal(events.at(-1)?.type, 'offside'); assert.equal(m.phase, 'dead');
+  // the AI keeps its runners on the line
+  const ai = match(null); (ai as any).phase = 'play';
+  for (let i = 0; i < 600; i++) ai.update(1 / 60);
+  for (const t of [0, 1]) {
+    const dirT = ai.teams[t].attackDir; const ln = ai.offsideLine(t);
+    const off = ai.teams[t].agents.filter((a) => !a.isGK && a.pos.x * dirT > ln + 2.5 && a.ai.mode === 'shape');
+    assert.ok(off.length === 0, `team ${t}: ${off.length} loitering offside`);
+  }
+});
+
+test('your side heads a cross only when you press: control moves to the man meeting it and he cushions it', () => {
+  const m = match(0); (m as any).phase = 'play'; m.passAssist = null;
+  const dir = m.teams[0].attackDir; const outs = m.teams[0].agents.filter((a) => !a.isGK);
+  const mate = outs.find((a) => a !== m.controlled)!; const crosser = outs.find((a) => a !== mate)!;
+  mate.pos = { x: dir * 40, z: 2 }; mate.vel = { x: 0, z: 0 }; mate.heading = { x: -dir, z: 0 }; mate.action = null; mate.cooldown = 0;
+  for (const a of m.agents) if (a !== mate && a.team === 1) a.pos = { x: a.pos.x, z: -30 };
+  const b = m.ball; b.reset(mate.pos.x - dir * 4, mate.pos.z); b.y = 1.9; b.vx = dir * 12; b.vy = 1.4; b.vz = 0;
+  b.lastTouch = crosser; b.lastTouchTeam = 0; b.lastTouchTime = m.time; b.inFlightShot = null;
+  (m as any).anticipate();
+  assert.equal(m.controlled, mate, 'you take over the man meeting the cross');
+  assert.equal(mate.action?.type, 'header');
+  assert.equal(mate.action!.data.control, true, 'no press: cushioned, not headed at goal');
+});
