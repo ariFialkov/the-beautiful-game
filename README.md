@@ -80,7 +80,7 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Weight:** a pass to a teammate always reaches him, and the power bar sets how firmly: a tap rolls in softly (about 6 m/s at his feet), a full bar zips it in (about 10 m/s). A pass into space takes its pace from the bar alone.
   - **Through balls:** the game searches 5–14 m into the space ahead of the runner for the spot he'll win the race to. The ball is weighted to get there just before him, still rolling, and he runs onto it in his stride.
   - **Crosses:** crosses are driven at about head height; the longer you hold, the lower and harder. The trajectory is led using its real flight time.
-  - **In flight:** the pass bends gently toward its receiver, like a touch of curl, without changing its pace. A defender standing right in front of the passer is played around.
+  - **In flight:** nothing. The ball flies with pure physics: the pass is solved up front for the receiver's run (from his current velocity), and if he changes direction he comes back to the ball rather than the ball bending to him. A badly hit pass can still go astray, and teammates let a pass meant for someone else run through.
   - **Receiving:** the receiver is helped onto the ball while the stick is neutral, still held the way you passed, or pointing roughly where it's going. Push the stick a new way to take over.
     - **Where:** he takes it where he keeps his stride rather than doubling back, and times his run to arrive with the ball instead of dashing there and turning round to wait. He attacks crosses, and runs onto through balls.
     - **First touch:** it follows the stick if you're holding it. Otherwise it goes on along his run, or into the most open space upfield. A runner's touch keeps pace with him, and a player coming short cushions it.
@@ -97,10 +97,10 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Ball Cam:** low and close on the near side.
   - **End-to-End** (the default for futsal): behind your team, looking up the pitch the way you attack.
 - **Controller settings** (Settings or the pause menu):
-  - **Passing:** Assisted (the default), or Semi: the receiver must be closer to where you aim, the power bar sets more of the pace, and there's no help in flight.
+  - **Passing:** Assisted (the default), or Semi: the receiver must be closer to where you aim, the power bar sets more of the pace, and strikes are a little less accurate.
   - **Shooting:** Assisted, or Semi: less pull toward the frame, a little more error.
   - **Player switching:** Auto, Air balls only, or Manual.
-- **Landing marker:** when the ball is in the air, a crosshair on the pitch shows where it will come down, growing as it drops.
+- **Landing marker:** when the ball goes up, a thin crosshair on the pitch marks where it will first come down, from a full simulation of its flight (spin and drag included). It glides with the prediction and grows as the ball drops.
 - **Clubs and names:** 40 clubs across 15 leagues. Squads are generated together from large pools of everyday names for 36 nationalities, so names rarely repeat. Shared surnames are brothers in the same league, sometimes in the same squad, and brothers in one squad have initials on their shirts.
 
 ## Controls

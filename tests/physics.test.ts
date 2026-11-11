@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BallBody, BALL_R, collideGoal, passSpeedFor, predictPath, solveKick, spinVector, type GoalFrame } from '../src/game/ball';
+import { BallBody, BALL_R, collideGoal, passSpeedFor, predictLanding, predictPath, solveKick, spinVector, type GoalFrame } from '../src/game/ball';
 import { SURFACES, type SurfaceId } from '../src/game/surface';
 
 function ball(surface: SurfaceId = 'dry') { const b = new BallBody(); b.surface = SURFACES[surface]; return b; }
@@ -87,4 +87,20 @@ test('prediction matches simulation', () => {
   for (let i = 0; i < 60; i++) b.integrate(1 / 60);
   const p = path.find((q) => Math.abs(q.t - 1) < 1e-6)!;
   assert.ok(Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z) < 0.05);
+});
+
+test('the landing prediction is steady through a flight and lands where the ball does', () => {
+  for (const [d, theta, side] of [[30, 0.4, 0], [45, 0.55, 20], [20, 0.3, -15], [60, 0.72, 0], [35, 0.25, 30]] as const) {
+    const b = new BallBody(); b.surface = SURFACES.dry; b.x = 0; b.y = 0.11; b.z = 0;
+    const speed = Math.sqrt((9.81 * d) / Math.sin(2 * theta)) * 1.2;
+    const sol = solveKick({ x: 0, y: 0.11, z: 0 }, { x: d, y: 0.11, z: 0 }, speed, side, -10, SURFACES.dry, theta);
+    b.vx = sol.v.x; b.vy = sol.v.y; b.vz = sol.v.z; b.wx = sol.w.x; b.wy = sol.w.y; b.wz = sol.w.z;
+    let prev: { x: number; z: number } | null = null, first: { x: number; z: number } | null = null;
+    for (let i = 0; i < 1200; i++) {
+      const L = predictLanding(b); if (!L) break; first ??= L;
+      if (prev) assert.ok(Math.hypot(L.x - prev.x, L.z - prev.z) < 0.05, 'the predicted landing spot does not jump');
+      prev = L; const vy0 = b.vy; b.integrate(1 / 120); if (vy0 < 0 && b.vy >= 0) break;
+    }
+    assert.ok(first && Math.hypot(first.x - b.x, first.z - b.z) < 0.2, 'predicted at launch = where it lands');
+  }
 });

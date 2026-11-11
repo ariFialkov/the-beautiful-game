@@ -210,6 +210,23 @@ export function predictPath(b: BallBody, duration = 3, step = 1 / 30): PathPoint
   return out;
 }
 
+/** Where a ball in the air first comes down (ignoring players): the full flight is simulated, however long, and the
+ *  touchdown is interpolated between steps. Also returns how long until then, and the highest point still to come. */
+const landScratch = new BallBody();
+export function predictLanding(b: BallBody, maxT = 8): { x: number; z: number; t: number; apex: number } | null {
+  const s = landScratch.copyFrom(b); const h = 1 / 120; let t = 0; let apex = s.y;
+  if (s.y <= s.radius + 0.02 && s.vy <= 0.05) return null;
+  while (t < maxT) {
+    const px = s.x, py = s.y, pz = s.z, pvy = s.vy;
+    s.integrate(h); t += h; apex = Math.max(apex, s.y);
+    if (pvy < 0 && s.vy >= 0) { // the first bounce happened during this step
+      const k = Math.max(0, Math.min(1, (py - s.radius) / Math.max(1e-6, -pvy * h)));
+      return { x: px + (s.x - px) * k, z: pz + (s.z - pz) * k, t: t - h + h * k, apex };
+    }
+  }
+  return null;
+}
+
 /* ------------------------------ ground pass tables ------------------------------ */
 const ARRIVE = 8.5; // passes still arrive with pace
 const passTables = new Map<string, Array<{ v0: number; dist: number; time: number }>>();

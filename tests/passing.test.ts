@@ -82,7 +82,7 @@ test("a through ball is played into the runner's path and he runs onto it", () =
   assert.ok(m.ball.vx * dir > -0.5, 'and took it on, not back toward his own goal');
 });
 
-test('a pass aimed a little off still homes in on its receiver', () => {
+test('a pass aimed a little off still reaches its receiver (it is solved for him, no help in flight)', () => {
   let hits = 0;
   for (let k = 0; k < 6; k++) {
     const { m, passer, mate } = sandbox();

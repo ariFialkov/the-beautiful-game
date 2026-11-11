@@ -1,6 +1,6 @@
 import type { MatchScript, PlayerCard } from '@shared/types';
 import type { Kit, Team } from '@shared/teams';
-import { Ball, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictPath, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
+import { Ball, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictLanding, predictPath, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
 import { Agent } from './player';
 import { FORMATION_433, FORMATION_FUTSAL, v2, type PitchSpec, type V2 } from './pitch';
 import { Director, FREE_PLAY, OVERRUN_LIMIT, type Modifiers } from './director';
@@ -53,8 +53,8 @@ export class Match {
   clock = 0;
   phase: Phase = 'kickoff';
   phaseTimer = 0;
-  /** The human's last pass: its intended receiver, homed in on during the flight (see homePass). */
-  passAssist: { passer: Agent; receiver: Agent; aim: V2; until: number; lofted: boolean; spot: V2 | null; run: V2 | null; from: number } | null = null;
+  /** The human's last pass and its intended receiver, who is helped to the ball (the ball itself flies untouched). */
+  passAssist: { passer: Agent; receiver: Agent; aim: V2; until: number; lofted: boolean; spot: V2 | null; run: V2 | null } | null = null;
   /** The controlled player is being steered by the receive assist this step (his first touch then takes it on, or settles it). */
   private receiveAssisting = false;
   /** The human's stick this frame (world space). */
@@ -135,6 +135,14 @@ export class Match {
     const text = over > 0.02 ? `${this.half === 1 ? halfLen : mins}'+${Math.max(1, Math.ceil(over))}` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     return { text, stoppage: over > 0.02 };
   }
+
+  /** Where a ball in the air will first come down (cached per step): for the landing marker. */
+  landing(): { x: number; z: number; t: number; apex: number } | null {
+    if (this.landCache?.step === this.stepCount) return this.landCache.land;
+    const land = this.ball.held || this.ball.owner ? null : predictLanding(this.ball);
+    this.landCache = { step: this.stepCount, land }; return land;
+  }
+  private landCache: { step: number; land: { x: number; z: number; t: number; apex: number } | null } | null = null;
 
   /** Predicted free flight of the ball (cached per step), used by AI interception, keepers and the director. */
   predicted(): PathPoint[] {
@@ -257,7 +265,7 @@ export class Match {
     if (this.phase === 'play') { this.updateOwnership(); this.collideBodies(); }
     this.holdBall();
     this.director?.steer(h);
-    if (this.phase === 'play') this.homePass(h);
+    this.expirePassAssist();
     const ev = this.ball.update(h, this.goals);
     if (ev === 'post' || ev === 'bar') { this.emit({ type: 'post', bar: ev === 'bar' }); if (this.ball.inFlightShot) this.ball.inFlightShot = null; }
     if (this.phase === 'play') this.checkBounds();
@@ -464,9 +472,12 @@ export class Match {
         // through ball: get to the spot (easing off if early), and run on once the ball is nearly there
         const ballNear = through && v2.dist(bp, me.pos) < 4 + v2.len(me.vel) * 0.3;
         const toSpot = through && !ballNear;
-        // through balls: run for the spot, and if early keep jogging on along the line so the ball catches him in stride
-        const atSpot = toSpot && v2.dist(me.pos, pa!.spot!) < 2;
-        const meet = toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : pa!.spot!) : rp.p;
+        // through balls: run for the spot where the ball will actually be (the point of its real path nearest the planned
+        // one), and if early keep jogging on along the line so the ball catches him in stride
+        let spot = pa?.spot ?? null;
+        if (toSpot && spot) { let bd = Infinity; for (const q of this.predicted()) { if (q.y > 1.2) continue; const d = Math.hypot(q.x - spot.x, q.z - spot.z); if (d < bd) { bd = d; spot = { x: q.x, z: q.z }; } } }
+        const atSpot = toSpot && v2.dist(me.pos, spot!) < 2;
+        const meet = toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : spot!) : rp.p;
         const to = v2.sub(meet, me.pos); const tl = v2.len(to);
         const attack = !!pa?.lofted; // a cross is attacked, not waited for
         const ease = toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
@@ -643,24 +654,10 @@ export class Match {
     return best!;
   }
 
-  /** Pass homing: while the human's pass is on its way, it is nudged sideways toward the intended receiver, like a touch
-   *  of curl (the pace is untouched, and it stops once the ball is level with him or anyone else touches it). */
-  private homePass(h: number) {
+  /** The pass is over once someone has the ball, anyone else touches it, or it has had its time. */
+  private expirePassAssist() {
     const pa = this.passAssist; const b = this.ball;
-    if (!pa) return;
-    if (this.controls.pass === 'semi') return; // semi-assisted passing: no help in flight
-    if (b.owner || b.lastTouch !== pa.passer || this.time > pa.until || this.phase !== 'play') { this.passAssist = null; return; }
-    const sp = Math.hypot(b.vx, b.vz); if (sp < 1.5 || this.time < pa.from) return;
-    const ux = b.vx / sp, uz = b.vz / sp; const r = pa.receiver;
-    const bp = { x: b.x, z: b.z }; const feet = { x: r.pos.x + r.vel.x * 0.25, z: r.pos.z + r.vel.z * 0.25 };
-    const goal = pa.spot && v2.dist(bp, pa.spot) > 2 && v2.dist(bp, feet) > 7 ? pa.spot : feet;
-    const tx = goal.x - b.x, tz = goal.z - b.z;
-    const along = tx * ux + tz * uz; if (along < 1.2) return;
-    const perp = -tx * uz + tz * ux; const tA = Math.max(0.25, along / sp);
-    const amax = pa.lofted ? 2.5 : 3.5;
-    const acc = Math.max(-amax, Math.min(amax, (2 * perp) / (tA * tA)));
-    b.vx += -uz * acc * h; b.vz += ux * acc * h;
-    if (b.y <= BALL_R + 0.01 && Math.abs(b.vy) < 0.1) b.setRolling();
+    if (pa && (b.owner || b.lastTouch !== pa.passer || this.time > pa.until || this.phase !== 'play')) this.passAssist = null;
   }
 
   private fireKick(a: Agent, d: any) {
@@ -727,10 +724,10 @@ export class Match {
       else if (target) {
         // lead the receiver: iterate the meeting point against the ball's travel time
         aim = target.pos;
-        for (let k = 0; k < 3; k++) {
+        for (let k = 0; k < 5; k++) {
           const dd = v2.dist(aim, { x: from.x, z: from.z });
           tFlight = lofted ? Math.sqrt((2 * Math.max(4, dd)) / G) * 1.15 : passTimeFor(dd * (through ? 1.1 : 1), this.surface, arrive);
-          aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 1.8) * (through || target.speed() > 3 ? 0.95 : 0.75)));
+          aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 2.2) * (through || target.speed() > 2.5 ? 1 : 0.75)));
           if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + dd * 0.15), z: 0 });
         }
         target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
@@ -752,7 +749,7 @@ export class Match {
         let sol = solve(aim);
         if (target && !throwIn) {
           // re-lead the receiver with the real flight time of this trajectory
-          const lead = v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 1.8) * (target.speed() > 3 ? 0.95 : 0.75)));
+          const lead = v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 2.2) * (target.speed() > 2.5 ? 1 : 0.75)));
           aim = { x: Math.max(-lim.x, Math.min(lim.x, lead.x)), z: Math.max(-lim.z, Math.min(lim.z, lead.z)) };
           sol = solve(aim); tFlight = sol.time; target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
         }
@@ -769,18 +766,8 @@ export class Match {
         v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };
         w = { x: v.z / BALL_R, y: 0, z: -v.x / BALL_R };
       }
-      if (human && target && !lofted && !semi) {
-        // lane finder: a defender standing right in the line is played around (the homing bends it back after him)
-        const hs0 = Math.hypot(v.x, v.z); const u = { x: v.x / hs0, z: v.z / hs0 }; let turn = 0, along0 = 0;
-        for (const o of this.opponentsOf(a.team).agents) {
-          const r = v2.sub(o.pos, { x: from.x, z: from.z }); const al = v2.dot(r, u); if (al < 0.3 || al > 5) continue;
-          const pp = r.x * -u.z + r.z * u.x; if (Math.abs(pp) > 0.95) continue;
-          const need = Math.atan2(0.95, al) - Math.atan2(Math.abs(pp), al); const t = (pp > 0 ? -1 : 1) * need;
-          if (Math.abs(t) > Math.abs(turn)) { turn = t; along0 = al; }
-        }
-        if (turn !== 0 && Math.abs(turn) < 0.35) { const c = Math.cos(turn), sn = Math.sin(turn); v = { x: v.x * c - v.z * sn, y: v.y, z: v.x * sn + v.z * c }; w = { x: v.z / BALL_R, y: 0, z: -v.x / BALL_R }; d.homeDelay = along0 / hs0 + 0.1; }
-      }
-      const sigma = human ? 0.025 + (1 - a.skill.pass) * 0.03 : 0.11 - skill * 0.09;
+      // a clean strike: assisted passing is a touch more accurate (the trajectory is solved for the receiver's run)
+      const sigma = human ? (semi ? 0.025 + (1 - a.skill.pass) * 0.03 : 0.016 + (1 - a.skill.pass) * 0.022) : 0.11 - skill * 0.09;
       yawErr = gauss() * sigma * (sprinting ? 1.3 : 1); pitchErr = lofted ? gauss() * sigma * 0.5 : 0;
       b.inFlightShot = null; d.flight = tFlight;
     }
@@ -793,7 +780,7 @@ export class Match {
     // the human takes over the intended receiver straight away (FIFA-style pass switching)
     if (human && kind !== 'shoot' && d.passTarget && this.humanTeam === a.team) {
       this.setControlled(d.passTarget);
-      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + Math.min(4, (d.flight ?? 2) + 1.2), lofted: (kind === 'lob' || throwIn) && !!d.cross, spot: d.spot ?? null, run: d.run ?? null, from: this.time + (d.homeDelay ?? 0.12) };
+      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + Math.min(4, (d.flight ?? 2) + 1.2), lofted: (kind === 'lob' || throwIn) && !!d.cross, spot: d.spot ?? null, run: d.run ?? null };
     }
     a.hasBall = false; a.cooldown = 0.3; a.pendingKick = null;
     if (this.setPiece?.taker === a) this.setPiece = null;
@@ -1090,6 +1077,11 @@ export class Match {
       if (b.lastTouch === a && this.time - b.lastTouchTime < 0.25) continue;
       if (v2.dist(a.pos, bp) > 7) continue;
       if (this.lapses(a)) continue;
+      // a team-mate lets a pass meant for someone else run through to him
+      if (!owner && b.lastTouchTeam === a.team && b.lastTouch !== a && this.time - b.lastTouchTime < 3.5) {
+        const meantFor = this.passAssist?.receiver ?? this.teams[a.team].agents.find((x) => x !== a && x.ai.expectBall > this.time);
+        if (meantFor && meantFor !== a) continue;
+      }
       const hands = a.isGK && this.inOwnBox(a, b.x, b.z) && !this.setPiece && b.lastTouchTeam !== a.team;
       // the intended receiver of a pass stretches for it (pass assistance)
       const meant = (this.passAssist?.receiver === a) || (a.ai.expectBall > this.time && b.lastTouchTeam === a.team);
