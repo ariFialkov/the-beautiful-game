@@ -125,6 +125,7 @@ export class CameraRig {
       this.bias = smoothDamp(this.bias, THREE.MathUtils.clamp(lead.x, -1, 1) * 7 * scale, this.biasV, 1.4, 10, dt);
       const lookAhead = THREE.MathUtils.clamp(this.ballVx * 0.25, -4 * scale, 4 * scale);
       const tx = THREE.MathUtils.clamp(target.x + this.bias + lookAhead, -L / 2 + 9 * scale, L / 2 - 9 * scale);
+      const big = scale >= 0.6; // (11-a-side: the quicker high-ball tracking below; the small court is calm enough without it)
       // Edge guard: if the ball is drifting toward the edge of the frame (fast long balls, narrow phone screens), catch up quicker.
       const ndc = target.clone().project(this.camera);
       const edge = Math.max(Math.abs(ndc.x), Math.abs(ndc.y) * 0.9);
@@ -134,13 +135,13 @@ export class CameraRig {
       // Narrow (portrait) screens see less of the pitch, so track tighter.
       const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.6, 1) * (this.style === 'ball' ? 0.6 : this.style === 'end' ? 0.68 : 1);
       const glide = 0.7 * Math.min(1, this.blend / 1.2); // slower focus while gliding to a restart
-      this.focusX = smoothDamp(this.focusX, tx, this.fvx, (0.8 - 0.45 * this.urgency) * narrow + glide, Math.max(22 * scale, 14) * (1 + 0.5 * this.urgency), dt);
-      this.focusZ = smoothDamp(this.focusZ, target.z, this.fvz, (1.1 - 0.6 * this.urgency) * narrow * (0.6 + 0.4 * scale) + glide, Math.max(16 * scale, 9) * (1 + 0.6 * this.urgency), dt);
+      this.focusX = smoothDamp(this.focusX, tx, this.fvx, (0.8 - 0.45 * this.urgency) * narrow + glide, Math.max(22 * scale, 14) * (1 + (big ? 0.5 : 0) * this.urgency), dt);
+      this.focusZ = smoothDamp(this.focusZ, target.z, this.fvz, (1.1 - 0.6 * this.urgency) * narrow * (0.6 + 0.4 * scale) + glide, Math.max(16 * scale, 9) * (1 + (big ? 0.6 : 0) * this.urgency), dt);
       // Tilt up for high balls; a closer (futsal) camera has to tilt more, and faster when the ball nears the frame edge.
       // (the low Ball Cam has to look up much further for a ball in the air)
       const lowCam = this.style === 'ball' || this.style === 'end';
       const tilt = this.style === 'ball' ? 0.7 : this.style === 'end' ? 0.5 : Math.min(0.6, 0.25 / Math.max(0.4, scale));
-      this.lookY = smoothDamp(this.lookY, 0.4 + Math.min(lowCam ? 14 : 13, Math.max(0, target.y - 1 + Math.max(0, this.ballVy) * 0.35)) * tilt, this.lookYV, ((lowCam ? 0.45 : 0.8) - (lowCam ? 0.25 : 0.5) * this.urgency) * (this.ballVy < -3 ? 0.6 : 1), 16, dt); // (quicker back down for a dropping ball)
+      this.lookY = smoothDamp(this.lookY, 0.4 + Math.min(lowCam ? 14 : 13, Math.max(0, target.y - 1 + (big ? Math.max(0, this.ballVy) * 0.35 : 0))) * tilt, this.lookYV, ((lowCam ? 0.45 : 0.8) - (lowCam ? 0.25 : 0.5) * this.urgency) * (big && this.ballVy < -3 ? 0.6 : 1), 16, dt); // (quicker back down for a dropping ball)
       const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l);
       // Zoom: keep play on the far side as readable as near-side play (narrower field of view the further the
       // action is from the camera), and ease out a touch for long, fast balls and when the ball nears the frame edge.
