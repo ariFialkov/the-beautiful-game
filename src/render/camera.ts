@@ -85,8 +85,10 @@ export class CameraRig {
     const far = Math.max(0, fz) / (W / 2), near = Math.max(0, -fz) / (W / 2);
     if (this.style === 'ball') {
       // Ball cam: low and close on the near side, following the ball across the pitch.
-      const back = base * 0.55;
-      outPos.set(fx * 0.97, (6.5 * h * (0.55 + 0.45 * scale) + small) * wide, -(back + (wide - 1) * 10 * scale) + fz * 0.45);
+      const back = base * 0.62;
+      // never closer than ~15 m to the play (near-touchline play would otherwise be right under the lens)
+      const cz = Math.min(-(back + (wide - 1) * 10 * scale) + fz * 0.45, fz - 15 * (0.4 + 0.6 * scale));
+      outPos.set(fx * 0.97, (6.5 * h * (0.55 + 0.45 * scale) + small) * wide, cz);
       outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.9 - 1.5 * scale, -W / 2, W / 2));
       this.refDist = 0; return;
     }
@@ -125,16 +127,19 @@ export class CameraRig {
       // Edge guard: if the ball is drifting toward the edge of the frame (fast long balls, narrow phone screens), catch up quicker.
       const ndc = target.clone().project(this.camera);
       const edge = Math.max(Math.abs(ndc.x), Math.abs(ndc.y) * 0.9);
-      const want = edge > 0.55 && this.blend < 0.6 ? Math.min(1, (edge - 0.55) / 0.35) : 0;
+      const e0 = this.style === 'ball' || this.style === 'end' ? 0.45 : 0.55; // the close cameras react sooner
+      const want = edge > e0 && this.blend < 0.6 ? Math.min(1, (edge - e0) / 0.35) : 0;
       this.urgency += (want - this.urgency) * (1 - Math.exp(-dt / 0.25)); // eased, so the catch-up never snaps
       // Narrow (portrait) screens see less of the pitch, so track tighter.
-      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.6, 1) * (this.style === 'ball' ? 0.7 : this.style === 'end' ? 0.55 : 1);
+      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.6, 1) * (this.style === 'ball' ? 0.6 : this.style === 'end' ? 0.68 : 1);
       const glide = 0.7 * Math.min(1, this.blend / 1.2); // slower focus while gliding to a restart
       this.focusX = smoothDamp(this.focusX, tx, this.fvx, (0.8 - 0.45 * this.urgency) * narrow + glide, Math.max(22 * scale, 14), dt);
       this.focusZ = smoothDamp(this.focusZ, target.z, this.fvz, (1.1 - 0.6 * this.urgency) * narrow * (0.6 + 0.4 * scale) + glide, Math.max(16 * scale, 9), dt);
       // Tilt up for high balls; a closer (futsal) camera has to tilt more, and faster when the ball nears the frame edge.
-      const tilt = Math.min(0.6, 0.25 / Math.max(0.4, scale));
-      this.lookY = smoothDamp(this.lookY, 0.4 + Math.min(8, Math.max(0, target.y - 1)) * tilt, this.lookYV, 0.8 - 0.5 * this.urgency, 12, dt);
+      // (the low Ball Cam has to look up much further for a ball in the air)
+      const lowCam = this.style === 'ball' || this.style === 'end';
+      const tilt = this.style === 'ball' ? 0.7 : this.style === 'end' ? 0.5 : Math.min(0.6, 0.25 / Math.max(0.4, scale));
+      this.lookY = smoothDamp(this.lookY, 0.4 + Math.min(lowCam ? 14 : 8, Math.max(0, target.y - 1)) * tilt, this.lookYV, (lowCam ? 0.45 : 0.8) - (lowCam ? 0.25 : 0.5) * this.urgency, 16, dt);
       const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l);
       // Zoom: keep play on the far side as readable as near-side play (narrower field of view the further the
       // action is from the camera), and ease out a touch for long, fast balls and when the ball nears the frame edge.
@@ -144,7 +149,8 @@ export class CameraRig {
       const fast = THREE.MathUtils.clamp((this.ballSpeed - 12) / 18, 0, 1);
       const styleZoom = this.style === 'tele' ? 0.82 : this.style === 'ball' ? 0.95 : 1;
       const byDist = ref > 0 ? THREE.MathUtils.clamp(Math.pow(ref / dist, this.style === 'high' ? 0.6 : 1.0), 0.66, 1.12) : 1;
-      const zoomWant = styleZoom * byDist * (1 + 0.1 * fast + 0.08 * this.urgency);
+      const high = this.style === 'ball' || this.style === 'end' ? THREE.MathUtils.clamp((target.y - 2) * (this.style === 'ball' ? 0.07 : 0.05), 0, this.style === 'ball' ? 0.7 : 0.45) : 0; // widen for high balls
+      const zoomWant = styleZoom * byDist * (1 + 0.1 * fast + (high > 0 || this.style === 'ball' || this.style === 'end' ? 0.25 : 0.08) * this.urgency + high);
       this.zoomTo(zoomWant, dt, 0.9);
       this.apply(p, l, dt);
       return;
