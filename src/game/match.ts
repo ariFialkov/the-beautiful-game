@@ -842,7 +842,9 @@ export class Match {
     const b = this.ball;
     if (b.owner !== a || b.held || this.phase !== 'play' || v2.dist(a.pos, { x: b.x, z: b.z }) > 1.4) return false;
     const def = SKILLS[move]; a.pendingKick = null; a.action = null;
-    a.startAction('skill', def.dur, side, { move, side, ox: a.pos.x, oz: a.pos.z, hx: a.heading.x, hz: a.heading.z, released: false, vel: { ...a.vel } });
+    const act = a.startAction('skill', def.dur, side, { move, side, ox: a.pos.x, oz: a.pos.z, hx: a.heading.x, hz: a.heading.z, released: false, vel: { ...a.vel } });
+    // where the ball really is vs where the move expects it: eased out over the start, never snapped
+    const k0 = skillFrame(act.data, 0).ball; act.data.bdx = b.x - k0.x; act.data.bdz = b.z - k0.z;
     this.emit({ type: 'skill', agent: a, move });
     return true;
   }
@@ -869,7 +871,8 @@ export class Match {
         b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; a.touchCooldown = 0.2; d.released = true;
         continue;
       }
-      const t = skillFrame(d, u).ball;
+      const t = skillFrame(d, u).ball; const fade = 1 - Math.min(1, u / 0.22); const e = fade * fade * (3 - 2 * fade);
+      t.x += (d.bdx ?? 0) * e; t.z += (d.bdz ?? 0) * e;
       b.vx = (t.x - b.x) / h; b.vz = (t.z - b.z) / h; b.vy = (t.y - b.y) / h + 9.81 * h * 0.5;
       b.wx = b.vz / BALL_R; b.wy = 0; b.wz = -b.vx / BALL_R;
     }
@@ -959,7 +962,7 @@ export class Match {
       if (a.legsBusy() || (b.owner && !mine) || this.time - pk.t0 > 1.4) { a.pendingKick = null; continue; }
       if (a.action?.type === 'kick') continue;
       const held = mine && b.held;
-      const strike = held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : a === this.controlled && !this.autopilot ? 0.19 : 0.15;
+      const strike = held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : a === this.controlled && !this.autopilot ? 0.16 : 0.13;
       // where the ball and the player will be at the moment of the strike
       const c = this.ballAt(strike);
       // (a taker stepping up to a placed ball strikes it from where he actually is, not where his run-up would carry him)
@@ -1182,7 +1185,7 @@ export class Match {
       // it always reaches him. (Quantised so the pass tables are shared.)
       const semi = human && this.controls.pass === 'semi';
       // (firm by default; a driven pass - RB - fizzes in at 13-18 m/s)
-      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round(((semi ? 1 + 12 * d.power : d.driven ? 13 + 5 * d.power : 6 + 7.5 * d.power)) * 2) / 2 : 8.5;
+      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round(((semi ? 1 + 12 * d.power : d.driven ? 15 + 5 * d.power : 7.5 + 7.5 * d.power)) * 2) / 2 : 8.5;
       let throughSpeed = 0;
       if (target && through) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = loftThrough ? 0 : tp.speed; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
       else if (target) {
@@ -1477,6 +1480,8 @@ export class Match {
   }
 
   /** The direction a player wants to take the ball. */
+  // (where a player is going: his run, or his facing when he's still)
+  private dirOf(a: Agent): V2 { return a.speed() > 1 ? v2.norm(a.vel) : a.heading; }
   private dribbleDir(a: Agent): V2 | null {
     if (a.pendingKick) return a.pendingKick.dir;
     const m = a.intent.move; return v2.len(m) > 0.15 ? v2.norm(m) : null;
@@ -1488,37 +1493,57 @@ export class Match {
     if (!o || b.held || o.legsBusy() || o.action?.type === 'kick') return;
     if (this.setPiece?.taker === o) return;
     const want = this.dribbleDir(o);
-    if (o.action?.type === 'touch') return; // a touch is on its way: keep running as intended
     const lead = 0.12;
     const bx = b.x + b.vx * lead, bz = b.z + b.vz * lead;
     const back = want ?? (b.speed() > 0.5 ? v2.norm({ x: b.vx, z: b.vz }) : o.heading);
-    const spot = { x: bx - back.x * 0.35, z: bz - back.z * 0.35 };
+    const spot = { x: bx - back.x * 0.38, z: bz - back.z * 0.38 };
     const to = v2.sub(spot, o.pos); const dl = v2.len(to);
-    if (dl > 0.15) {
-      const mag = Math.max(v2.len(o.intent.move), b.speed() > 1 ? 1 : 0.6); o.intent.steer = v2.scale(v2.norm(to), Math.min(1, mag));
-      // nearly round the ball: open the body to the way he wants to take it
-      if (want && dl < 1.2) o.intent.face = want;
-      // the ball is getting away: sprint to recover it
-      const gap = v2.dist(o.pos, { x: b.x, z: b.z }); const runAway = (b.vx - o.vel.x) * (b.x - o.pos.x) + (b.vz - o.vel.z) * (b.z - o.pos.z) > 0;
-      if (dl > 0.5) o.intent.boost = true; void gap; void runAway;
-    }
+    // Move WITH the ball: its velocity plus a firm pull onto his spot behind it, so he arrives there in step with it
+    // rather than running through it (and stops with it when the stick is let go).
+    // (stick let go: he eases up and stops with it)
+    let vd = want ? v2.add({ x: b.vx, z: b.vz }, v2.scale(to, 4.5)) : v2.add({ x: b.vx * 0.5, z: b.vz * 0.5 }, v2.scale(to, 3));
+    const mul = this.mods.speedMul[o.team] * this.teamSpeedBonus[o.team];
+    const cap = o.maxSpeed * mul * 0.93 * (o.intent.sprint || dl > 0.9 ? 1 : 0.78);
+    if (v2.len(vd) > cap) vd = v2.scale(v2.norm(vd), cap);
+    const boost = v2.len(vd) > o.maxSpeed * mul * 0.93 * 0.7;
+    const top = o.maxSpeed * mul * 0.93 * (o.intent.sprint || boost ? 1 : 0.7);
+    o.intent.boost = boost; o.intent.steer = v2.len(vd) > 0.05 ? v2.scale(v2.norm(vd), Math.min(1, v2.len(vd) / top)) : { x: 0, z: 0 };
+    // nearly round the ball: open the body to the way he wants to take it
+    if (want && dl < 1.2) o.intent.face = want;
   }
 
   /** Dribbling: when the ball will be in front of the feet, plan a touch so the inside of the boot meets it. */
   private scheduleTouch() {
     const b = this.ball; const o = b.owner;
-    if (!o || b.held || o.legsBusy() || o.action || o.touchCooldown > 0 || b.y > 0.45 || o.pendingKick) return;
+    if (!o || b.held || o.legsBusy() || b.y > 0.45 || o.pendingKick) return;
     if (this.setPiece?.taker === o) { b.vx *= 0.9; b.vz *= 0.9; return; }
+    // (an ordinary touch already on its way can still be turned into a cut, below)
+    const pendingTouch = o.action?.type === 'touch' && !o.action.data?.cut; // (or one finishing its follow-through)
+    if ((o.action && !pendingTouch) || (o.touchCooldown > 0 && !pendingTouch)) return;
     const tc = 0.09;
     const c = this.ballAt(tc); const ap = v2.add(o.pos, v2.scale(o.vel, tc));
     const r = v2.sub({ x: c.x, z: c.z }, ap); const f = v2.dot(r, o.heading), lat = r.x * -o.heading.z + r.z * o.heading.x;
+    // a sharp change of direction: he plants and takes it the new way at once (inside or outside of the foot)
+    const want0 = this.dribbleDir(o); const moving = Math.hypot(b.vx, b.vz) > 0.8 ? v2.norm({ x: b.vx, z: b.vz }) : o.heading;
+    const cutting = !!want0 && v2.dot(want0, moving) < 0.75 && v2.len(r) < 1.0 && f > -0.25;
+    if (pendingTouch && !cutting) return;
+    // under his feet (after a sharp turn): a quick touch out in front, the way he wants to go
+    if (!cutting && !o.action && o.touchCooldown <= 0 && v2.len(r) < 0.3) {
+      const side: Side = lat >= 0 ? 'R' : 'L';
+      o.startAction('touch', 0.2, side === 'R' ? 1 : -1, { side, tc: 0.05, contact: this.ballAt(0.05), done: false, out: true }); o.touchCooldown = 0.12; return;
+    }
+    if (cutting) {
+      const side: Side = lat >= 0 ? 'R' : 'L';
+      o.startAction('touch', 0.2, side === 'R' ? 1 : -1, { side, tc: 0.05, contact: this.ballAt(0.05), done: false, cut: true });
+      o.touchCooldown = 0.1; o.agileT = 0.28; return;
+    }
     if (!(f > 0.12 && f < 0.75 && Math.abs(lat) < 0.42)) return;
     // only touch it again once it has stopped running away from the feet
     const away = (b.vx - o.vel.x) * o.heading.x + (b.vz - o.vel.z) * o.heading.z;
     if (away > 0.35) return;
     const want = this.dribbleDir(o);
     const rel = Math.hypot(b.vx - o.vel.x, b.vz - o.vel.z);
-    if (!want && rel < 0.4) return; // already under control
+    if (!want && rel < 0.4 && b.speed() < 0.4) return; // already under control (a still ball at his feet)
     // alternate feet, but use the foot on the ball's side when it is clearly to one side
     const side: Side = Math.abs(lat) > 0.12 ? (lat > 0 ? 'R' : 'L') : (o.lastTouchFoot > 0 ? 'L' : 'R');
     o.startAction('touch', 0.24, side === 'R' ? 1 : -1, { side, tc, contact: c, done: false });
@@ -1533,17 +1558,22 @@ export class Match {
     const sp = o.speed(); const frac = Math.min(1, sp / o.maxSpeed);
     if (want) {
       const sprint = o.intent.sprint; const skill = o.skill.dribble;
-      let knock = sprint ? 0.6 + 1.3 * frac : 0.2 + 0.5 * frac;
+      const cutTouch = v2.dot(this.dirOf(o), want) < 0.75; // (taking it a new way: short and controlled)
+      let knock = cutTouch ? 0.15 : sprint ? 0.45 + 0.9 * frac : 0.1 + 0.35 * frac;
+      if (o.action?.data?.out) knock += 1.3; // (out from under his feet, back in front of him)
       knock *= 1.25 - skill * 0.5;
       if (o.intent.jockey) knock = 0.15;
       const err = (Math.random() + Math.random() - 1) * (0.03 + (1 - skill) * 0.1 + (sprint ? 0.04 : 0));
-      const dir = v2.rot(want, err);
+      // a hard cut at pace is taken slightly with the run and bent round (he can't stop dead), not dead square
+      const run = this.dirOf(o); const sharp = v2.dot(run, want) < 0.3 && o.speed() > 3;
+      const dir = v2.rot(sharp ? v2.norm(v2.add(want, v2.scale(run, 0.45 * Math.min(1, o.speed() / 7)))) : want, err);
       const along = Math.max(sp * Math.max(0, v2.dot(v2.norm(o.vel.x || o.vel.z ? o.vel : dir), dir)), 0.8);
       // weight the touch for the speed he is heading for, so he doesn't run over his own ball when accelerating
       const intended = o.maxSpeed * (sprint ? 1 : 0.7) * 0.93 * Math.min(1, v2.len(o.intent.move)) * 0.85;
-      const speed = Math.max(along, Math.min(intended, along + 1.5)) + knock;
+      const speed = cutTouch ? Math.max(1.8, Math.min(intended * 0.6, Math.max(along, sp * 0.5) + 1)) + knock : Math.max(along, Math.min(intended, along + 1.2)) + knock;
       b.vx = dir.x * speed; b.vz = dir.z * speed; b.vy = 0; b.setRolling();
-      o.touchCooldown = sprint ? 0.2 : 0.14;
+      o.touchCooldown = sprint ? 0.18 : 0.12;
+      if (cutTouch) o.agileT = Math.max(o.agileT, 0.25);
     } else {
       b.vx = o.vel.x * 0.5; b.vz = o.vel.z * 0.5; b.setRolling(); // sole trap: keep it close
       o.touchCooldown = 0.22;
@@ -1622,7 +1652,7 @@ export class Match {
       const dribbling = b.owner === a;
       if (dribbling && act?.type === 'skill' && !act.data?.released) continue; // (the move has the ball)
       for (const c of a.motion!.colliders()) {
-        if (dribbling && (c.part === 'foot' || c.part === 'shin')) continue; // the dribbler's own touches handle his feet
+        if (dribbling && (c.part === 'foot' || c.part === 'shin' || (b.y < 0.35 && c.part !== 'arm' && c.part !== 'hand'))) continue; // the dribbler's own touches handle his legs
         const q = pointSegment(b.x, b.y, b.z, c);
         const minD = c.r + BALL_R;
         if (q.d >= minD || q.d < 1e-6) continue;

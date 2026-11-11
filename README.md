@@ -77,6 +77,10 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Balance:** the body leans with acceleration and banks into turns, hips and shoulders counter-rotate, and the arms swing opposite the legs.
   - **Style:** each player gets their own stride, arm carriage, posture and swagger. Dribblers glance up to scan, and some players stand with hands on hips.
   - **Actions:** kicks, touches, traps, tackles, slides, headers, dives and catches use inverse kinematics, so the boot, head or gloves really reach the ball.
+- **Agility and dribbling:** players are quick off the mark, brake hard and turn sharply.
+  - **Cutting:** when you change direction sharply on the ball, he plants and cuts (a brief burst of extra grip and turn) and takes the ball the new way with a short, controlled touch at once. At pace, a hard cut is bent slightly with the run. A 90° cut takes about a quarter of a second.
+  - **Staying on the ball:** the dribbler moves with the ball (its velocity plus a firm pull onto his spot behind it) instead of chasing it, so he never runs past it. Touches are tight: the ball stays within about half a metre jogging and under a metre sprinting. Let go of the stick and he eases up and stops with it at his feet.
+  - **Passing:** ground passes are crisp (7.5–15 m/s at the receiver; driven 15–20 m/s) with a short wind-up.
 - **Limb colliders:** each bone carries a capsule collider built from the same pose that's drawn, which drives every contact:
   - **Planned contacts:** dribble touches, first touches with the foot, thigh or chest, strikes, headers, keeper saves and tackles all happen when the right limb meets the ball.
   - **Fouls:** a tackling boot that meets an opponent's leg before the ball is a foul.

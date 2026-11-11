@@ -91,3 +91,24 @@ test('keeper: you take goal kicks yourself, aimed with the stick: pass short, cr
   for (let i = 0; i < 60 * 3; i++) { m.update(1 / 60, kb()); if (m.ball.lastTouch === gk) dist = Math.max(dist, V2.dist(p0, { x: m.ball.x, z: m.ball.z })); }
   assert.ok(dist > 35, `booted upfield (${dist.toFixed(0)} m)`);
 });
+test('dribbling: tight, never running past the ball, sharp 90° cuts, and a clean stop', () => {
+  const home = TB['lon-royals'], away = TB['mad-blancos'];
+  const m = new M2({ pitch: P11, mode: 'kickoff', humanTeam: 0, script: null, durationSec: 3000, clockMinutes: 90,
+    teams: [{ team: home, players: SX(RO(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: SX(RO(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+  m.agents.forEach((a, i) => { a.isHuman = true; a.pos = { x: 40 + (i % 6) * 2, z: -30 + Math.floor(i / 6) * 2 }; a.prevPos = { ...a.pos }; });
+  m.phase = 'play'; m.phaseTimer = 0; m.setPiece = null; m.controlBasis = { right: { x: 0, z: 1 }, forward: { x: 1, z: 0 } };
+  const p = m.teams[0].agents[8]; p.pos = { x: -20, z: 0 }; p.prevPos = { ...p.pos }; p.heading = { x: 1, z: 0 };
+  (m as any).setControlled(p); m.ball.reset(-19.6, 0); m.ball.owner = p;
+  const gap = () => V2.dist(p.pos, { x: m.ball.x, z: m.ball.z });
+  const ahead = (d: { x: number; z: number }) => (p.pos.x - m.ball.x) * d.x + (p.pos.z - m.ball.z) * d.z;
+  let maxGap = 0, past = 0;
+  for (let i = 0; i < 90; i++) { m.update(1 / 60, kb({ move: { x: 0, y: 1 } })); if (i > 30) { maxGap = Math.max(maxGap, gap()); if (ahead({ x: 1, z: 0 }) > 0.25) past++; } }
+  const t0 = m.time; let cut = -1;
+  for (let i = 0; i < 90; i++) { m.update(1 / 60, kb({ move: { x: 1, y: 0 } })); maxGap = Math.max(maxGap, gap()); if (cut < 0 && p.speed() > 1.5 && p.vel.z / p.speed() > 0.94 && m.ball.vz > 0.5) cut = m.time - t0; if (i > 40 && ahead({ x: 0, z: 1 }) > 0.25) past++; }
+  for (let i = 0; i < 90; i++) m.update(1 / 60, kb());
+  console.log(`  ball within ${maxGap.toFixed(2)} m, 90° cut in ${cut.toFixed(2)} s, stopped ${gap().toFixed(2)} m from it`);
+  assert.ok(maxGap < 0.9, 'kept close');
+  assert.equal(past, 0, 'never ran past it');
+  assert.ok(cut > 0 && cut < 0.35, 'a sharp cut');
+  assert.ok(gap() < 0.6 && p.speed() < 0.5, 'stopped with it at his feet');
+});

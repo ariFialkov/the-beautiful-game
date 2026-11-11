@@ -36,6 +36,8 @@ export class Agent {
   cooldown = 0;
   /** Seconds before the next dribble touch. */
   touchCooldown = 0;
+  /** Seconds left of a plant-and-cut: extra grip and turn for an athletic change of direction. */
+  agileT = 0;
   /** Seconds before another tackle can start: committing to a tackle has a price, so mashing does nothing. */
   tackleCooldown = 0;
   stunned = 0;
@@ -62,7 +64,7 @@ export class Agent {
   constructor(public card: PlayerCard, public team: number, public index: number) {
     const a = card.attrs;
     this.maxSpeed = 5.8 + (a.pace / 99) * 3.0;          // 7.1 .. 8.8 m/s
-    this.accel = 6.5 + (a.physical / 99) * 2.5 + (a.pace / 99) * 2;
+    this.accel = 8 + (a.physical / 99) * 2.5 + (a.pace / 99) * 2.5; // (sharp off the mark)
     this.agility = 0.5 + (a.dribbling / 99) * 0.5;
     this.isGK = card.position === 'GK';
     this.skill = { dribble: a.dribbling / 99, pass: a.passing / 99, shoot: a.shooting / 99, defend: a.defending / 99, control: (a.dribbling * 0.6 + a.passing * 0.4) / 99 };
@@ -81,6 +83,7 @@ export class Agent {
     this.prevPos = { x: this.pos.x, z: this.pos.z }; this.prevHeadingAngle = Math.atan2(this.heading.z, this.heading.x);
     if (this.cooldown > 0) this.cooldown -= dt;
     if (this.touchCooldown > 0) this.touchCooldown -= dt;
+    if (this.agileT > 0) this.agileT -= dt;
     if (this.tackleCooldown > 0) this.tackleCooldown -= dt;
     if (this.stunned > 0) this.stunned -= dt;
     this.animTime += dt;
@@ -133,9 +136,10 @@ export class Agent {
       if (sp > 0.3) {
         const t = v2.scale(this.vel, 1 / sp);
         const dvt = v2.dot(dv, t); const dvn = v2.sub(dv, v2.scale(t, dvt));
-        const maxUp = grip * this.accel * (1 - 0.55 * Math.min(1, sp / this.maxSpeed));
-        const maxBrake = grip * 12;
-        const maxLat = grip * (9 + this.agility * 5) * (this.intent.jockey ? 1.4 : 1);
+        const cut = this.agileT > 0 ? 1 : 0; // planting to cut: a burst of grip
+        const maxUp = grip * this.accel * (1 - 0.5 * Math.min(1, sp / this.maxSpeed)) * (1 + 0.4 * cut);
+        const maxBrake = grip * (15 + 9 * cut);
+        const maxLat = grip * (12 + this.agility * 7) * (this.intent.jockey ? 1.4 : 1) * (1 + 0.9 * cut);
         const at = Math.max(-maxBrake * dt, Math.min(maxUp * dt, dvt));
         const nl = v2.len(dvn); const an = nl > maxLat * dt ? v2.scale(dvn, (maxLat * dt) / nl) : dvn;
         this.vel = v2.add(this.vel, v2.add(v2.scale(t, at), an));
@@ -153,7 +157,7 @@ export class Agent {
     const cur = Math.atan2(this.heading.z, this.heading.x);
     if (want) {
       let d = Math.atan2(want.z, want.x) - cur; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2;
-      const rate = ((10 + this.agility * 8) / (1 + 0.22 * nsp)) * dt;
+      const rate = ((14 + this.agility * 10) / (1 + 0.17 * nsp)) * (this.agileT > 0 ? 1.8 : 1) * dt;
       const step = Math.abs(d) <= rate ? d : Math.sign(d) * rate;
       this.heading = v2.fromAngle(cur + step);
       this.turnRate += (step / dt - this.turnRate) * Math.min(1, dt * 10);
