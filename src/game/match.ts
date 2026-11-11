@@ -548,8 +548,7 @@ export class Match {
     const f = this.frac;
     const pending = this.director ? !this.director.done : false;
     if (this.half === 1 && f >= 0.5 && this.phase === 'play') {
-      const e = this.director?.pending;
-      if (!e || e.t > 0.5 || f >= 0.6) {
+      if (!this.director?.pushing || f >= 0.6) {
         this.phase = 'halftime'; this.phaseTimer = 3; this.setPiece = null;
         for (const t of this.teams) t.attackDir = (t.attackDir === 1 ? -1 : 1);
         this.ball.owner = null; this.ball.held = false; this.emit({ type: 'halftime' }); this.stoppage = false; return;
@@ -577,7 +576,7 @@ export class Match {
   /** Level after regulation (futsal): sudden death, starting 3v3; the golden goal is now the director's next event. */
   private startOvertime(ot: { side: 'home' | 'away'; at: number }) {
     this.overtime = { start: this.clock, size: 4, at: ot.at }; this.stoppage = false;
-    this.director?.events.push({ t: (this.clock + ot.at) / this.opts.durationSec, side: ot.side, style: 'open' });
+    this.director?.startOvertime(ot.side === 'home' ? 0 : 1, (this.clock + ot.at) / this.opts.durationSec);
     this.shrinkTo(3);
     this.kickoff(this.firstKickoff);
   }
@@ -609,8 +608,7 @@ export class Match {
   /** Failsafe: the human has stalled the match past the stoppage limit; the remaining scripted goals are awarded. */
   private awardRemaining() {
     const d = this.director!;
-    while (!d.done) {
-      const e = d.pending!; const team = d.teamOf(e);
+    for (const team of d.neededGoals()) {
       const t = this.teams[team]; t.score++; d.onGoal(team);
       this.emit({ type: 'goal', team, scorer: t.agents[t.agents.length - 1], forced: true });
     }
@@ -972,6 +970,16 @@ export class Match {
       const push = this.mods.pushTeam === a.team ? this.mods.pushLevel : 0;
       let yHit = d.target?.y ?? (style === 'low' ? 0.2 + power * 0.25 : style === 'finesse' ? 0.6 + power * 0.8 : 0.35 + power * 1.05);
       if (!human && yHit > gh - 0.3) yHit = gh - 0.3 - Math.random() * 0.8;
+      // A side being pushed for a goal picks its spot well: the corner away from the keeper (the side the shot was
+      // already going, if that's open), low or just under the bar, and strikes it cleanly. Decided now; the flight is free.
+      const assist = this.director?.shotAssist(a.team) ?? 0;
+      if (assist > 0 && (dir0.x * team.attackDir > 0.2 || !human)) {
+        const keeper = this.opponentsOf(a.team).agents.find((k) => k.isGK);
+        const kz = keeper ? keeper.pos.z : 0; const open = Math.sign(zHit - kz) || (kz > 0 ? -1 : 1);
+        const side = Math.abs(zHit - kz) > 1.2 && Math.abs(zHit) < gw / 2 ? Math.sign(zHit) || open : open;
+        const corner = side * (gw / 2 - 0.4);
+        zHit += (corner - zHit) * assist; if (assist > 0.6) yHit = Math.random() < 0.6 ? 0.35 : gh - 0.5;
+      }
       const speed = style === 'low' ? 19 + power * 11 : style === 'finesse' ? 20 + power * 7 : 21 + power * 12;
       // curl for the finesse shot: back in toward the goal, against the run if he's cutting across, else from outside the post
       const toGoal = v2.norm({ x: gx - from.x, z: zHit - from.z }); const left = { x: -toGoal.z, z: toGoal.x };
@@ -992,6 +1000,7 @@ export class Match {
       }
       let sigma = human ? (0.075 - a.skill.shoot * 0.05) * (0.55 + power * 0.7) * (sprinting ? 1.2 : 1) * (style === 'finesse' ? 0.85 : 1) * (this.controls.shot === 'semi' ? 1.3 : 1) : 0.13 - skill * 0.1;
       if (this.mods.goalAllowed[a.team] && push > 0) sigma *= 1 - push * 0.85;
+      if (assist > 0) sigma *= 1 - 0.9 * assist;
       // a clean strike: the error is mostly in direction, very little in height (no skied shots from a good contact)
       yawErr = gauss() * sigma; pitchErr = gauss() * sigma * (human ? (style === 'low' ? 0.15 : 0.3) : 0.6);
       b.inFlightShot = { team: a.team, target: { x: gx, y: yHit, z: zHit } };
@@ -1545,7 +1554,8 @@ export class Match {
       if (crossedInFrame) {
         if (this.director && !this.director.allowGoal(scoring.index)) {
           // Failsafe (the director steers shots away long before this): knocked back off the line.
-          b.x = side * (L / 2 - r); b.vx = -side * Math.abs(b.vx) * 0.4; b.vy = Math.max(1.5, b.vy); b.wx = b.wy = b.wz = 0;
+          if (b.owner) { b.owner.stunned = Math.max(b.owner.stunned, 0.6); b.owner = null; b.held = false; } // (a dribble into the net: it runs away from him)
+          b.x = side * (L / 2 - r); b.vx = -side * Math.max(2, Math.abs(b.vx) * 0.4); b.vy = Math.max(1.5, b.vy); b.wx = b.wy = b.wz = 0;
           b.inFlightShot = null; b.lastTouchTeam = defending.index; this.emit({ type: 'post', bar: false });
           return;
         }

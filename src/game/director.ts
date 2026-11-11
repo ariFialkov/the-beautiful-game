@@ -1,5 +1,7 @@
 import { keeperSavePlan } from './ai';
-import type { GoalEvent, MatchScript } from '@shared/types';
+import { BallBody, predictPath } from './ball';
+import type { MatchScript } from '@shared/types';
+import { Rng } from '@shared/rng';
 import type { Match } from './match';
 
 export type KeeperMode = 'normal' | 'wall' | 'soft';
@@ -29,174 +31,322 @@ export const FREE_PLAY: Modifiers = {
   botSkill: 0.6, homeAiSkill: 0.6, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], pushTeam: null, pushLevel: 0, forced: false, tackleBias: 0, shotAppetite: [1, 1], defenseLapse: 0,
 };
 
-/** Window timing per pitch: futsal scripts pack more goals into a shorter match, so its windows open earlier and escalate faster. */
-const WINDOWS = { full: { before: 0.06, after: 0.02, esc: 0.05 }, futsal: { before: 0.1, after: 0.01, esc: 0.03 },
+/** Window timing per pitch: futsal packs more goals into a shorter match, so its windows open earlier and escalate faster. */
+const WINDOWS = { full: { before: 0.06, after: 0.02, esc: 0.05 }, futsal: { before: 0.08, after: 0.015, esc: 0.03 },
   // futsal sudden death: the golden goal is meant for a particular stage (3v3, 2v2 or 1v1), so its window is tight
   overtime: { before: 0.024, after: 0.004, esc: 0.02 } };
 
-/** Hard stop: fraction of regulation after which any remaining scripted goals are awarded outright. */
+/** Hard stop: fraction of regulation after which any goals the result still needs are awarded outright. */
 export const OVERRUN_LIMIT = 1.2;
 
-/** Enforces the server script: the final score is fixed before kickoff; the director paces the match toward it
- *  by opening/closing goal windows, boosting or sandbagging the bots, steering shots and controlling keepers. */
+/** One step of a scoring scenario.
+ *  goal   - engineer a goal for `side` around `at` (a "soft" one is only encouraged, and dropped if it doesn't come)
+ *  free   - both sides may score as play allows (within what keeps the result reachable), until `until`
+ *  wait   - the player is given the chance to score first; the bots hold off until then (or until `until`)
+ *  hold   - no goals for anyone until `until`
+ *  settle - from here the score is paced to the scenario's final margin (spread out, not in a rush) */
+export type Beat = { do: 'goal'; side: 0 | 1; at: number; soft?: boolean } | { do: 'free'; until: number } | { do: 'wait'; until: number } | { do: 'hold'; until: number } | { do: 'settle' };
+
+/** Enforces the server's result. The tier (win / draw / loss) is fixed before kick-off; how the match gets there is a
+ *  scenario picked at random for it - a late comeback after the player scores first, a back-and-forth first half and
+ *  then the bots pulling away, an early blow, a sucker punch at the end, and so on - so the scoreline alone gives little
+ *  away. On top of the scenario a safety layer only lets a goal stand if the result is still reachable in the time left,
+ *  and pushes for the goals the result needs when time runs short.
+ *
+ *  Nothing is done to the ball in flight. Goals are made by play - the side being pushed is sharper and quicker, the
+ *  defenders misread balls and mistime tackles, the keeper is slower and its shots are struck cleanly at a corner the
+ *  keeper can't reach - and goals that mustn't happen are saved or, when the keeper couldn't get there, missed: the
+ *  strike that would have gone in is decided as a miss at the moment it's hit. */
 export class Director {
   mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [false, false], shotAppetite: [1, 1] };
-  private idx = 0;
-  readonly events: GoalEvent[];
-  constructor(public script: MatchScript, private match: Match) {
-    this.events = script.events.slice();
-    this.mods.botSkill = 0.35 + script.botStrength * 0.5;
-  }
-  private get win() { return this.match.overtime ? WINDOWS.overtime : this.match.pitch.futsal ? WINDOWS.futsal : WINDOWS.full; }
-  get pending(): GoalEvent | null { return this.events[this.idx] ?? null; }
-  get done() { return this.idx >= this.events.length; }
-  get remaining() { return this.events.length - this.idx; }
-  teamOf(e: GoalEvent): 0 | 1 { return e.side === 'home' ? 0 : 1; }
+  readonly scenario: string;
+  readonly beats: Beat[];
+  private bi = 0;
+  /** Full-time goal difference (home - away) the tier needs: [lo, hi]. */
+  readonly lo: number; readonly hi: number;
+  /** The scenario's preferred final goal difference. */
+  readonly pref: number;
+  /** The goal being engineered now (from a beat, the settle, or the safety layer). */
+  private push: { side: 0 | 1; at: number; soft: boolean; from: number } | null = null;
+  /** Sudden death (futsal): the golden goal's side and time. */
+  private ot: { side: 0 | 1; t: number } | null = null;
+  private rng: Rng;
 
-  /** Goals the player scored off the script, each answered by the other side. */
-  answered = 0;
+  constructor(public script: MatchScript, private match: Match) {
+    this.mods.botSkill = 0.35 + script.botStrength * 0.5;
+    const sf = script.finalScore;
+    const tier = script.overtime ? 'draw' : script.tier === 'otwin' ? 'draw' : script.tier;
+    const d = script.overtime ? 0 : sf.home - sf.away;
+    [this.lo, this.hi] = tier === 'loss' ? [-99, -1] : tier === 'draw' ? [0, 0] : tier === 'win' ? [1, 2] : [3, 99];
+    this.pref = Math.max(this.lo, Math.min(this.hi, d));
+    this.rng = new Rng(`scenario:${script.tier}:${sf.home}-${sf.away}:${script.events.map((e) => e.side[0] + e.t.toFixed(3)).join(',')}`);
+    const sc = pickScenario(tier, this.pref, script, this.rng);
+    this.scenario = sc.name; this.beats = sc.beats;
+  }
+
+  private get win() { return this.match.overtime ? WINDOWS.overtime : this.match.pitch.futsal ? WINDOWS.futsal : WINDOWS.full; }
+  private get D() { return this.match.teams[0].score - this.match.teams[1].score; }
+  private get beat(): Beat | null { return this.beats[this.bi] ?? null; }
+  /** How many more goals the bots could still be made to score, at a natural pace. */
+  private botCap(f: number) { return Math.max(0, Math.floor((0.97 - f) / (this.match.pitch.futsal ? 0.085 : 0.075))); }
+  /** The player's side's goals are less certain, so they need far more time each. */
+  private homeCap(f: number) { return Math.max(0, Math.floor((0.9 - f) / 0.2)); }
+
+  /** The result is settled: the goal difference is in the tier's range (and the scenario's margin reached, or time is up). */
+  get done(): boolean {
+    if (this.match.overtime) return false;
+    const D = this.D; if (D < this.lo || D > this.hi) return false;
+    return (this.beat?.do === 'settle' && D === this.pref) || this.match.frac >= 1.04;
+  }
+  /** A goal is being engineered right now (half time waits for it). */
+  get pushing(): boolean { return !!this.push && this.match.frac >= this.push.at - this.win.before; }
+  /** The goals the result still needs (the failsafe awards these if a match drags far past full time). */
+  neededGoals(): Array<0 | 1> {
+    if (this.match.overtime) return this.ot ? [this.ot.side] : [];
+    const D = this.D; const out: Array<0 | 1> = [];
+    for (let i = D; i > this.hi; i--) out.push(1);
+    for (let i = D; i < this.lo; i++) out.push(0);
+    return out;
+  }
+  /** Sudden death begins: the golden goal belongs to `side`, due at `t` (fraction of regulation). */
+  startOvertime(side: 0 | 1, t: number) { this.ot = { side, t }; this.push = { side, at: t, soft: false, from: this.match.frac }; }
 
   /** Called by the match when a goal is scored and credited to `team`. */
   onGoal(team: number) {
-    const e = this.pending;
-    if (e && this.teamOf(e) === team) { this.idx++; return; }
-    if (!this.freeScoring(team)) { console.warn('[director] unscripted goal slipped through', team, e); return; }
-    // The player scored when the script didn't have them scoring: the goal stands, and the other side gets one more
-    // later on (sooner if time is short), so the result - and the goal difference - stays as drawn.
-    const frac = this.match.frac;
-    const t = Math.min(Math.max(frac + 0.045 + Math.random() * 0.05, frac + 0.02), Math.max(0.985, frac + 0.025));
-    const ev: GoalEvent = { t, side: team === 0 ? 'away' : 'home', style: 'open' };
-    let i = this.idx; while (i < this.events.length && this.events[i].t <= t) i++;
-    this.events.splice(i, 0, ev);
-    this.answered++;
+    const b = this.beat;
+    if (b?.do === 'goal' && b.side === team) this.bi++;
+    else if (b?.do === 'wait' && team === 0) this.bi++;
+    if (this.push && this.push.side === team) this.push = null;
   }
 
-  /** The player's side may score whenever they manage it (the bots answer it later, see onGoal) - except in sudden
-   *  death, where a golden goal would end the match, and in the closing minutes, when there'd be no time to answer. */
-  freeScoring(team: number): boolean {
-    const mt = this.match;
-    return team === 0 && mt.humanTeam === 0 && !mt.overtime && mt.frac < 0.95;
+  /** Would a goal for `team` right now keep the result reachable? */
+  private feasible(team: number): boolean {
+    const f = this.match.frac; const Dn = this.D + (team === 0 ? 1 : -1);
+    if (team === 0) {
+      // the bots must still be able to bring it back into range in the time left
+      const nb = Math.max(0, Dn - this.hi);
+      if (nb > 0 && nb > this.botCap(f) - 1) return false;
+      if (Dn > Math.max(this.pref, this.lo, 0) + 2) return false; // (no runaway scorelines)
+    } else {
+      const nh = Math.max(0, this.lo - Dn);
+      if (nh > 0) {
+        if (this.lo >= 1) return false; // winning results: the player scores first, and once ahead is never pegged back
+        if (nh > 1 || f > 0.5) return false; // (a draw: the bots may lead by one early on, with time to come back)
+      }
+      if (Dn < Math.min(this.pref, this.hi, 0) - 1) return false;
+    }
+    return true;
   }
 
   allowGoal(team: number): boolean {
-    if (this.freeScoring(team)) return true;
-    const e = this.pending;
-    if (!e) return false;
-    return this.teamOf(e) === team && this.match.frac >= e.t - this.win.before;
+    const mt = this.match;
+    if (mt.overtime) return !!this.ot && team === this.ot.side && mt.frac >= this.ot.t - this.win.before;
+    const b = this.beat; const p = this.push; const f = mt.frac;
+    if (b?.do === 'hold') return false;
+    if (b?.do === 'wait' && team === 1) return false;
+    // while a goal is being engineered, only that side may score
+    if (p && f >= p.at - this.win.before) return team === p.side && this.feasible(team);
+    if (b?.do === 'settle') return false; // the score is being paced from here
+    return this.feasible(team);
+  }
+
+  /** Advance the scenario and choose what (if anything) to push for. */
+  private plan(f: number) {
+    // finished beats
+    for (;;) {
+      const b = this.beat; if (!b) break;
+      if ((b.do === 'free' || b.do === 'hold' || b.do === 'wait') && f >= b.until) { this.bi++; continue; }
+      if (b.do === 'goal' && b.soft && f > b.at + 0.12) { this.bi++; if (this.push?.at === b.at) this.push = null; continue; }
+      if (b.do === 'goal' && !this.feasible(b.side) && f > b.at - this.win.before) { this.bi++; continue; } // (overtaken by events)
+      break;
+    }
+    if (this.match.overtime) return;
+    const D = this.D;
+    // safety: goals the result needs that can't wait any longer
+    const nb = Math.max(0, D - this.hi), nh = Math.max(0, this.lo - D);
+    if (nh > 0 && (nh >= this.homeCap(f) || f > 0.7)) { if (this.push?.side !== 0) this.push = { side: 0, at: f + this.win.before * 0.5, soft: false, from: f }; return; }
+    if (nb > 0 && nb >= this.botCap(f)) { if (this.push?.side !== 1) this.push = { side: 1, at: f + this.win.before * 0.5, soft: false, from: f }; return; }
+    const b = this.beat;
+    if (b?.do === 'goal') { if (!this.push || this.push.at !== b.at) this.push = { side: b.side, at: b.at, soft: !!b.soft, from: f }; return; }
+    if (b?.do === 'settle') {
+      // pace the score to the scenario's margin (or just into the tier's range if time is short), goals spread out
+      let target = this.pref;
+      if (D > target && D - target > this.botCap(f)) target = Math.max(this.hi, D - this.botCap(f));
+      if (D < target && target - D > Math.max(1, this.homeCap(f))) target = Math.min(D + Math.max(1, this.homeCap(f)), Math.max(this.lo, D));
+      if (D === target) { this.push = null; return; }
+      const side: 0 | 1 = D > target ? 1 : 0; const k = Math.abs(D - target);
+      if (!this.push || this.push.side !== side) this.push = { side, at: Math.max(f + this.win.before * 0.6, Math.min(this.match.pitch.futsal ? 0.84 : 0.9, f + (0.94 - f) / (k + 0.5))), soft: false, from: f };
+      return;
+    }
+    this.push = null; // free play, a hold or a wait: nothing engineered
   }
 
   update(dt: number) {
-    const m = this.mods; const frac = this.match.frac; const e = this.pending;
+    const m = this.mods; const mt = this.match; const frac = mt.frac;
+    this.plan(frac);
     const base = this.script.botStrength;
     m.botSkill = 0.35 + base * 0.5; m.homeAiSkill = 0.55; m.speedMul = [1, 0.96 + base * 0.08]; m.tackleBias = 0; m.forced = false; m.pushTeam = null; m.pushLevel = 0; m.defenseLapse = 0;
-    m.keeper = ['wall', 'wall']; m.goalAllowed = [false, false]; m.shotAppetite = [0.45, 0.45];
-    if (!e) {
-      // Script complete: no more goals for the bots; keep them lively but harmless.
-      m.shotAppetite = [this.freeScoring(0) ? 1 : 0.3, 0.25];
-      if (this.freeScoring(0)) m.keeper[1] = 'normal';
-      return;
-    }
-    const team = this.teamOf(e);
-    const other = team === 0 ? 1 : 0;
-    const W = this.win; const start = e.t - W.before;
-    // Score-state pacing: if the human is "ahead of script" the bots look sharper; if behind, they look sloppy.
-    if (frac >= start) {
-      const level = Math.min(1, (frac - start) / (W.before + W.after));
-      m.pushTeam = team; m.pushLevel = level; m.goalAllowed[team] = true;
+    m.goalAllowed = [this.allowGoal(0), this.allowGoal(1)];
+    // the keeper facing a side that may not score is at its best; otherwise it plays them straight
+    m.keeper = [m.goalAllowed[1] ? 'normal' : 'wall', m.goalAllowed[0] ? 'normal' : 'wall'];
+    m.shotAppetite = [m.goalAllowed[0] ? 1 : 0.5, m.goalAllowed[1] ? 0.8 : 0.4];
+    const b = this.beat;
+    if (b?.do === 'wait') { m.pushTeam = 0; m.pushLevel = 0.25; m.shotAppetite[0] = 1.3; m.tackleBias = 0.2; }
+    const p = this.push; const W = this.win;
+    if (p && frac >= p.at - W.before) {
+      const team = p.side; const other = team === 0 ? 1 : 0;
+      const level = Math.min(p.soft ? 0.6 : 1, (frac - (p.at - W.before)) / (W.before + W.after));
+      m.pushTeam = team; m.pushLevel = level;
       m.keeper[other] = level > 0.5 ? 'soft' : 'normal'; // the defending keeper gets beatable
       m.keeper[team] = 'wall';
       m.shotAppetite[team] = 1.2 + level * 1.5; m.shotAppetite[other] = 0.3;
       m.tackleBias = (team === 0 ? 1 : -1) * (0.35 + level * 0.6);
+      // the pushing side plays a quick, clean game; the defending side is a step slow and misreads balls
       if (team === 1) { m.botSkill = Math.min(1, 0.7 + level * 0.3); m.homeAiSkill = 0.55 - level * 0.2; m.speedMul[1] = 1.04 + level * 0.1; m.speedMul[0] = 1 - level * 0.06; }
       else { m.homeAiSkill = 0.75 + level * 0.25; m.botSkill = Math.max(0.1, 0.35 - level * 0.25); m.speedMul[1] = 0.96 - level * 0.1; }
       m.defenseLapse = level > 0.4 ? (level - 0.4) * 0.5 : 0;
-      if (frac >= e.t + W.after) {
+      if (!p.soft && frac >= p.at + W.after) {
         m.forced = true; m.pushLevel = 1; m.keeper[other] = 'soft';
         // escalate the longer a forced goal takes: the pushing side gets quicker, the other side wilts
-        const esc = Math.min(1, (frac - (e.t + W.after)) / W.esc);
+        const esc = Math.min(1, (frac - (p.at + W.after)) / W.esc);
         m.speedMul[team] = 1.06 + esc * 0.18; m.speedMul[other] = 0.94 - esc * 0.2;
         m.shotAppetite[team] = 3 + esc * 3; m.tackleBias = (team === 0 ? 1 : -1) * (0.8 + esc * 0.2);
         if (team === 1) { m.botSkill = 1; m.homeAiSkill = 0.15; } else { m.homeAiSkill = 1; m.botSkill = 0.1; }
         m.defenseLapse = 0.45 + esc * 0.5;
       }
-    } else {
-      // Between windows: bots play to the score state. Ahead on the script => composed; behind => wasteful.
-      const lead = this.match.teams[0].score - this.match.teams[1].score;
-      const nextIsAway = team === 1;
-      m.botSkill = 0.35 + base * 0.5 + (nextIsAway ? 0.1 : -0.1) - lead * 0.03;
     }
     m.botSkill = Math.max(0.1, Math.min(1, m.botSkill));
-    // while the player is free to score, the keeper they face plays them straight (no "wall")
-    if (this.freeScoring(0) && m.keeper[1] === 'wall') m.keeper[1] = 'normal';
+    void dt;
   }
 
-  /** Per-step steering. Forced goals are guided in; goals that are not scheduled are bent onto the woodwork,
-   *  wide or over before they reach the line, so the outcome stays exactly as scripted while the ball keeps flying naturally. */
-  steer(dt: number) {
-    const ball = this.match.ball;
-    if (ball.held || ball.owner) return;
-    if (this.mods.pushTeam !== null && this.mods.forced) this.steerIn(dt);
-    for (const team of [0, 1] as const) if (!this.allowGoal(team)) this.deny(team, dt);
+  /** How much a shot by `team` is helped at the strike (0..1): picked out for a corner the keeper can't reach and struck
+   *  cleanly, while that side is being pushed for a goal. Nothing touches the ball after it's hit. */
+  shotAssist(team: number): number {
+    const m = this.mods;
+    if (m.pushTeam !== team || !m.goalAllowed[team]) return 0;
+    return m.forced ? 1 : Math.max(0, (m.pushLevel - 0.3) / 0.7);
   }
 
-  private steerIn(dt: number) {
-    const m = this.mods; const ball = this.match.ball;
-    const shot = ball.inFlightShot;
-    if (!shot || shot.team !== m.pushTeam) return;
-    const team = this.match.teams[m.pushTeam!];
-    const gx = team.attackDir * this.match.pitch.length / 2;
-    const dx = gx - ball.x;
-    if (Math.sign(dx) !== Math.sign(ball.vx) || Math.abs(dx) > 40 || Math.abs(dx) < 0.3) return;
-    const tz = shot.target?.z ?? Math.sign(ball.z || 1) * this.match.pitch.goalWidth * 0.3;
-    const ty = Math.min(this.match.pitch.goalHeight - 0.4, shot.target?.y ?? 1.1);
-    const hs = Math.hypot(ball.vx, ball.vz) || 1;
-    const t = Math.abs(dx) / Math.max(hs, 8);
-    const wantZ = (tz - ball.z) / t, wantY = (ty - ball.y + 0.5 * 9.81 * t * t) / t;
-    const k = 1 - Math.exp(-5 * dt);
-    ball.vz += (wantZ - ball.vz) * k; ball.vy += (wantY - ball.vy) * k;
-    ball.wx *= 0.9; ball.wy *= 0.9; ball.wz *= 0.9;
-    const want = Math.max(hs, 14); const cur = Math.hypot(ball.vx, ball.vz);
-    const s = want / cur; ball.vx *= s; ball.vz *= s;
+  /** Each new touch is checked once, at the moment it's struck: a ball on its way into a goal that mustn't count, and
+   *  beyond the keeper, is struck a little off - wide, onto the post or over - instead. (It is the strike that misses;
+   *  the flight is untouched.) */
+  private vetted = -1; private lastDir = 0; private lastHs = 0;
+  lastVet: any = null;
+  private scratch = new BallBody();
+  steer(_dt: number) {
+    const mt = this.match; const b = mt.ball;
+    // a new strike: a touch, or the ball's line changing sharply off a post or a body (not a bounce, not curl)
+    const hs0 = Math.hypot(b.vx, b.vz); const dir = hs0 > 0.5 ? Math.atan2(b.vz, b.vx) : this.lastDir;
+    let turn = Math.abs(dir - this.lastDir); if (turn > Math.PI) turn = 2 * Math.PI - turn;
+    const kicked = Math.abs(hs0 - this.lastHs) > 2.5; this.lastDir = dir; this.lastHs = hs0;
+    if (b.held || b.owner) { this.vetted = b.lastTouchTime; return; }
+    if (b.lastTouchTime === this.vetted && turn < 0.06 && !kicked) return;
+    this.vetted = b.lastTouchTime;
+    if (Math.hypot(b.vx, b.vy, b.vz) < 1) return;
+    const hit = this.goalBound(b);
+    if (!hit || this.allowGoal(hit.team)) return;
+    const { goalWidth: gw, goalHeight: gh } = mt.pitch;
+    const keeper = mt.opponentsOf(hit.team).agents.find((a) => a.isGK);
+    if (keeper && !keeper.busy() && Math.abs(keeper.pos.x - hit.lineX) < 5 && Math.abs(hit.z) < gw / 2) {
+      const kp = keeperSavePlan(mt, keeper, { t: hit.t, y: hit.y, z: hit.z });
+      const avail = hit.t - kp.reaction - 0.06;
+      if (kp.reachable && avail > 0.12 && kp.travel <= kp.speed * avail * 0.6) return; // a comfortable save: leave it to the keeper
+    }
+    // the strike goes just wrong: over the bar if it was rising high, else wide of (or, now and then, onto) the nearer post
+    const s = this.scratch; const over = hit.y > gh - 0.7;
+    const zs = Math.sign(hit.z || (Math.random() - 0.5)); const tz = zs * (gw / 2 + (Math.random() < 0.15 ? 0.04 : 0.5 + Math.random() * 0.4));
+    // solve for the change of direction numerically (a secant on the crossing point), on a copy of the ball
+    const at = (yaw: number, pitch: number) => {
+      s.copyFrom(b); const hs = Math.hypot(b.vx, b.vz), sp = Math.hypot(hs, b.vy);
+      const y0 = Math.atan2(b.vz, b.vx) + yaw, p0 = Math.atan2(b.vy, hs) + pitch;
+      s.vx = Math.cos(y0) * Math.cos(p0) * sp; s.vz = Math.sin(y0) * Math.cos(p0) * sp; s.vy = Math.sin(p0) * sp;
+      return this.crossing(s, hit.lineX);
+    };
+    let x0 = 0, x1 = over ? 0.03 : 0.02; let f0 = over ? hit.y - (gh + 0.5) : hit.z - tz;
+    for (let it = 0; it < 6; it++) {
+      const c = over ? at(0, x1) : at(x1, 0); if (!c) break;
+      const f1 = over ? c.y - (gh + 0.5) : c.z - tz;
+      if (Math.abs(f1) < 0.08) { x0 = x1; break; }
+      const nx = x1 - f1 * (x1 - x0) / ((f1 - f0) || 1e-6); x0 = x1; f0 = f1; x1 = Math.max(-0.5, Math.min(0.5, nx));
+    }
+    const d = x1; const hs = Math.hypot(b.vx, b.vz), sp = Math.hypot(hs, b.vy);
+    this.lastVet = { at: mt.time, hit, tz, over, d, after: over ? at(0, d) : at(d, 0) };
+    const y0 = Math.atan2(b.vz, b.vx) + (over ? 0 : d), p0 = Math.atan2(b.vy, hs) + (over ? d : 0);
+    b.vx = Math.cos(y0) * Math.cos(p0) * sp; b.vz = Math.sin(y0) * Math.cos(p0) * sp; b.vy = Math.sin(p0) * sp;
+    this.lastDir = Math.atan2(b.vz, b.vx); this.lastHs = Math.hypot(b.vx, b.vz); // (the corrected strike is the new line)
   }
 
-  private denyPlan = new Map<number, 'post' | 'wide' | 'over'>();
-  /** Per shot: can the keeper reach it (decided once, when it is first read)? */
-  private keeperVerdict = new Map<number, boolean>();
-  private deny(team: 0 | 1, dt: number) {
-    const mt = this.match; const ball = mt.ball; const { length: L, goalWidth: gw, goalHeight: gh } = mt.pitch;
-    const side = mt.teams[team].attackDir; const lineX = side * L / 2;
-    if (ball.vx * side < 1.5) return;
-    const dist = (lineX - ball.x) * side;
-    if (dist < -0.2 || dist > 38) return;
-    const path = mt.predicted();
-    let hit: { t: number; y: number; z: number } | null = null;
+  /** Where a ball crosses the goal line at x = lineX (if it does, within 3 s). */
+  private crossing(s: BallBody, lineX: number): { t: number; y: number; z: number } | null {
+    const path = predictPath(s, 3.5, 1 / 120);
     for (let i = 1; i < path.length; i++) {
-      const a = path[i - 1], b = path[i];
-      if ((b.x - lineX) * side >= 0 && (a.x - lineX) * side < 0) {
-        const k = (lineX - a.x) / (b.x - a.x || 1e-6);
-        hit = { t: a.t + (b.t - a.t) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k }; break;
-      }
+      const a = path[i - 1], c = path[i];
+      if ((c.x - lineX) * Math.sign(lineX) >= 0 && (a.x - lineX) * Math.sign(lineX) < 0) { const k = (lineX - a.x) / (c.x - a.x || 1e-6); return { t: a.t + (c.t - a.t) * k, y: a.y + (c.y - a.y) * k, z: a.z + (c.z - a.z) * k }; }
     }
-    if (!hit || Math.abs(hit.z) > gw / 2 + 0.12 || hit.y > gh + 0.12) return;
-    // The keeper gets every shot he can genuinely reach (he saves it with his hands, in plain sight); only a shot
-    // beyond him is nudged off target, gently, from as early as possible.
-    const keeper = mt.opponentsOf(team).agents.find((a) => a.isGK);
-    const key = Math.round(ball.lastTouchTime * 1000);
-    if (keeper && !keeper.busy() || keeper?.action?.type === 'dive') {
-      if (!this.keeperVerdict.has(key)) { const kp = keeperSavePlan(mt, keeper!, { t: hit.t, y: hit.y, z: hit.z }); this.keeperVerdict.set(key, kp.reachable && Math.abs(keeper!.pos.x - lineX) < 6); if (this.keeperVerdict.size > 40) this.keeperVerdict.clear(); }
-      if (this.keeperVerdict.get(key)) return;
-    }
-    let plan = this.denyPlan.get(key);
-    if (!plan) { plan = hit.y > gh - 0.8 ? 'over' : Math.random() < 0.3 ? 'post' : 'wide'; this.denyPlan.set(key, plan); if (this.denyPlan.size > 40) this.denyPlan.clear(); }
-    const zSign = Math.sign(hit.z || (Math.random() - 0.5));
-    let tz = hit.z, ty = hit.y;
-    if (plan === 'post') tz = zSign * (gw / 2 + 0.02);
-    else if (plan === 'wide') tz = zSign * (gw / 2 + 0.6);
-    else ty = gh + 0.45;
-    const t = Math.max(0.05, hit.t);
-    const cap = 10;
-    const az = Math.max(-cap, Math.min(cap, (2 * (tz - hit.z)) / (t * t)));
-    const ay = Math.max(-cap, Math.min(cap, (2 * (ty - hit.y)) / (t * t)));
-    ball.vz += az * dt; ball.vy += ay * dt;
+    return null;
   }
+
+  /** Where the ball's path first crosses a goal line in or near the frame, and for which team that would be a goal. */
+  private goalBound(b: BallBody): { team: number; t: number; y: number; z: number; lineX: number } | null {
+    const mt = this.match; const { length: L, goalWidth: gw, goalHeight: gh } = mt.pitch;
+    const side = Math.sign(b.vx) || 1; const lx = side * L / 2;
+    const c = this.crossing(this.scratch.copyFrom(b), lx);
+    if (!c || Math.abs(c.z) > gw / 2 + 0.5 || c.y > gh + 0.4) return null; // (a margin: the prediction isn't exact)
+    return { team: mt.teams.find((t) => t.attackDir === side)!.index, t: c.t, y: c.y, z: c.z, lineX: lx };
+  }
+}
+
+/** Pick a scoring scenario for the result. Times are fractions of regulation (0.5 = half time). */
+function pickScenario(tier: string, pref: number, script: MatchScript, rng: Rng): { name: string; beats: Beat[] } {
+  const r = (a: number, b: number) => rng.range(a, b);
+  const H = 0 as const, A = 1 as const;
+  const classic = (): Beat[] => {
+    // the server's own drama-ordered schedule (for a winning result, the player's goal comes first)
+    const ev = script.events.slice();
+    if (tier === 'win' || tier === 'bigwin') { const i = ev.findIndex((e) => e.side === 'home'); if (i > 0) { const [e] = ev.splice(i, 1); ev.unshift({ ...e, t: Math.min(e.t, ev[0].t) }); } }
+    const out: Beat[] = ev.map((e) => ({ do: 'goal', side: e.side === 'home' ? H : A, at: e.t, soft: e.side === 'home' && (tier === 'loss' || tier === 'draw') }));
+    return [...out, { do: 'settle' }];
+  };
+  const options: Array<[string, number, () => Beat[]]> = [];
+  if (tier === 'loss') {
+    options.push(
+      // the player scores first; the bots come back from about the hour mark
+      ['late comeback', 3, () => [{ do: 'wait', until: r(0.3, 0.42) }, { do: 'goal', side: H, at: r(0.36, 0.46) }, { do: 'free', until: r(0.55, 0.62) }, { do: 'settle' }]],
+      // end to end in the first half; the bots pull away in the second
+      ['pulls away', 3, () => [{ do: 'goal', side: H, at: r(0.1, 0.24), soft: true }, { do: 'goal', side: A, at: r(0.26, 0.4) }, { do: 'free', until: r(0.48, 0.55) }, { do: 'settle' }]],
+      // an early blow, the player may hit back, the bots see it out
+      ['early blow', 2, () => [{ do: 'goal', side: A, at: r(0.06, 0.18) }, { do: 'free', until: r(0.55, 0.7) }, { do: 'settle' }]],
+      // level (or close) for a long time, then a sucker punch late on
+      ['sucker punch', 2, () => [{ do: 'free', until: r(0.68, 0.8) }, { do: 'settle' }]],
+      // the player leads at the break, the bots turn it round
+      ['turned round', 2, () => [{ do: 'goal', side: H, at: r(0.14, 0.26) }, { do: 'goal', side: H, at: r(0.3, 0.42), soft: true }, { do: 'hold', until: 0.52 }, { do: 'settle' }]],
+      // goals traded early, the bots edge it
+      ['trading blows', 2, () => [{ do: 'goal', side: A, at: r(0.12, 0.22) }, { do: 'goal', side: H, at: r(0.26, 0.38), soft: true }, { do: 'goal', side: A, at: r(0.44, 0.56) }, { do: 'free', until: r(0.62, 0.72) }, { do: 'settle' }]],
+      ['scheduled', 2, classic],
+    );
+  } else if (tier === 'draw') {
+    options.push(
+      ['late equaliser', 3, () => [{ do: 'goal', side: H, at: r(0.14, 0.34) }, { do: 'free', until: r(0.62, 0.72) }, { do: 'settle' }]],
+      ['trading blows', 3, () => [{ do: 'goal', side: H, at: r(0.1, 0.24), soft: true }, { do: 'goal', side: A, at: r(0.26, 0.42) }, { do: 'free', until: r(0.7, 0.8) }, { do: 'settle' }]],
+      ['fight back', 2, () => [{ do: 'goal', side: A, at: r(0.1, 0.24) }, { do: 'goal', side: H, at: r(0.36, 0.5) }, { do: 'free', until: r(0.7, 0.8) }, { do: 'settle' }]],
+      ['tight', 1, () => [{ do: 'free', until: r(0.8, 0.88) }, { do: 'settle' }]],
+      ['scheduled', 2, classic],
+    );
+  } else if (tier === 'win') {
+    options.push(
+      ['early lead', 3, () => [{ do: 'goal', side: H, at: r(0.1, 0.28) }, { do: 'free', until: r(0.7, 0.8) }, { do: 'settle' }]],
+      // two up, then a nervy finish when the bots pull one back
+      ['nervy finish', 2, () => [{ do: 'goal', side: H, at: r(0.1, 0.24) }, { do: 'goal', side: H, at: r(0.3, 0.46) }, { do: 'free', until: r(0.62, 0.74) }, { do: 'settle' }]],
+      ['scheduled', 2, classic],
+    );
+  } else {
+    options.push(
+      ['rout', 3, () => { const n = Math.max(3, pref); const out: Beat[] = []; for (let i = 0; i < n; i++) out.push({ do: 'goal', side: H, at: 0.1 + (0.62 * (i + r(0.1, 0.8))) / n }); return [...out, { do: 'free', until: 0.85 }, { do: 'settle' }]; }],
+      ['scheduled', 2, classic],
+    );
+  }
+  let tot = 0; for (const o of options) tot += o[1];
+  let u = rng.next() * tot; let pick = options[0];
+  for (const o of options) { u -= o[1]; if (u <= 0) { pick = o; break; } }
+  return { name: pick[0], beats: pick[2]() };
 }

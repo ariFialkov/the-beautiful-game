@@ -163,15 +163,17 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
     m.startKick(a, futsal ? 'pass' : 'lob', 0.9, v2.norm({ x: dir, z: Math.sign(a.pos.z || 1) * 0.5 }), { clear: true, botSkill: skill });
     return;
   }
-  // In a forced goal window the attackers will try their luck from much further out.
-  const range = mods.forced && push > 0 ? (futsal ? 28 : 42) : futsal ? 15 : 27;
+  // Pushing for a goal, the attack is built quickly and cleanly (forward passes, runners, players going at the
+  // defence) and finished from a good position, not hit hopefully from distance.
+  const range = mods.forced && push > 0 ? (futsal ? 18 : 30) : futsal ? 15 : 27;
   let shoot = 0;
   if (dGoal < range) {
     const angle = Math.abs(Math.atan2(a.pos.z, Math.abs(goal.x - a.pos.x) + 0.1));
     const lane = laneOpen(a.pos, goal, opp, 2.2);
     shoot = (1 - dGoal / range) * (1 - angle / 1.4) * (0.35 + lane * 0.65) * (0.5 + skill * 0.6) * appetite;
     if (dGoal < range * 0.65 && lane > 0.3) shoot += 0.3;
-    if (mods.forced && push > 0) shoot = Math.max(shoot, 0.9 + (1 - dGoal / range));
+    if (push > 0.5 && dGoal < (futsal ? 14 : 22) && lane > (futsal ? 0.15 : 0.25)) shoot = Math.max(shoot, 0.8 + (1 - dGoal / range));
+    if (mods.forced && push > 0 && dGoal < range * (futsal ? 1 : 0.8)) shoot = Math.max(shoot, 0.7 + (1 - dGoal / range));
     if (pressure.dist < 1.6) shoot *= 1.3;
   }
   let bestPass: { agent: Agent; score: number; kind: 'pass' | 'through' | 'lob' } | null = null;
@@ -195,7 +197,7 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
   }
   const ahead = { x: a.pos.x + dir * 6, z: a.pos.z };
   let spaceAhead = 8; for (const o of opp) spaceAhead = Math.min(spaceAhead, v2.dist(o.pos, ahead));
-  const dribble = 0.5 + a.skill.dribble * 0.3 - (pressure.dist < 2.2 ? 0.4 : 0) + (spaceAhead > 5 ? 0.25 : spaceAhead < 2.5 ? -0.2 : 0) + (dGoal > 45 ? 0.05 : 0);
+  const dribble = 0.5 + a.skill.dribble * 0.3 - (pressure.dist < 2.2 ? 0.4 : 0) + (spaceAhead > 5 ? 0.25 : spaceAhead < 2.5 ? -0.2 : 0) + (dGoal > 45 ? 0.05 : 0) + push * (spaceAhead > 3 ? 0.35 : 0.1);
   const options: Array<[string, number]> = [['shoot', shoot], ['pass', (bestPass?.score ?? 0) * (pressure.dist < 3 ? 1.2 : 0.9)], ['dribble', dribble]];
   options.sort((x, y) => y[1] - x[1]);
   const pick = options[0][0];
@@ -355,6 +357,11 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     if (carrier === a && !ball.held) {
       if (m.phase !== 'play' || a.pendingKick) continue;
       const pressed = nearestOpponent(m, a).dist < 1.6;
+      // on the goal line in front of goal: a player puts it in (shoots) rather than walking it over the line
+      const gxl = team.attackDir * m.pitch.length / 2;
+      if (Math.abs(gxl - a.pos.x) < 3 && Math.abs(a.pos.z) < m.pitch.goalWidth / 2 + 1.5 && !a.pendingKick) {
+        const z = (rnd() - 0.5) * m.pitch.goalWidth * 0.6; m.startKick(a, 'shoot', 0.6, v2.norm(v2.sub({ x: gxl, z }, a.pos)), { botSkill: skill, target: { x: gxl, z, y: 0.5 } }); continue;
+      }
       if (now >= a.ai.nextDecision || (pressed && now >= a.ai.nextDecision - 0.35)) { a.ai.nextDecision = now + 0.3 + (1 - skill) * 0.3 + rnd() * 0.25; onBall(m, team, a, skill); }
       if (a.ai.mode === 'dribble' && !a.pendingKick) { const d = v2.sub(a.ai.target, a.pos); a.intent.move = v2.len(d) > 0.5 ? v2.norm(d) : { x: 0, z: 0 }; }
       continue;
@@ -445,7 +452,7 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
         // close to him: shuffle across and take it with the hands (the anticipation step plans the catch)
         if (Math.abs(lateral) < 0.55 && y < 1.9) { k.intent.move = { x: 0, z: Math.sign(lateral) * Math.min(1, Math.abs(lateral) * 2) }; k.intent.sprint = true; return; }
         let side = Math.sign(lateral);
-        if (mode === 'soft' && rnd() < 0.3) side = -side; // sold the wrong way
+        if (mode === 'soft' && rnd() < (m.mods.forced && m.mods.pushTeam !== team.index ? 0.5 : 0.3)) side = -side; // sold the wrong way
         // when to go: as late as possible (a set keeper waits), but no sooner than he can react
         const need = plan.travel / plan.speed + 0.1;
         const startIn = Math.max(plan.reaction, t - need - 0.08);
