@@ -158,3 +158,35 @@ test('futsal: a level game goes to sudden death (3v3, then 2v2, then 1v1) and th
     console.log(`  sudden death ${tier}: ${m.teams[0].score}-${m.teams[1].score}, planned at ${script.overtime!.at.toFixed(1)} s (${shouldBe}v${shouldBe}), ended ${m.overtime!.size}v${m.overtime!.size} after ${(m.clock - m.overtime!.start).toFixed(1)} s · goals ${events.join(' ')}`);
   }
 });
+
+test("the player's chances count: clean finishes from inside the box go in, even in a match drawn as a defeat", () => {
+  const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+  let goals = 0, forcedMisses = 0; const n = 12;
+  const press = (k: string, down: boolean, jp: boolean, jr: boolean, move: { x: number; y: number }) => ({ ...idleIn, move, sprint: { down: false }, [k]: { down, justPressed: jp, justReleased: jr } });
+  for (let i = 0; i < n; i++) {
+    const script = generateMatchScript(new Rng(`sitter-${i}`), 'kickoff', 'loss', 0, 0.6);
+    const m = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: 0, script, durationSec: script.durationSec, clockMinutes: 90,
+      teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+    while (m.frac < 0.1 + i * 0.05 || m.phase !== 'play') m.update(1 / 60, idleIn);
+    const at = m.teams[0].attackDir; const s = m.teams[0].agents[9]; const gk = m.teams[1].agents[0];
+    for (const a of m.teams[1].agents) if (!a.isGK) { a.pos = { x: a.pos.x * 0.3, z: a.pos.z }; a.prevPos = { ...a.pos }; } // (a clear sight of goal)
+    gk.pos = { x: at * 51.5, z: 0 }; gk.prevPos = { ...gk.pos }; gk.ai.dive = null; gk.action = null;
+    const dist = 9 + (i % 4) * 1.5, z0 = ((i % 5) - 2) * 2.2;
+    s.pos = { x: at * (52.5 - dist), z: z0 }; s.prevPos = { ...s.pos }; s.heading = { x: at, z: 0 }; s.vel = { x: 0, z: 0 }; s.action = null;
+    (m as any).setControlled(s); m.ball.reset(s.pos.x + at * 0.4, z0); m.ball.owner = s;
+    m.controlBasis = { right: { x: 0, z: at }, forward: { x: at, z: 0 } };
+    const stick = i % 3 === 0 ? { x: 0, y: 0 } : { x: (i % 2 ? 0.35 : -0.35), y: 1 }; // (roughly at goal, or no stick)
+    const vet0 = (m.director as any).lastVet;
+    for (let k = 0; k < 24; k++) m.update(1 / 60, press('shoot', true, k === 0, false, stick));
+    m.update(1 / 60, press('shoot', false, false, true, stick));
+    let scored = false; m.on((e) => { if (e.type === 'goal' && e.team === 0) scored = true; });
+    let fate = 'none';
+    for (let k = 0; k < 120 && !scored; k++) { m.update(1 / 60, idleIn); const b = m.ball; if (fate === 'none') { if (b.lastTouch === gk) fate = 'saved'; else if (b.lastTouch && b.lastTouch.team === 1) fate = 'blocked'; else if (Math.abs(b.x) > 52.5) fate = `out z ${b.z.toFixed(2)} y ${b.y.toFixed(2)}`; } }
+    if (process.env.SITTER_DEBUG) console.log(`  shot ${i}: from ${dist.toFixed(1)} m z ${z0.toFixed(1)} stick ${JSON.stringify(stick)} -> ${scored ? 'GOAL' : fate} keeper ${m.mods.keeper[1]}`);
+    if (scored) goals++;
+    const lv = (m.director as any).lastVet; if (lv !== vet0 && lv?.hit?.team === 0) forcedMisses++;
+  }
+  console.log(`  ${goals}/${n} chances scored, ${forcedMisses} made to miss`);
+  assert.equal(forcedMisses, 0, 'no shot of the player is turned into a miss');
+  assert.ok(goals >= n * 0.6, 'most clean chances go in');
+});

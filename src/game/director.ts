@@ -138,9 +138,23 @@ export class Director {
     return true;
   }
 
+  /** The player's own goals: they stand whenever the bots can still score enough, in the time left (stoppage time
+   *  included), to bring the result back to the drawn one. No phase of a scenario holds the player back - the
+   *  scenarios and pushes only govern the bots - so a good chance taken is a goal, and the bots answer it with more of
+   *  their own. Only right at the end of a match the player is winning against the script does this run out. */
+  private playerMayScore(): boolean {
+    const f = this.match.frac; const Dn = this.D + 1;
+    const nb = Math.max(0, Dn - this.hi);
+    const late = Math.max(0, Math.floor((1.1 - f) / (this.match.pitch.futsal ? 0.075 : 0.065)));
+    return nb <= late && Dn <= Math.max(this.pref, this.lo, 0) + 4;
+  }
+  /** Is this the human player's side (whose goals are free)? */
+  private human(team: number) { return team === 0 && this.match.humanTeam === 0; }
+
   allowGoal(team: number): boolean {
     const mt = this.match;
     if (mt.overtime) return !!this.ot && team === this.ot.side && mt.frac >= this.ot.t - this.win.before;
+    if (this.human(team)) return this.playerMayScore();
     const b = this.beat; const p = this.push; const f = mt.frac;
     if (b?.do === 'hold') return false;
     if (b?.do === 'wait' && team === 1) return false;
@@ -166,6 +180,8 @@ export class Director {
     const nb = Math.max(0, D - this.hi), nh = Math.max(0, this.lo - D);
     if (nh > 0 && (nh >= this.homeCap(f) || f > 0.7)) { if (this.push?.side !== 0) this.push = { side: 0, at: f + this.win.before * 0.5, soft: false, from: f }; return; }
     if (nb > 0 && nb >= this.botCap(f)) { if (this.push?.side !== 1) this.push = { side: 1, at: f + this.win.before * 0.5, soft: false, from: f }; return; }
+    // the player has run up a lead the bots will need several goals to undo: they start on it now, not all at the end
+    if (nb >= 2 && this.beat?.do !== 'wait') { if (this.push?.side !== 1) this.push = { side: 1, at: f + this.win.before * 0.8, soft: false, from: f }; return; }
     const b = this.beat;
     if (b?.do === 'goal') { if (!this.push || this.push.at !== b.at) this.push = { side: b.side, at: b.at, soft: !!b.soft, from: f }; return; }
     if (b?.do === 'settle') {
@@ -198,7 +214,7 @@ export class Director {
       const level = Math.min(p.soft ? 0.6 : 1, (frac - (p.at - W.before)) / (W.before + W.after));
       m.pushTeam = team; m.pushLevel = level;
       m.keeper[other] = level > 0.5 ? 'soft' : 'normal'; // the defending keeper gets beatable
-      m.keeper[team] = 'wall';
+      if (!m.goalAllowed[other]) m.keeper[team] = 'wall';
       m.shotAppetite[team] = 1.2 + level * 1.5; m.shotAppetite[other] = 0.3;
       m.tackleBias = (team === 0 ? 1 : -1) * (0.35 + level * 0.6);
       // the pushing side plays a quick, clean game; the defending side is a step slow and misreads balls

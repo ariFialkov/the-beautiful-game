@@ -778,10 +778,10 @@ export class Match {
         if (me.isGK) { this.startKick(me, 'lob', p, aimDir, { punt: true, targetAgent: this.pickPassTarget(me, aimDir, false, true, p) ?? undefined }); this.shotTap = null; } // the keeper boots it
         else if (lobMod && !throwIn) { this.startKick(me, 'shoot', p, aimDir, { chip: true }); this.shotTap = null; } // LB + shoot: a chip
         else if (!low && !throwIn && held < 0.16) this.shotTap = { at: this.time, power: p, finesse: input.finesse.down }; // maybe the first of a double tap
-        else { this.startKick(me, throwIn ? 'pass' : 'shoot', p, aimDir, { finesse: input.finesse.down && !low, low }); this.shotTap = null; }
+        else { this.startKick(me, throwIn ? 'pass' : 'shoot', p, aimDir, { finesse: input.finesse.down && !low, low, neutral: v2.len(move) < 0.2 }); this.shotTap = null; }
         this.charge = null;
       }
-      else if (this.shotTap && !input.shoot.down && this.time - this.shotTap.at >= 0.3 && !me.busy()) { const t = this.shotTap; this.shotTap = null; this.startKick(me, 'shoot', t.power, aimDir, { finesse: t.finesse || input.finesse.down }); }
+      else if (this.shotTap && !input.shoot.down && this.time - this.shotTap.at >= 0.3 && !me.busy()) { const t = this.shotTap; this.shotTap = null; this.startKick(me, 'shoot', t.power, aimDir, { finesse: t.finesse || input.finesse.down, neutral: v2.len(move) < 0.2 }); }
       // the receiver is locked in on release: whoever is best placed in the direction of the stick
       // (RB + pass: a driven pass, fizzed along the floor)
       else if (input.pass.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.2, this.charge?.t ?? 0.2) / 0.5); this.startKick(me, 'pass', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, false, p) ?? undefined, driven: input.finesse.down }); this.charge = null; }
@@ -903,7 +903,7 @@ export class Match {
 
   /* ------------------------------ kicking ------------------------------ */
   /** Request a kick. The player takes it as soon as the ball is in reach (approaching it if needed). */
-  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; keeperThrow?: 'roll' | 'overarm'; punt?: boolean }) {
+  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; keeperThrow?: 'roll' | 'overarm'; punt?: boolean; neutral?: boolean }) {
     if (a.busy()) return;
     if (a === this.controlled) this.shotTap = null;
     a.pendingKick = { kind, power, dir, opts, t0: this.time };
@@ -1123,12 +1123,27 @@ export class Match {
       const power = d.power as number;
       const style: 'power' | 'finesse' | 'low' | 'chip' = d.chip ? 'chip' : d.finesse ? 'finesse' : d.low ? 'low' : 'power';
       let zHit: number;
+      // in front of goal (inside ~20 m) a shot anywhere near the goal is kept on target: a sitter is a sitter
+      const toGoalDir = v2.norm({ x: gx - a.pos.x, z: -a.pos.z }); const close = Math.hypot(gx - a.pos.x, a.pos.z) < 20;
+      const gkA = this.opponentsOf(a.team).agents.find((k) => k.isGK); const kp = gkA ? gkA.pos : { x: gx, z: 0 };
+      // the corner on a side of the keeper, and the corner with the widest angle past him from where the shot is struck
+      const cornerOn = (sg: number) => sg * (gw / 2 - 0.45);
+      const angPast = (tz: number) => { const t = v2.norm({ x: gx - from.x, z: tz - from.z }), k = v2.norm({ x: kp.x - from.x, z: kp.z - from.z }); return Math.acos(Math.max(-1, Math.min(1, v2.dot(t, k)))); };
+      const sideOf = (tz: number) => { const t = { x: gx - from.x, z: tz - from.z }, k = { x: kp.x - from.x, z: kp.z - from.z }; return Math.sign(k.x * t.z - k.z * t.x) || 1; };
+      const bestCorner = angPast(cornerOn(1)) > angPast(cornerOn(-1)) ? cornerOn(1) : cornerOn(-1);
       if (d.target) zHit = d.target.z;
-      else if (dir0.x * team.attackDir > 0.15) {
-        zHit = a.pos.z + (dir0.z / dir0.x) * (gx - a.pos.x);
+      else if (human && close && d.neutral) zHit = bestCorner; // (no stick: the corner with the most room past the keeper)
+      else if (dir0.x * team.attackDir > 0.15 || (human && close && v2.dot(dir0, toGoalDir) > 0.25)) {
+        zHit = dir0.x * team.attackDir > 0.05 ? a.pos.z + (dir0.z / dir0.x) * (gx - a.pos.x) : Math.sign(dir0.z || 1) * gw;
         const edge = gw / 2 - (style === 'finesse' ? 0.55 : 0.4);
-        if (Math.abs(zHit) > edge) zHit = Math.sign(zHit) * (edge + (Math.abs(zHit) - edge) * (human ? (this.controls.shot === 'semi' ? 0.7 : 0.25) : 0.1)); // aim assist (less on semi)
+        if (Math.abs(zHit) > edge) zHit = Math.sign(zHit) * (edge + (Math.abs(zHit) - edge) * (human ? (close ? 0 : this.controls.shot === 'semi' ? 0.7 : 0.25) : 0.1)); // aim assist (less on semi)
         if (style === 'finesse' && human && Math.abs(zHit) < edge) zHit = Math.sign(zHit || 1) * Math.min(edge, Math.abs(zHit) + gw * 0.18); // finesse: toward the corner
+        if (human) {
+          // assisted placement (FIFA style): the stick says which side of the keeper; the shot is drawn toward that corner
+          const sideAim = sideOf(zHit); const corner = [cornerOn(1), cornerOn(-1)].find((c) => sideOf(c) === sideAim) ?? bestCorner;
+          const pull = this.controls.shot === 'semi' ? (close ? 0.3 : 0.15) : close ? 0.65 : 0.35;
+          zHit += (corner - zHit) * pull;
+        }
       } else zHit = a.pos.z + dir0.z * 20;
       const push = this.mods.pushTeam === a.team ? this.mods.pushLevel : 0;
       let yHit = d.target?.y ?? (style === 'low' ? 0.2 + power * 0.25 : style === 'finesse' ? 0.6 + power * 0.8 : 0.35 + power * 1.05);
