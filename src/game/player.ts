@@ -50,7 +50,7 @@ export class Agent {
   accelFwd = 0; accelLat = 0; turnRate = 0;
   lastTouchFoot = 1;
   yellow = 0;
-  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; lapseKey: number; lapse: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, lapseKey: -1, lapse: false };
+  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; shotKey: number; lapseKey: number; lapse: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, shotKey: -1, lapseKey: -1, lapse: false };
   keeperHold = 0;
   /** Skeleton and procedural animation (assigned by the match). */
   motion?: Motion;
@@ -100,7 +100,8 @@ export class Agent {
         const lunge = act.t < 0.3 ? 4.2 : Math.max(0, 4.2 - (act.t - 0.3) * 16);
         this.vel = v2.lerp(this.vel, v2.scale(d, Math.max(lunge, 0)), 1 - Math.exp(-12 * dt));
       } else if (act.type === 'dive' && act.data?.vel) {
-        const k = Math.max(0, 1 - act.t / 0.55); this.vel = v2.scale(act.data.vel, k);
+        // carried at full launch speed until the ball arrives, then the landing bleeds it off
+        const fl = act.data.flight ?? 0.3; const k = act.t < fl ? 1 : Math.max(0, 1 - (act.t - fl) / 0.3); this.vel = v2.scale(act.data.vel, k);
       } else if (act.type === 'stumble') {
         this.vel = v2.scale(this.vel, Math.exp(-3 * dt));
       } else {

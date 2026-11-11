@@ -972,9 +972,9 @@ export class Match {
   private resolveDive(k: Agent) {
     const act = k.action!; const d = act.data; const b = this.ball;
     if (d.done || b.held || act.t < 0.04 || b.lastTouch === k && this.time - b.lastTouchTime < 0.3) return;
-    const extra = d.mode === 'wall' ? 0.12 : 0;
-    const hit = k.motion!.colliders().some((c) => (c.part === 'hand' || c.part === 'arm' || c.part === 'head' || c.part === 'torso') && pointSegment(b.x, b.y, b.z, c).d < c.r + BALL_R + extra);
-    if (hit) { d.done = true; this.keeperContact(k, d.mode === 'wall'); }
+    // a save is exactly a contact: the ball meets his hands, arms, body, head or a trailing leg (no margin added)
+    const hitPart = k.motion!.colliders().find((c) => pointSegment(b.x, b.y, b.z, c).d < c.r + BALL_R);
+    if (hitPart) { d.done = true; this.keeperContact(k, d.mode === 'wall', hitPart.part !== 'hand' && hitPart.part !== 'arm'); }
   }
 
   /** A keeper's hands meet a ball he went to collect. */
@@ -987,10 +987,11 @@ export class Match {
   }
 
   /** Catch or parry depending on pace and handling. */
-  keeperContact(k: Agent, wall: boolean) {
+  keeperContact(k: Agent, wall: boolean, blocked = false) {
     const b = this.ball; const sp = b.speed3();
     const handling = (k.card.attrs.reflexes + k.card.attrs.diving) / 198;
-    const catchP = sp < 13 ? 0.95 : Math.max(0.05, 0.95 - (sp - 13) / (14 + handling * 10)) + (wall ? 0.25 : 0);
+    // body/leg blocks are parried; hands hold what they can: slower shots, and better keepers hold harder ones
+    const catchP = blocked ? 0 : sp < 13 ? 0.95 : Math.max(0.05, 0.95 - (sp - 13) / (14 + handling * 10)) + (wall ? 0.25 : 0);
     const caught = Math.random() < catchP;
     if (caught) {
       b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0; b.held = true; b.owner = k; k.keeperHold = 0;

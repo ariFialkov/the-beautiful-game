@@ -1,3 +1,4 @@
+import { keeperSavePlan } from './ai';
 import type { GoalEvent, MatchScript } from '@shared/types';
 import type { Match } from './match';
 
@@ -137,6 +138,8 @@ export class Director {
   }
 
   private denyPlan = new Map<number, 'post' | 'wide' | 'over'>();
+  /** Per shot: can the keeper reach it (decided once, when it is first read)? */
+  private keeperVerdict = new Map<number, boolean>();
   private deny(team: 0 | 1, dt: number) {
     const mt = this.match; const ball = mt.ball; const { length: L, goalWidth: gw, goalHeight: gh } = mt.pitch;
     const side = mt.teams[team].attackDir; const lineX = side * L / 2;
@@ -153,19 +156,23 @@ export class Director {
       }
     }
     if (!hit || Math.abs(hit.z) > gw / 2 + 0.12 || hit.y > gh + 0.12) return;
-    // A goalkeeper set to make the save gets the first chance, unless it is getting late.
-    const keeper = mt.opponentsOf(team).agents[0];
-    if (hit.t > 0.28 && keeper && this.mods.keeper[keeper.team] === 'wall' && Math.abs(keeper.pos.z - hit.z) < 1.4 && hit.y < 2.2 && Math.abs(keeper.pos.x - lineX) < 3) return;
+    // The keeper gets every shot he can genuinely reach (he saves it with his hands, in plain sight); only a shot
+    // beyond him is nudged off target, gently, from as early as possible.
+    const keeper = mt.opponentsOf(team).agents.find((a) => a.isGK);
     const key = Math.round(ball.lastTouchTime * 1000);
+    if (keeper && !keeper.busy() || keeper?.action?.type === 'dive') {
+      if (!this.keeperVerdict.has(key)) { const kp = keeperSavePlan(mt, keeper!, { t: hit.t, y: hit.y, z: hit.z }); this.keeperVerdict.set(key, kp.reachable && Math.abs(keeper!.pos.x - lineX) < 6); if (this.keeperVerdict.size > 40) this.keeperVerdict.clear(); }
+      if (this.keeperVerdict.get(key)) return;
+    }
     let plan = this.denyPlan.get(key);
-    if (!plan) { plan = hit.y > gh - 0.8 ? 'over' : Math.random() < 0.55 ? 'post' : 'wide'; this.denyPlan.set(key, plan); if (this.denyPlan.size > 40) this.denyPlan.clear(); }
+    if (!plan) { plan = hit.y > gh - 0.8 ? 'over' : Math.random() < 0.3 ? 'post' : 'wide'; this.denyPlan.set(key, plan); if (this.denyPlan.size > 40) this.denyPlan.clear(); }
     const zSign = Math.sign(hit.z || (Math.random() - 0.5));
     let tz = hit.z, ty = hit.y;
     if (plan === 'post') tz = zSign * (gw / 2 + 0.02);
     else if (plan === 'wide') tz = zSign * (gw / 2 + 0.6);
     else ty = gh + 0.45;
     const t = Math.max(0.05, hit.t);
-    const cap = 18;
+    const cap = 10;
     const az = Math.max(-cap, Math.min(cap, (2 * (tz - hit.z)) / (t * t)));
     const ay = Math.max(-cap, Math.min(cap, (2 * (ty - hit.y)) / (t * t)));
     ball.vz += az * dt; ball.vy += ay * dt;

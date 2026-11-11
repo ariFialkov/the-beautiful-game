@@ -376,6 +376,23 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   }
 }
 
+/** What a goalkeeper can do about a shot crossing his plane at `hit` (t seconds from now), from his attributes and
+ *  mode: when he can react, how fast he can launch sideways, and whether his hands can get there. Shared with the
+ *  director so it only interferes with shots the keeper genuinely can't reach. */
+export function keeperSavePlan(m: Match, k: Agent, hit: { t: number; y: number; z: number }) {
+  const mode = m.mods.keeper[k.team];
+  const handling = (k.card.attrs.diving + k.card.attrs.reflexes) / 198;
+  const reaction = Math.max(0.1, Math.min(0.34, 0.25 - handling * 0.1 + (mode === 'soft' ? 0.08 : mode === 'wall' ? -0.05 : 0)));
+  const speed = 2.2 + handling * 1.4 + (mode === 'wall' ? 1.6 : mode === 'soft' ? -0.6 : 0); // sideways launch speed of a dive
+  const lateral = hit.z - k.pos.z;
+  // reach: arms at full stretch, less for balls up near the top corner or right at the feet when far out
+  const reach = (Math.abs(lateral) < 0.6 ? 0.9 : 1.15) - Math.max(0, hit.y - 1.95) * 0.7;
+  const available = Math.max(0, hit.t - reaction - 0.06); // reaction plus the push-off
+  const travel = Math.max(0, Math.abs(lateral) - reach);
+  const reachable = hit.y < 2.5 && travel <= speed * available;
+  return { reaction, speed, lateral, reach, travel, reachable, handling, mode };
+}
+
 /** Goalkeeper: arc positioning, reading the shot from the predicted ball path, diving with reaction time, distribution. */
 export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
   const ball = m.ball; const { length: L, goalWidth, goalHeight, boxDepth, futsal } = m.pitch;
@@ -399,37 +416,44 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
   // Pending dive (reaction time elapsed?)
   if (k.ai.dive && m.time >= k.ai.diveAt) {
     const d = k.ai.dive; k.ai.dive = null;
-    k.startAction('dive', 1.25, d.side, d);
+    k.startAction('dive', Math.max(1.2, d.flight + 0.9), d.side, d);
     return;
   }
-  // Read the shot: where will the ball cross my line of defence?
+  // Read the shot: where will the ball cross my plane? React after a human delay, then go as late as he can and still
+  // get there, at the pace he needs (no diving the instant it's struck).
   const toward = !ball.owner && !ball.held && ball.vx * -dir > 4 && m.phase === 'play';
-  if (toward && !k.ai.dive) {
+  const shotKey = ball.lastTouchTime;
+  if (k.ai.dive && k.ai.shotKey !== shotKey) k.ai.dive = null; // deflected before he went: read it again
+  if (toward && !k.ai.dive && k.ai.shotKey !== shotKey) {
     const path = m.predicted(); const planeX = k.pos.x;
     for (let i = 1; i < path.length; i++) {
       const a = path[i - 1], b = path[i];
       if ((b.x - planeX) * -dir >= 0 && (a.x - planeX) * -dir < 0) {
         const f = (planeX - a.x) / (b.x - a.x || 1e-6);
         const t = a.t + (b.t - a.t) * f, y = a.y + (b.y - a.y) * f, z = a.z + (b.z - a.z) * f;
-        if (t > 1.6 || Math.abs(z) > goalWidth / 2 + 1 || y > goalHeight + 0.6) break;
-        const lateral = z - k.pos.z;
-        if (Math.abs(lateral) < 0.6 && y < 1.9) { k.intent.move = { x: 0, z: Math.sign(lateral) * Math.min(1, Math.abs(lateral) * 2) }; k.intent.sprint = true; return; }
-        const handling = (k.card.attrs.diving + k.card.attrs.reflexes) / 198;
-        const reaction = mode === 'wall' ? 0.02 : mode === 'soft' ? 0.32 : 0.16 - handling * 0.08;
+        if (t > 1.8 || Math.abs(z) > goalWidth / 2 + 0.8 || y > goalHeight + 0.5) break;
+        const plan = keeperSavePlan(m, k, { t, y, z });
+        const lateral = plan.lateral;
+        // close to him: shuffle across and take it with the hands (the anticipation step plans the catch)
+        if (Math.abs(lateral) < 0.55 && y < 1.9) { k.intent.move = { x: 0, z: Math.sign(lateral) * Math.min(1, Math.abs(lateral) * 2) }; k.intent.sprint = true; return; }
         let side = Math.sign(lateral);
-        if (mode === 'soft' && rnd() < 0.35) side = -side; // sold the wrong way
-        const reach = 1.0 + handling * 0.6 + (mode === 'wall' ? 0.5 : mode === 'soft' ? -0.4 : 0);
-        const travel = Math.max(0, Math.abs(lateral) - reach - 0.3);
-        const speed = Math.min(mode === 'wall' ? 7 : 5, Math.max(1.5, travel / Math.max(0.2, t - reaction) * 1.6));
-        // the motion system wants the side relative to the keeper (+1 = his left) and the point to reach with his hands
+        if (mode === 'soft' && rnd() < 0.3) side = -side; // sold the wrong way
+        // when to go: as late as possible (a set keeper waits), but no sooner than he can react
+        const need = plan.travel / plan.speed + 0.1;
+        const startIn = Math.max(plan.reaction, t - need - 0.08);
+        const flight = Math.max(0.12, t - startIn);
+        const travel = side === Math.sign(lateral) ? Math.max(0, Math.abs(lateral) - plan.reach * 0.75) : 1.0;
+        const speed = Math.min(plan.speed, travel / flight);
         const yawK = Math.atan2(k.heading.x, k.heading.z); const leftZ = -Math.sin(yawK);
-        const hz = mode === 'soft' ? k.pos.z + side * 1.4 : z;
-        k.ai.dive = { side: Math.sign(side * leftZ) || 1, worldSide: side, mode, vel: { x: 0, z: side * speed }, hands: { x: planeX, y: Math.max(0.3, Math.min(2.3, y)), z: hz } };
-        k.ai.diveAt = m.time + reaction;
+        const hz = side === Math.sign(lateral) ? z : k.pos.z + side * 1.2;
+        k.ai.dive = { side: Math.sign(side * leftZ) || 1, worldSide: side, mode, flight, vel: { x: 0, z: side * speed }, hands: { x: planeX, y: Math.max(0.25, Math.min(2.4, y)), z: hz }, high: y, lat: Math.abs(hz - k.pos.z) };
+        k.ai.diveAt = m.time + startIn; k.ai.shotKey = shotKey; // one decision per shot
+        k.intent.move = { x: 0, z: 0 }; // set: feet planted while he reads it
         return;
       }
     }
   }
+  if (k.ai.dive) { k.intent.move = { x: 0, z: 0 }; return; } // set, waiting for the moment to go
   let target: V2;
   const inBox = Math.abs(ball.x - gx) < boxDepth && Math.abs(ball.z) < m.pitch.boxWidth / 2;
   const looseBall = !ball.owner && ball.speed() < 9;

@@ -307,17 +307,36 @@ export class Motion {
         break;
       }
       case 'dive': {
+        // load (a dip and a push-off step), launch (body rotates toward horizontal, rising for a high ball, arms at full
+        // stretch to the ball), then land and get up
         const sideW = d.side ?? 1; // +1 = player's left
-        const k = ease(t / 0.38); const lying = t > 0.6 ? 1 : 0; const up = t > 0.9 ? ease((t - 0.9) / Math.max(0.1, dur - 0.9)) : 0; const kk = k * (1 - up);
-        T.pelvis.x += sideW * 0.45 * h * kk; T.pelvis.y = lerp(T.pelvis.y, lerp(0.55 * h, 0.22 * h, lying), kk);
-        T.pRoll = lerp(T.pRoll, -sideW * 1.4, kk); T.sRoll = lerp(T.sRoll, -sideW * 0.15, kk); T.sPitch = lerp(T.sPitch, 0.1, kk);
+        const fl = Math.max(0.12, d.flight ?? 0.35);
+        const load = clamp(t / 0.1, 0, 1); const go = ease(clamp((t - 0.06) / Math.max(0.1, fl - 0.06), 0, 1));
+        const land = t > fl + 0.12 ? ease(clamp((t - fl - 0.12) / 0.3, 0, 1)) : 0;
+        const up = t > fl + 0.75 ? ease(clamp((t - fl - 0.75) / Math.max(0.1, dur - fl - 0.75), 0, 1)) : 0;
+        const kk = go * (1 - up);
+        const ballY = (d.hands?.y ?? d.high ?? 1) as number;
+        const high = clamp((ballY - 0.6) / 1.6, 0, 1); // 0 = along the ground, 1 = top corner
+        const dip = Math.sin(Math.PI * load) * (1 - go);
+        T.pelvis.y = lerp(T.pelvis.y, T.pelvis.y - 0.12 * h, dip);
+        // the hips go to about a body-width below the ball: low dives skim the turf, high ones are a real leap
+        const lat = clamp(((d.lat ?? 1.2) as number) / 1.2, 0.15, 1); // how far to the side: a ball over his head is an upright leap
+        const flightY = clamp(ballY - lerp(0.75, 0.32, lat), 0.22 * h, 1.35 * h);
+        T.pelvis.y = lerp(T.pelvis.y, lerp(flightY, 0.2 * h, land), kk);
+        T.pelvis.x += sideW * 0.5 * h * kk * lat;
+        T.pRoll = lerp(T.pRoll, -sideW * lerp(1.45, 0.85, high) * lat, kk); // flat along the ground, more upright for a high ball T.sRoll = lerp(T.sRoll, -sideW * 0.2, kk); T.sPitch = lerp(T.sPitch, 0.05, kk);
+        T.headPitch = lerp(T.headPitch, -0.15, kk);
         const tgt = d.hands as { x: number; y: number; z: number } | undefined;
-        for (const s of ['L', 'R'] as Side[]) {
-          const ar = T.arm[s];
-          if (tgt) { ar.ik = V().set(tgt.x + lw.x * sideSign(s) * 0.09, tgt.y, tgt.z + lw.z * sideSign(s) * 0.09); ar.ikW = kk; }
-          else { ar.z = lerp(ar.z, sideSign(s) * 2.6, kk); }
+        for (const s2 of ['L', 'R'] as Side[]) {
+          const ar = T.arm[s2];
+          if (tgt) { ar.ik = V().set(tgt.x + lw.x * sideSign(s2) * 0.08, tgt.y, tgt.z + lw.z * sideSign(s2) * 0.08); ar.ikW = kk * (1 - land * 0.6); }
+          else { ar.z = lerp(ar.z, sideSign(s2) * 2.6, kk); }
         }
-        for (const s of ['L', 'R'] as Side[]) { const f = T.foot[s]; f.pos.lerp(this.v6.set(x - lw.x * sideW * 0.85 * h + fw.x * sideSign(s) * 0.12, this.body.ankleHeight + 0.25 * h * (1 - lying), z - lw.z * sideW * 0.85 * h + fw.z * sideSign(s) * 0.12), kk); }
+        // the far leg drives off, the near leg trails
+        for (const s2 of ['L', 'R'] as Side[]) {
+          const f = T.foot[s2]; const trail = sideSign(s2) === sideW ? 0.55 : 1.0;
+          f.pos.lerp(this.v6.set(x - lw.x * sideW * 0.8 * h * trail + fw.x * sideSign(s2) * 0.12, this.body.ankleHeight + lerp(0.2, 0.45, high) * h * (1 - land), z - lw.z * sideW * 0.8 * h * trail + fw.z * sideSign(s2) * 0.12), kk);
+        }
         break;
       }
       case 'fallen': case 'stumble': {
