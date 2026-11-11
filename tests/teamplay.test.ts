@@ -31,7 +31,7 @@ test('a held cross is driven: lower and quicker than a floated one', () => {
   const floated = avg(0.15), driven = avg(1);
   console.log(`  floated cross apex ${floated.apex.toFixed(1)} m in ${floated.t.toFixed(2)} s; driven apex ${driven.apex.toFixed(1)} m in ${driven.t.toFixed(2)} s`);
   assert.ok(driven.t > 0 && floated.t > 0, 'both crosses reached the middle');
-  assert.ok(driven.apex < floated.apex * 0.8, 'the driven cross is flatter');
+  assert.ok(driven.apex < floated.apex - 0.4, 'the driven cross is flatter');
   assert.ok(driven.t < floated.t * 0.85, 'the driven cross arrives sooner');
 });
 

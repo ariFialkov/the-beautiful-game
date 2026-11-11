@@ -678,7 +678,7 @@ export class Match {
         const crossIntoBox = target && Math.abs(aim.x - team.attackDir * this.pitch.length / 2) < this.pitch.boxDepth + 2;
         // Crosses and lofted passes are driven: flatter and faster the more power (the longer the button is held).
         // crosses are driven (flatter, harder with power); a lofted pass to feet is floated so it can be brought down
-        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.33 - 0.18 * d.power : 0.47 - 0.1 * d.power;
+        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.34 - 0.21 * d.power : 0.47 - 0.1 * d.power;
         const yT = crossIntoBox ? 1.35 : BALL_R; d.cross = !!crossIntoBox;
         const solve = (p: V2) => {
           const dd = Math.max(2, v2.dist(p, { x: from.x, z: from.z }));
