@@ -1,6 +1,6 @@
 import type { MatchScript, PlayerCard } from '@shared/types';
 import type { Kit, Team } from '@shared/teams';
-import { Ball, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictLanding, predictPath, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
+import { Ball, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictLanding, predictPath, predictRest, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
 import { Agent } from './player';
 import { FORMATION_433, FORMATION_FUTSAL, v2, type PitchSpec, type V2 } from './pitch';
 import { Director, FREE_PLAY, OVERRUN_LIMIT, type Modifiers } from './director';
@@ -458,7 +458,16 @@ export class Match {
     // Receive assist: a pass is on its way to you. With the stick neutral, or still held the way the pass was aimed,
     // you come to meet it; a new direction on the stick takes over.
     const pa = this.passAssist; this.receiveAssisting = false;
-    if (!b.owner && b.lastTouchTeam === me.team && me.ai.expectBall > this.time) {
+    // An underhit pass: once he can see it won't reach where he's running, the receiver turns and comes back to meet it
+    // (whatever the stick says), rather than running on while it dies behind him.
+    const stickAway = pa !== null && v2.len(move) > 0.2 && v2.dot(v2.norm(move), pa.aim) <= 0.5; // the stick isn't along the pass
+    const rpRescue = stickAway && pa && !b.owner ? receivePoint(this, me, pa.lofted ? 2.3 : 1.5, move) : null;
+    const stickWins = rpRescue !== null && !(v2.dist(rpRescue.p, me.pos) > 0.5 && v2.dot(v2.norm(v2.sub(rpRescue.p, me.pos)), v2.norm(move)) > 0.35);
+    if (!b.owner && pa && pa.receiver === me && b.lastTouch === pa.passer && this.time - b.lastTouchTime > 0.3 && stickWins && this.passFallsShort(me)) {
+      const meet = interceptPoint(this, me, pa.lofted ? 2.3 : 1.5); const to = v2.sub(meet, me.pos);
+      me.intent.move = v2.len(to) > 0.3 ? v2.norm(to) : { x: 0, z: 0 }; me.intent.sprint = v2.len(to) > 2; me.intent.face = null;
+      this.receiveAssisting = true;
+    } else if (!b.owner && b.lastTouchTeam === me.team && (me.ai.expectBall > this.time || pa?.receiver === me)) {
       const stillAiming = pa !== null && pa.receiver === me && v2.len(move) > 0.2 && v2.dot(v2.norm(move), pa.aim) > 0.5;
       // running on with the stick: the reception point is chosen along his run, and he's helped onto it unless the
       // stick points well away from it
@@ -468,7 +477,9 @@ export class Match {
       const onLine = held && v2.dist(rp.p, me.pos) > 0.5 && v2.dot(v2.norm(v2.sub(rp.p, me.pos)), v2.norm(move)) > 0.35;
       if (v2.len(move) < 0.2 || stillAiming || onLine) {
         // a through ball is run onto (to the spot it was played into); anything else is met
-        const through = pa && pa.receiver === me && pa.spot && pa.run;
+        // a dying pass is met, at pace, wherever it has got to (no waiting at the spot for it to creep in)
+        const dying = pa?.receiver === me && this.time - b.lastTouchTime > 0.3 && this.passFallsShort(me);
+        const through = !dying && pa && pa.receiver === me && pa.spot && pa.run;
         // through ball: get to the spot (easing off if early), and run on once the ball is nearly there
         const ballNear = through && v2.dist(bp, me.pos) < 4 + v2.len(me.vel) * 0.3;
         const toSpot = through && !ballNear;
@@ -476,12 +487,12 @@ export class Match {
         // one), and if early keep jogging on along the line so the ball catches him in stride
         let spot = pa?.spot ?? null;
         if (toSpot && spot) { let bd = Infinity; for (const q of this.predicted()) { if (q.y > 1.2) continue; const d = Math.hypot(q.x - spot.x, q.z - spot.z); if (d < bd) { bd = d; spot = { x: q.x, z: q.z }; } } }
-        const atSpot = toSpot && v2.dist(me.pos, spot!) < 2;
-        const meet = toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : spot!) : rp.p;
+        const atSpot = toSpot && v2.dist(me.pos, spot!) < 2 && !this.passFallsShort(me);
+        const meet = dying ? interceptPoint(this, me, pa?.lofted ? 2.3 : 1.5) : toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : spot!) : rp.p;
         const to = v2.sub(meet, me.pos); const tl = v2.len(to);
         const attack = !!pa?.lofted; // a cross is attacked, not waited for
-        const ease = toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
-        if (tl > 0.3) { me.intent.move = v2.scale(v2.norm(to), ease); me.intent.sprint = toSpot ? tl > 3 : ease > 0.68; if (tl < 2.5) me.intent.face = me.heading; } else { me.intent.move = { x: 0, z: 0 }; me.intent.face = pa?.run ?? null; }
+        const ease = dying ? 1 : toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
+        if (tl > 0.3) { me.intent.move = v2.scale(v2.norm(to), ease); me.intent.sprint = dying ? tl > 2 : toSpot ? tl > 3 : ease > 0.68; if (tl < 2.5) me.intent.face = me.heading; } else { me.intent.move = { x: 0, z: 0 }; me.intent.face = pa?.run ?? null; }
         this.receiveAssisting = true;
       }
     }
@@ -527,7 +538,8 @@ export class Match {
     if (input.switch.justPressed) this.setControlled(this.closestToBall(team.index, me));
     // Auto switching: to whoever is clearly closer to the ball (Auto), only for balls in the air (Air balls), or never (Manual).
     const sw = this.controls.switching;
-    if (sw !== 'manual' && this.time - this.lastSwitch > 0.7 && (!b.owner || b.owner.team !== team.index) && !me.busy() && (sw === 'auto' || (!b.owner && b.y > 1.5))) {
+    const ourPass = !b.owner && b.lastTouchTeam === team.index && (this.passAssist !== null || this.time - b.lastTouchTime < 1.5); // our own pass on its way
+    if (sw !== 'manual' && !ourPass && this.time - this.lastSwitch > 0.7 && (!b.owner || b.owner.team !== team.index) && !me.busy() && (sw === 'auto' || (!b.owner && b.y > 1.5))) {
       const c = this.closestToBall(team.index);
       if (c !== me && v2.dist(c.pos, bp) + 3 < dBall) this.setControlled(c);
     }
@@ -636,7 +648,9 @@ export class Match {
         const along = v2.dot(m.vel, v2.norm(v2.sub(spot, m.pos))); // already running that way: no reaction or wind-up
         const tRun = (along > 4 ? 0.1 : 0.4) + v2.dist(m.pos, spot) / vs + Math.max(0, 6 - Math.max(0, along)) * 0.08;
         // the ball gets there a moment before him (played into space, he runs onto it), still rolling
-        const D = v2.dist(spot, from); const plan = passForTime(D, Math.max(0.35, tRun - 0.4), this.surface);
+        const D = v2.dist(spot, from); let plan = passForTime(D, Math.max(0.35, tRun - 0.4), this.surface);
+        // never a crawler: still rolling firmly at the spot (if that's quicker than his run, it's there early and rolls on into his path)
+        if (plan.arrive < 5) plan = { v0: passSpeedFor(D, this.surface, 5), time: passTimeFor(D, this.surface, 5), arrive: 5 };
         const tArrive = Math.max(tRun, plan.time);
         // the race: can any defender get to the spot, or across the ball's line, first?
         let margin = 3; const u = v2.scale(v2.sub(spot, from), 1 / Math.max(0.1, D)); const avg = D / Math.max(0.3, plan.time);
@@ -654,10 +668,33 @@ export class Match {
     return best!;
   }
 
+  /** Will this pass stop short of where its receiver is heading? (Its predicted roll comes to rest behind him.) */
+  passFallsShort(r: Agent): boolean {
+    // once he has seen it won't get there, he has seen it (no dithering): latched until the ball is next touched
+    const key = this.ball.lastTouchTime;
+    if (this.shortLatch.get(r) === key) return true;
+    const short = this.passFallsShortNow(r);
+    if (short) this.shortLatch.set(r, key);
+    return short;
+  }
+  private shortLatch = new WeakMap<Agent, number>();
+  private passFallsShortNow(r: Agent): boolean {
+    if (this.restCache?.step !== this.stepCount) this.restCache = { step: this.stepCount, rest: predictRest(this.ball) };
+    const end = this.restCache.rest; const pa = this.passAssist;
+    const heading = pa?.receiver === r && pa.run ? pa.run : r.speed() > 2 ? v2.norm(r.vel) : r.heading;
+    const rel = v2.sub({ x: end.x, z: end.z }, r.pos);
+    if (v2.len(rel) > 1.5 && v2.dot(rel, heading) < -0.5) return true; // it comes to rest behind where he's going
+    // ...or it's a slow ball he's already ahead of: waiting for it to creep up to him looks wrong, so he meets it
+    const b = this.ball; const sp = Math.hypot(b.vx, b.vz);
+    if (sp > 0.2) { const ahead = ((r.pos.x - b.x) * b.vx + (r.pos.z - b.z) * b.vz) / sp; if (ahead > 2.5 && (sp < 4 || ahead / sp > 1.5)) return true; }
+    return false;
+  }
+  private restCache: { step: number; rest: { x: number; z: number; t: number } } | null = null;
+
   /** The pass is over once someone has the ball, anyone else touches it, or it has had its time. */
   private expirePassAssist() {
     const pa = this.passAssist; const b = this.ball;
-    if (pa && (b.owner || b.lastTouch !== pa.passer || this.time > pa.until || this.phase !== 'play')) this.passAssist = null;
+    if (pa && (b.owner || b.lastTouch !== pa.passer || this.time > pa.until || this.phase !== 'play' || (b.speed() < 0.3 && this.time - b.lastTouchTime > 1))) this.passAssist = null;
   }
 
   private fireKick(a: Agent, d: any) {
@@ -780,7 +817,7 @@ export class Match {
     // the human takes over the intended receiver straight away (FIFA-style pass switching)
     if (human && kind !== 'shoot' && d.passTarget && this.humanTeam === a.team) {
       this.setControlled(d.passTarget);
-      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + Math.min(4, (d.flight ?? 2) + 1.2), lofted: (kind === 'lob' || throwIn) && !!d.cross, spot: d.spot ?? null, run: d.run ?? null };
+      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + 8 /* lives until someone touches it or it stops */, lofted: (kind === 'lob' || throwIn) && !!d.cross, spot: d.spot ?? null, run: d.run ?? null };
     }
     a.hasBall = false; a.cooldown = 0.3; a.pendingKick = null;
     if (this.setPiece?.taker === a) this.setPiece = null;

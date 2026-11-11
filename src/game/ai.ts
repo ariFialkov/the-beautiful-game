@@ -266,7 +266,10 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   const reacting = loose && ball.lastTouchTeam !== team.index && now - ball.lastTouchTime < 0.22 + (1 - skill) * 0.18;
   if (loose && !dead && !reacting) {
     const receiver = ai.find((a) => a.ai.expectBall > now && ball.lastTouchTeam === team.index);
+    // a pass meant for the player the human controls is his to collect: no AI team-mate goes for it
+    const humanReceiver = ball.lastTouchTeam === team.index && outfield.some((a) => !m.aiDriven(a) && a.ai.expectBall > now);
     if (receiver) { chaser = receiver; chaserPlan = receivePoint(m, receiver, lofted ? 2.3 : 1.2); }
+    else if (humanReceiver) { chaser = null; chaserPlan = null; }
     else for (const a of outfield) { const plan = interceptPlan(m, a, lofted ? 2.3 : 1.2); if (!chaserPlan || plan.t < chaserPlan.t) { chaser = a; chaserPlan = plan; } }
   }
   let presser: Agent | null = null, cover: Agent | null = null;
@@ -355,6 +358,11 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     const d = v2.sub(target, a.pos); const dl = v2.len(d);
     a.ai.target = target;
     if (a.ai.mode === 'press') { a.intent.move = dl > 0.3 ? v2.scale(v2.norm(d), Math.min(1, dl)) : { x: 0, z: 0 }; continue; } // press() set facing and jockey
+    if (a.ai.mode === 'receive' && m.passFallsShort(a) && v2.dot(d, a.speed() > 2 ? a.vel : a.heading) < 0) {
+      // the pass is dying short of him: go back for it at full speed
+      a.intent.move = dl > 0.35 ? v2.norm(d) : { x: 0, z: 0 }; a.intent.sprint = dl > 2; a.intent.face = null;
+      continue;
+    }
     if (a.ai.mode === 'receive' && plan.arrive !== undefined) {
       // time the run to arrive with the ball (no dash there to stand and turn round); keep facing the way he's going
       const need = dl / Math.max(0.15, plan.arrive - 0.12);

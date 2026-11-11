@@ -227,6 +227,14 @@ export function predictLanding(b: BallBody, maxT = 8): { x: number; z: number; t
   return null;
 }
 
+/** Where a ball will come to rest (or how far it has got after `maxT` s), ignoring players. */
+const restScratch = new BallBody();
+export function predictRest(b: BallBody, maxT = 8): { x: number; z: number; t: number } {
+  const s = restScratch.copyFrom(b); const h = 1 / 60; let t = 0;
+  while (t < maxT && (s.speed3() > 0.4 || s.y > s.radius + 0.02)) { s.integrate(h); t += h; }
+  return { x: s.x, z: s.z, t };
+}
+
 /* ------------------------------ ground pass tables ------------------------------ */
 const ARRIVE = 8.5; // passes still arrive with pace
 const passTables = new Map<string, Array<{ v0: number; dist: number; time: number }>>();

@@ -145,3 +145,22 @@ test('the power bar sets how firmly a pass arrives, and both reach the team-mate
   assert.ok(soft.t > 0 && firm.t > 0, 'both were controlled');
   assert.ok(firm.arrive > soft.arrive + 3, 'a fuller bar zips it in');
 });
+
+test('an underhit through ball: the runner turns and comes back for it, even with the stick held forward', () => {
+  for (const factor of [0.4, 0.55]) for (const human of [true, false]) {
+    const { m, passer, mate } = sandbox(); const at = m.teams[0].attackDir;
+    if (!human) mate.isHuman = false;
+    place(passer, 0, 0, at, 0); place(mate, at * 10, 6, at, 0); mate.vel = { x: at * 7, z: 0 };
+    (m as any).setControlled(passer); m.ball.reset(at * 0.4, 0); m.ball.owner = passer;
+    m.startKick(passer, 'through', 0.7, v2.norm({ x: at * 10, z: 6 }), { targetAgent: mate });
+    let struck = false, got = -1;
+    for (let i = 0; i < 60 * 6 && got < 0; i++) {
+      // the player keeps pushing forward the whole time (stick world x = attack direction)
+      m.update(1 / 60, human ? { ...neutral(), move: { x: at, y: 0 } } : neutral());
+      if (!struck && m.ball.lastTouch === passer && !m.ball.owner) { struck = true; m.ball.vx *= factor; m.ball.vz *= factor; m.ball.setRolling(); } // badly underhit
+      if (m.ball.owner === mate) got = i / 60;
+      if (human && struck && got < 0) assert.equal(m.controlled, mate, 'you keep control of the receiver while your pass is on its way');
+    }
+    assert.ok(got > 0 && got < 4, `${human ? 'human' : 'AI'} receiver came back and collected a ${factor * 100}%-pace ball promptly (${got.toFixed(2)} s)`);
+  }
+});
