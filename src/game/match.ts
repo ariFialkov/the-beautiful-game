@@ -63,7 +63,9 @@ export class Match {
   director: Director | null = null;
   mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1] };
   teamSpeedBonus: [number, number] = [1, 1];
-  charge: { kind: 'shoot' | 'pass' | 'lob'; t: number } | null = null;
+  charge: { kind: 'shoot' | 'pass' | 'lob'; t: number; low?: boolean } | null = null;
+  /** A quick tap of shoot waits a moment for a second press (double tap, then hold = low driven shot). */
+  private shotTap: { at: number; power: number; finesse: boolean } | null = null;
   ended = false;
   stoppage = false;
   lastSwitch = 0;
@@ -381,7 +383,8 @@ export class Match {
     const active = v2.len(move) > 0.1 || input.sprint.down || input.pass.down || input.shoot.down || input.through.down || input.lob.down || input.switch.down || input.slide.down;
     this.idleTime = active ? 0 : this.idleTime + dt;
     this.autopilot = this.idleTime > 2.0;
-    if (this.autopilot) { this.charge = null; return; }
+    if (this.autopilot) { this.charge = null; this.shotTap = null; return; }
+    if (this.shotTap && this.time - this.shotTap.at > 0.6) this.shotTap = null;
     me.intent.move = move; me.intent.sprint = input.sprint.down; me.intent.face = null; me.intent.jockey = false; this.stick = move;
     if (this.phase !== 'play' && this.phase !== 'restart') return;
     const b = this.ball; const bp = { x: b.x, z: b.z };
@@ -402,11 +405,12 @@ export class Match {
         // through ball: get to the spot (easing off if early), and run on once the ball is nearly there
         const ballNear = through && v2.dist(bp, me.pos) < 4 + v2.len(me.vel) * 0.3;
         const toSpot = through && !ballNear;
-        const meet = toSpot ? pa!.spot! : rp.p;
+        // through balls: run for the spot, and if early keep jogging on along the line so the ball catches him in stride
+        const atSpot = toSpot && v2.dist(me.pos, pa!.spot!) < 2;
+        const meet = toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : pa!.spot!) : rp.p;
         const to = v2.sub(meet, me.pos); const tl = v2.len(to);
-        // through balls: get to the spot, then let the ball reach his feet; otherwise time the run to arrive with it
         const attack = !!pa?.lofted; // a cross is attacked, not waited for
-        const ease = toSpot ? Math.min(1, tl / 2.5) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
+        const ease = toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
         if (tl > 0.3) { me.intent.move = v2.scale(v2.norm(to), ease); me.intent.sprint = toSpot ? tl > 3 : ease > 0.68; if (tl < 2.5) me.intent.face = me.heading; } else { me.intent.move = { x: 0, z: 0 }; me.intent.face = pa?.run ?? null; }
         this.receiveAssisting = true;
       }
@@ -416,10 +420,20 @@ export class Match {
     const canKick = (b.owner === me && !b.held) || (!b.owner && dBall < 2.6 && b.y < 1.4);
     const aimDir = v2.len(move) > 0.2 ? v2.norm(move) : me.heading;
     if (canKick && this.phase === 'play') {
-      if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
+      // Shooting (FIFA style): hold and release for a power shot; hold finesse (RB/R1) for a curled finesse shot;
+      // tap shoot twice and hold the second press for a low driven shot.
+      if (input.shoot.justPressed && this.shotTap && this.time - this.shotTap.at < 0.3) { this.shotTap = null; this.charge = { kind: 'shoot', t: 0, low: true }; }
+      else if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
       if (input.pass.down) { if (!this.charge || this.charge.kind !== 'pass') this.charge = { kind: 'pass', t: 0 }; else this.charge.t += dt; }
       if (input.lob.down) { if (!this.charge || this.charge.kind !== 'lob') this.charge = { kind: 'lob', t: 0 }; else this.charge.t += dt; }
-      if (input.shoot.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.22, this.charge?.t ?? 0.3) / 0.9); this.startKick(me, this.setPiece?.kind === 'throw' ? 'pass' : 'shoot', p, aimDir, { finesse: input.finesse.down }); this.charge = null; }
+      const throwIn = this.setPiece?.kind === 'throw';
+      if (input.shoot.justReleased && !me.busy()) {
+        const held = this.charge?.t ?? 0.3; const low = !!this.charge?.low; const p = Math.min(1, Math.max(0.22, held) / 0.9);
+        if (!low && !throwIn && held < 0.16) this.shotTap = { at: this.time, power: p, finesse: input.finesse.down }; // maybe the first of a double tap
+        else { this.startKick(me, throwIn ? 'pass' : 'shoot', p, aimDir, { finesse: input.finesse.down && !low, low }); this.shotTap = null; }
+        this.charge = null;
+      }
+      else if (this.shotTap && !input.shoot.down && this.time - this.shotTap.at >= 0.3 && !me.busy()) { const t = this.shotTap; this.shotTap = null; this.startKick(me, 'shoot', t.power, aimDir, { finesse: t.finesse || input.finesse.down }); }
       // the receiver is locked in on release: whoever is best placed in the direction of the stick
       else if (input.pass.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.2, this.charge?.t ?? 0.2) / 0.5); this.startKick(me, 'pass', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, false, p) ?? undefined }); this.charge = null; }
       else if (input.through.justPressed && !me.busy()) this.startKick(me, 'through', 0.7, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, true) ?? undefined });
@@ -449,8 +463,9 @@ export class Match {
 
   /* ------------------------------ kicking ------------------------------ */
   /** Request a kick. The player takes it as soon as the ball is in reach (approaching it if needed). */
-  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean }) {
+  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean }) {
     if (a.busy()) return;
+    if (a === this.controlled) this.shotTap = null;
     a.pendingKick = { kind, power, dir, opts, t0: this.time };
     this.charge = null;
   }
@@ -479,7 +494,7 @@ export class Match {
         const side: Side = lat >= 0 ? 'R' : 'L'; // strike with the foot on the ball's side
         const relV = Math.hypot(b.vx - a.vel.x, b.vz - a.vel.z);
         if (mine && !held && relV > 2.5) { b.vx = a.vel.x * 0.9 + (b.vx - a.vel.x) * 0.3; b.vz = a.vel.z * 0.9 + (b.vz - a.vel.z) * 0.3; b.setRolling(); } // set touch
-        a.startAction('kick', strike + 0.32, side === 'R' ? 1 : -1, { ...pk, strike, held, side, dir: pk.dir, contact: { x: c.x, y: c.y, z: c.z } });
+        a.startAction('kick', strike + 0.32, side === 'R' ? 1 : -1, { ...pk.opts, ...pk, strike, held, side, dir: pk.dir, contact: { x: c.x, y: c.y, z: c.z } });
         a.intent.face = pk.dir;
       } else if (d < 4 && (!mine || this.setPiece?.taker === a || d > 1.0)) {
         // step up to the ball (set pieces) or meet it (first-time strikes)
@@ -536,17 +551,19 @@ export class Match {
     const team = this.teams[a.team]; const fwd = { x: team.attackDir, z: 0 };
     let base = v2.norm(v2.add(fwd, v2.scale(aim, 0.5)));
     if (m.speed() > 3 && v2.dot(v2.norm(m.vel), fwd) > 0.2) base = v2.norm(v2.add(base, v2.norm(m.vel)));
-    const from = { x: this.ball.x, z: this.ball.z }; const vs = m.maxSpeed * 0.82;
+    const from = { x: this.ball.x, z: this.ball.z }; const vs = m.maxSpeed * 0.95; // a runner chasing a through ball sprints
     const lim = { x: this.pitch.length / 2 - 2, z: this.pitch.width / 2 - 2 };
     const opp = this.opponentsOf(a.team).agents;
     const baseAng = Math.atan2(base.z, base.x);
     let best: { spot: V2; speed: number; time: number; run: V2; score: number } | null = null;
     for (const da of [0, -0.3, 0.3, -0.6, 0.6]) {
       const run = { x: Math.cos(baseAng + da), z: Math.sin(baseAng + da) };
-      for (const L of [4, 6.5, 9, 12]) {
+      for (const L of [5, 8, 11, 14]) {
         const p = v2.add(m.pos, v2.scale(run, L)); const spot = { x: Math.max(-lim.x, Math.min(lim.x, p.x)), z: Math.max(-lim.z, Math.min(lim.z, p.z)) };
-        const tRun = 0.4 + v2.dist(m.pos, spot) / vs + Math.max(0, 4 - m.speed()) * 0.1;
-        const D = v2.dist(spot, from); const plan = passForTime(D, tRun, this.surface);
+        const along = v2.dot(m.vel, v2.norm(v2.sub(spot, m.pos))); // already running that way: no reaction or wind-up
+        const tRun = (along > 4 ? 0.1 : 0.4) + v2.dist(m.pos, spot) / vs + Math.max(0, 6 - Math.max(0, along)) * 0.08;
+        // the ball gets there a moment before him (played into space, he runs onto it), still rolling
+        const D = v2.dist(spot, from); const plan = passForTime(D, Math.max(0.35, tRun - 0.4), this.surface);
         const tArrive = Math.max(tRun, plan.time);
         // the race: can any defender get to the spot, or across the ball's line, first?
         let margin = 3; const u = v2.scale(v2.sub(spot, from), 1 / Math.max(0.1, D)); const avg = D / Math.max(0.3, plan.time);
@@ -556,7 +573,8 @@ export class Match {
           const r = v2.sub(o.pos, from); const along = v2.dot(r, u);
           if (along > 1 && along < D - 1) { const perp = Math.abs(r.x * u.z - r.z * u.x); margin = Math.min(margin, Math.max(0, perp - 0.8) / os + 0.3 - along / avg); }
         }
-        const score = Math.min(margin, 1.5) * 2 - Math.abs(plan.arrive - 6) * 0.15 - Math.max(0, D - 30) * 0.08 - Math.abs(da) * 0.8 + v2.dot(v2.sub(spot, m.pos), fwd) * 0.03 - (spot.x !== p.x || spot.z !== p.z ? 1 : 0);
+        // (well into his path: a longer lead is preferred when the race allows it)
+        const score = Math.min(margin, 1.5) * 2 - Math.abs(plan.arrive - 6) * 0.15 - Math.max(0, D - 32) * 0.08 + L * 0.03 - Math.abs(da) * 0.8 + v2.dot(v2.sub(spot, m.pos), fwd) * 0.03 - (spot.x !== p.x || spot.z !== p.z ? 1 : 0);
         if (!best || score > best.score) best = { spot, speed: plan.v0, time: plan.time, run, score };
       }
     }
@@ -591,27 +609,45 @@ export class Match {
     const sprinting = a.speed() > a.maxSpeed * 0.75;
     let v: V3; let w: V3; let yawErr = 0, pitchErr = 0;
     if (kind === 'shoot' && !throwIn) {
+      // Three strikes (FIFA style): a clean, driven power shot (default); a curled finesse shot (finesse held), bending
+      // in from outside the post; and a low driven shot (double tap) that skims along the turf.
       const { length: L, goalWidth: gw, goalHeight: gh } = this.pitch;
       const gx = team.attackDir * (L / 2 + 0.3);
       const power = d.power as number;
+      const style: 'power' | 'finesse' | 'low' = d.finesse ? 'finesse' : d.low ? 'low' : 'power';
       let zHit: number;
       if (d.target) zHit = d.target.z;
       else if (dir0.x * team.attackDir > 0.15) {
         zHit = a.pos.z + (dir0.z / dir0.x) * (gx - a.pos.x);
-        const edge = gw / 2 - 0.4;
+        const edge = gw / 2 - (style === 'finesse' ? 0.55 : 0.4);
         if (Math.abs(zHit) > edge) zHit = Math.sign(zHit) * (edge + (Math.abs(zHit) - edge) * (human ? 0.25 : 0.1)); // aim assist
+        if (style === 'finesse' && human && Math.abs(zHit) < edge) zHit = Math.sign(zHit || 1) * Math.min(edge, Math.abs(zHit) + gw * 0.18); // finesse: toward the corner
       } else zHit = a.pos.z + dir0.z * 20;
       const push = this.mods.pushTeam === a.team ? this.mods.pushLevel : 0;
-      let yHit = d.target?.y ?? (0.3 + Math.pow(power, 1.7) * 2.6 * (d.finesse ? 0.7 : 1));
+      let yHit = d.target?.y ?? (style === 'low' ? 0.2 + power * 0.25 : style === 'finesse' ? 0.6 + power * 0.8 : 0.35 + power * 1.05);
       if (!human && yHit > gh - 0.3) yHit = gh - 0.3 - Math.random() * 0.8;
-      const speed = (15 + power * 17) * (d.finesse ? 0.8 : 1);
-      const side = d.finesse ? Math.sign((zHit - from.z) * team.attackDir || 1) * -42 * team.attackDir * Math.sign(team.attackDir) : gauss() * 4;
-      const top = d.finesse ? 6 : 8 + power * 22;
-      const sol = solveKick(from, { x: gx, y: Math.max(0.15, yHit), z: zHit }, speed, side, top, this.surface);
-      v = sol.v; w = sol.w;
-      let sigma = human ? (0.085 - a.skill.shoot * 0.06) * (0.55 + power * 0.8) * (sprinting ? 1.25 : 1) : 0.13 - skill * 0.1;
+      const speed = style === 'low' ? 19 + power * 11 : style === 'finesse' ? 20 + power * 7 : 21 + power * 12;
+      // curl for the finesse shot: back in toward the goal, against the run if he's cutting across, else from outside the post
+      const toGoal = v2.norm({ x: gx - from.x, z: zHit - from.z }); const left = { x: -toGoal.z, z: toGoal.x };
+      let side = gauss() * (style === 'power' ? 1.5 : 1);
+      if (style === 'finesse') {
+        const lat = a.vel.z; const want = Math.abs(lat) > 2 ? -Math.sign(lat) : -Math.sign(zHit || 1); // lateral (z) direction to bend toward
+        side = Math.sign(left.z * want || 1) * (22 + power * 12);
+      } else if (!human && d.finesse) side = Math.sign(left.z * -Math.sign(zHit || 1) || 1) * 35;
+      const top = style === 'low' ? 10 + power * 12 : style === 'finesse' ? 4 : 2 + power * 5;
+      if (style === 'low' && !d.target) {
+        // low driven: struck flat with topspin so it skims and skids along the turf rather than arcing to a height
+        const yaw = Math.atan2(zHit - from.z, gx - from.x); const pitch = 0.035 + (1 - power) * 0.03 - Math.max(0, from.y - BALL_R) * 0.05;
+        v = { x: Math.cos(yaw) * Math.cos(pitch) * speed, y: Math.sin(pitch) * speed, z: Math.sin(yaw) * Math.cos(pitch) * speed };
+        w = spinVector(yaw, side, top);
+      } else {
+        const sol = solveKick(from, { x: gx, y: Math.max(0.12, yHit), z: zHit }, speed, side, top, this.surface);
+        v = sol.v; w = sol.w;
+      }
+      let sigma = human ? (0.075 - a.skill.shoot * 0.05) * (0.55 + power * 0.7) * (sprinting ? 1.2 : 1) * (style === 'finesse' ? 0.85 : 1) : 0.13 - skill * 0.1;
       if (this.mods.goalAllowed[a.team] && push > 0) sigma *= 1 - push * 0.85;
-      yawErr = gauss() * sigma; pitchErr = gauss() * sigma * 0.6;
+      // a clean strike: the error is mostly in direction, very little in height (no skied shots from a good contact)
+      yawErr = gauss() * sigma; pitchErr = gauss() * sigma * (human ? (style === 'low' ? 0.15 : 0.3) : 0.6);
       b.inFlightShot = { team: a.team, target: { x: gx, y: yHit, z: zHit } };
     } else {
       const through = kind === 'through';
@@ -619,6 +655,9 @@ export class Match {
       const target: Agent | null = d.targetAgent ?? (d.clear ? null : this.pickPassTarget(a, dir0, through));
       d.passTarget = target;
       let aim: V2; let tFlight = 1;
+      // Ground passes to a team-mate: the power bar sets how firmly it arrives (a soft 5 m/s to a zipped 12 m/s);
+      // it always reaches him. (Quantised so the pass tables are shared.)
+      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round((5 + 7 * d.power) * 2) / 2 : 8.5;
       let throughSpeed = 0;
       if (target && through && !lofted) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = tp.speed; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.2); }
       else if (target) {
@@ -626,7 +665,7 @@ export class Match {
         aim = target.pos;
         for (let k = 0; k < 3; k++) {
           const dd = v2.dist(aim, { x: from.x, z: from.z });
-          tFlight = lofted ? Math.sqrt((2 * Math.max(4, dd)) / G) * 1.15 : passTimeFor(dd * (through ? 1.1 : 1), this.surface);
+          tFlight = lofted ? Math.sqrt((2 * Math.max(4, dd)) / G) * 1.15 : passTimeFor(dd * (through ? 1.1 : 1), this.surface, arrive);
           aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 1.8) * (through || target.speed() > 3 ? 0.95 : 0.75)));
           if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + dd * 0.15), z: 0 });
         }
@@ -639,7 +678,7 @@ export class Match {
         const crossIntoBox = target && Math.abs(aim.x - team.attackDir * this.pitch.length / 2) < this.pitch.boxDepth + 2;
         // Crosses and lofted passes are driven: flatter and faster the more power (the longer the button is held).
         // crosses are driven (flatter, harder with power); a lofted pass to feet is floated so it can be brought down
-        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.33 - 0.15 * d.power : 0.47 - 0.1 * d.power;
+        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.33 - 0.18 * d.power : 0.47 - 0.1 * d.power;
         const yT = crossIntoBox ? 1.35 : BALL_R; d.cross = !!crossIntoBox;
         const solve = (p: V2) => {
           const dd = Math.max(2, v2.dist(p, { x: from.x, z: from.z }));
@@ -656,11 +695,11 @@ export class Match {
         v = sol.v; w = sol.w;
       } else {
         // Human passes: the power bar sets the pace (a soft pass still reaches its man, a full one fizzes across the pitch).
-        const needed = passSpeedFor(dist * (through ? 1.1 : 1), this.surface);
-        // Passes to a team-mate are weighted for him: the power bar only nudges the pace (±12%), so a mis-judged bar
-        // still arrives. Into space the pace is the power bar alone.
+        const needed = passSpeedFor(dist * (through ? 1.1 : 1), this.surface, arrive);
+        // Passes to a team-mate are weighted for him (the bar sets the arrival pace, above). Into space the pace is the
+        // power bar alone.
         const speed = throughSpeed > 0 ? throughSpeed * (human ? 0.97 + 0.1 * d.power : 1) : human
-          ? (target ? Math.max(7, Math.min(31, needed * (0.9 + 0.24 * d.power))) : 6 + d.power * 25)
+          ? (target ? Math.max(6, Math.min(31, needed)) : 6 + d.power * 25)
           : Math.max(6, Math.min(30, needed * (0.92 + d.power * 0.16)));
         const yaw = Math.atan2(aim.z - from.z, aim.x - from.x);
         v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };

@@ -21,6 +21,7 @@ export class TouchControls {
         <button class="tbtn shoot" data-b="shoot">Shoot</button>
         <button class="tbtn through" data-b="lob">Cross</button>
         <button class="tbtn lob" data-b="through">Through</button>
+        <button class="tfin" type="button">Finesse</button>
       </div>`;
     parent.appendChild(this.el);
     this.zone = this.el.querySelector('.joy-zone')!; this.joy = this.el.querySelector('.joy')!; this.knob = this.joy.querySelector('i')!;
@@ -28,18 +29,28 @@ export class TouchControls {
     this.zone.addEventListener('pointermove', (e) => { if (e.pointerId !== this.joyId) return; let dx = e.clientX - this.origin.x, dy = e.clientY - this.origin.y; const r = 50; const l = Math.hypot(dx, dy); if (l > r) { dx = dx / l * r; dy = dy / l * r; } this.knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; input.setTouchMove(dx / r, -dy / r); });
     const end = (e: PointerEvent) => { if (e.pointerId !== this.joyId) return; this.joyId = null; this.joy.style.display = 'none'; this.knob.style.transform = 'translate(-50%, -50%)'; input.setTouchMove(0, 0); };
     this.zone.addEventListener('pointerup', end); this.zone.addEventListener('pointercancel', end);
+    // Finesse on touch: tap to arm it for the next shot (one thumb can't hold two buttons); it disarms after the shot.
+    this.fin = this.el.querySelector('.tfin')!;
+    this.fin.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setFinesse(!this.finesseOn); });
+    this.fin.addEventListener('contextmenu', (e) => e.preventDefault());
     for (const b of Array.from(this.el.querySelectorAll<HTMLElement>('.tbtn'))) {
       const name = b.dataset.b!; this.buttons[name] = b;
       // FIFA layout: the left face button crosses when attacking and slides when defending
       const down = (e: PointerEvent) => { e.preventDefault(); b.classList.add('pressed'); input.setTouchButton(name === 'lob' && this.defending ? 'slide' : name, true); };
-      const up = () => { b.classList.remove('pressed'); input.setTouchButton(name, false); input.setTouchButton('slide', false); };
+      const up = () => {
+        b.classList.remove('pressed'); input.setTouchButton(name, false); input.setTouchButton('slide', false);
+        if (name === 'shoot' && this.finesseOn) { clearTimeout(this.finTimer); this.finTimer = window.setTimeout(() => this.setFinesse(false), 600); }
+      };
       b.addEventListener('pointerdown', down); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());
     }
   }
   private defending = false;
+  private fin!: HTMLElement; private finesseOn = false; private finTimer = 0;
+  private setFinesse(on: boolean) { this.finesseOn = on; this.fin.classList.toggle('on', on); input.setTouchButton('finesse', on); }
   setDefending(d: boolean) {
     if (d === this.defending) return; this.defending = d;
+    this.fin.style.display = d ? 'none' : ''; if (d) this.setFinesse(false);
     const labels = d ? this.labelsDefend : this.labelsAttack;
     for (const [k, v] of Object.entries(labels)) if (this.buttons[k]) this.buttons[k].textContent = v;
   }

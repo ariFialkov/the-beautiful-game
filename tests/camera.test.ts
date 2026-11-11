@@ -41,3 +41,17 @@ for (const [label, aspect, futsal] of [['landscape 11-a-side', 16 / 9, false], [
     assert.ok(r.onScreen > 0.99, 'the ball stays in shot');
   });
 }
+
+test('the camera moves in and zooms for play on the far side, and widens for the near side', () => {
+  const cam = new THREE.PerspectiveCamera(46, 16 / 9, 0.5, 600);
+  const rig = new CameraRig(cam, PITCH_11.length, PITCH_11.width);
+  const settle = (z: number) => { for (let i = 0; i < 60 * 5; i++) rig.update(1 / 60, new THREE.Vector3(5, 0.1, z), new THREE.Vector3(1, 0, 0), i / 60); return { fov: cam.fov, dist: cam.position.distanceTo(new THREE.Vector3(5, 0, z)) }; };
+  const mid = settle(0), far = settle(28), near = settle(-28);
+  console.log(`  fov: far ${far.fov.toFixed(1)}°, centre ${mid.fov.toFixed(1)}°, near ${near.fov.toFixed(1)}° · distance to play: far ${far.dist.toFixed(0)} m, centre ${mid.dist.toFixed(0)} m, near ${near.dist.toFixed(0)} m`);
+  assert.ok(Math.abs(mid.fov - 46) < 1.5, 'centre play: the normal framing');
+  assert.ok(far.fov < 46 * 0.85, 'far side: zoomed in');
+  assert.ok(far.dist < 60, 'far side: the camera has moved in toward the play');
+  assert.ok(near.fov > 46, 'near side: a little wider');
+  // the ball stays in shot in each case
+  for (const z of [28, -28, 0]) { settle(z); cam.updateMatrixWorld(); const n = new THREE.Vector3(5, 0.1, z).project(cam); assert.ok(Math.abs(n.x) < 0.9 && Math.abs(n.y) < 0.9, `ball in shot at z ${z}`); }
+});

@@ -75,8 +75,8 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Everything else:** the ball rebounds off whichever limb it hits.
 - **Pass assistance:** the ball always flies with the real physics, but the game works out what you meant and helps it get there.
   - **Who:** the receiver is locked in when you release: the teammate the stick points at (at him or where he's running), up to about 55° off (45° for lofted balls). For players at similar angles, nearer, unmarked players with a clear lane win, and the power bar says how far you mean (it counts most for lofted passes).
-  - **Weight:** a pass to a teammate is weighted for him. The power bar only nudges the pace, so a misjudged bar still arrives. A pass into space takes its pace from the bar alone.
-  - **Through balls:** the game searches the space ahead of the runner for the spot he'll win the race to. It weights the ball to arrive there as he does, and he runs onto it and takes it in his stride.
+  - **Weight:** a pass to a teammate always reaches him, and the power bar sets how firmly: a tap rolls in softly (about 6 m/s at his feet), a full bar zips it in (about 10 m/s). A pass into space takes its pace from the bar alone.
+  - **Through balls:** the game searches 5–14 m into the space ahead of the runner for the spot he'll win the race to. The ball is weighted to get there just before him, still rolling, and he runs onto it in his stride.
   - **Crosses:** crosses are driven at about head height; the longer you hold, the lower and harder. The trajectory is led using its real flight time.
   - **In flight:** the pass bends gently toward its receiver, like a touch of curl, without changing its pace. A defender standing right in front of the passer is played around.
   - **Receiving:** the receiver is helped onto the ball while the stick is neutral, still held the way you passed, or pointing roughly where it's going. Push the stick a new way to take over.
@@ -89,7 +89,7 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Defending:** one player presses the carrier, one covers goal-side, and the rest mark only opponents who come into their zone.
   - **Attacking:** the two nearest teammates offer diagonal angles, and teammates' positions push apart so nobody stacks up on the same patch.
 - **Set pieces:** opponents must clear the ball by the full distance before a restart can be taken: 9.15 m for free kicks and corners (5 m in futsal), out of the box and 12 m away for goal kicks, and 3 m for throws. They jog out, the restart waits until they have, and anyone still in the way after about three seconds is moved. Teammates give the taker room, and the taker or keeper picks a free teammate with a clear lane.
-- **Camera:** the broadcast camera follows a critically damped focus point driven by the ball. It leans toward the attacking direction of the team in possession and blends between shots without shake.
+- **Camera:** the broadcast camera follows a critically damped focus point driven by the ball, leaning toward the attacking direction of the team in possession and blending between shots without shake. It dollies in and zooms (narrower field of view) when play is on the far side, widens slightly for the near side, and eases out for long, fast balls.
 
 ## Controls
 
@@ -98,17 +98,25 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 | Move | WASD / Arrows | Left stick / D-pad | Left joystick |
 | Sprint | Shift | R2 / RT | Sprint |
 | Pass · Contain (defending) | Space | ✕ / A | Pass |
-| Shoot · Standing tackle at the ball | Z | ○ / B | Shoot |
+| Power shot (hold for power) · Standing tackle at the ball | Z | ○ / B | Shoot |
+| Low driven shot: tap, then hold | Z, Z | ○, ○ / B, B | Shoot, Shoot |
 | Through ball | C | △ / Y | Through |
 | Cross / lofted pass · Slide tackle (defending) | X (E also slides) | □ / X | Cross · Slide |
-| Finesse shot (hold) | R | R1 / RB | — |
+| Finesse shot: hold with shoot (curls in, against your run) | R | R1 / RB | Finesse (tap to arm) |
 | Shield (hold) | F | L2 / LT | — |
 | Switch player | Q | L1 / LB | Switch |
 | Free-kick aim / curl | Arrows · Q/E | Left stick · L1/R1 | Drag · curl buttons |
 | Pause | Esc | Options / Menu | ⏸ |
 | Menus | Arrows · Enter · Esc | D-pad · ✕/A · ○/B | Tap |
 
-Shots and passes are charge-and-release (hold for power). The longer you hold a cross, the lower and harder it's driven. Touch button labels switch between attacking and defending actions automatically.
+Shots and passes are charge-and-release (hold for power). The longer you hold a cross, the lower and harder it's driven.
+
+Shooting works like EA FC:
+- **Power shot** (the default): a clean, driven strike, harder and a little higher the longer you hold.
+- **Finesse shot** (hold finesse with shoot): curls in toward the far corner, bending back against your run if you're cutting across.
+- **Low driven shot** (tap shoot, then press and hold again): struck flat with topspin, skimming the turf.
+
+Touch button labels switch between attacking and defending actions automatically. On touch, Finesse is a tap-to-arm button that applies to your next shot.
 
 ## Project layout
 

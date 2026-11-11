@@ -37,7 +37,8 @@ export function receivePoint(m: Match, a: Agent, maxY: number, prefer?: V2 | nul
     const p = { x: q.x, z: q.z }; const d = v2.dist(a.pos, p);
     if (d > sp * q.t + 0.7) continue;
     const turn = run && d > 0.8 ? Math.acos(Math.max(-1, Math.min(1, v2.dot(v2.scale(v2.sub(p, a.pos), 1 / d), run)))) : 0;
-    const cost = q.t + turn * k;
+    // ...and so does changing pace: a runner takes it where he can keep his speed
+    const cost = q.t + turn * k + Math.abs(d / Math.max(0.1, q.t) - speed) * 0.2;
     if (cost < bc) { bc = cost; best = { p, t: q.t }; }
   }
   if (best) return best;

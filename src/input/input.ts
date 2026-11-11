@@ -113,7 +113,7 @@ export class InputManager {
       const t = this.touchState;
       if (Math.abs(t.move.x) + Math.abs(t.move.y) > 0.02) { mx = t.move.x; my = t.move.y; }
       const tb = t.buttons;
-      sprint = sprint || !!tb.sprint; pass = pass || !!tb.pass; shoot = shoot || !!tb.shoot; through = through || !!tb.through; lob = lob || !!tb.lob; sw = sw || !!tb.switch; slide = slide || !!tb.slide; pause = pause || !!tb.pause;
+      sprint = sprint || !!tb.sprint; pass = pass || !!tb.pass; shoot = shoot || !!tb.shoot; through = through || !!tb.through; lob = lob || !!tb.lob; sw = sw || !!tb.switch; slide = slide || !!tb.slide; pause = pause || !!tb.pause; finesse = finesse || !!tb.finesse;
     }
 
     const len = Math.hypot(mx, my);

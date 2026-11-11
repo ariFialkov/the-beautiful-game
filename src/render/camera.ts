@@ -47,7 +47,11 @@ export class CameraRig {
   private blend = 0;
   private urgency = 0;
   private cutTime = 0; private cutSide = 1;
-  constructor(private camera: THREE.PerspectiveCamera, public pitchLength: number, public pitchWidth: number) {}
+  /** Zoom relative to the base field of view (1 = none) and its smoothing state. */
+  private zoom = 1; private zoomV = { v: 0 }; private ballSpeed = 0; private refDist = 42;
+  private readonly fov0: number;
+  constructor(private camera: THREE.PerspectiveCamera, public pitchLength: number, public pitchWidth: number) { this.fov0 = camera.fov; }
+  private get baseFov(): number { return (this.camera.userData.baseFov as number | undefined) ?? this.fov0; }
 
   snap() { this.camera.position.copy(this.pos); this.camera.lookAt(this.look); }
   /** Kept for API compatibility: the broadcast camera never shakes. */
@@ -63,8 +67,15 @@ export class CameraRig {
     const wide = this.camera.aspect < 1.2 ? 1 + (1.2 - this.camera.aspect) * 0.9 : 1;
     const small = scale < 0.6 ? 1 : 0; // futsal court: a little further back and up so quick high balls stay in shot
     const back = (W / 2 + 7 * scale) * (0.6 + 0.4 * h) + small * 3;
-    outPos.set(fx * 0.95, ((11.5 + fz * 0.05) * h * (0.5 + 0.5 * scale) + small * 1.5) * wide, -(back + (wide - 1) * 14 * scale) + fz * 0.2);
-    outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.6 - 3 * scale, -W / 2, W / 2));
+    // Dolly with play across the pitch: well in toward the far touchline (and a little higher, to see between the
+    // players), only slightly back for the near side (the near stand's roof is behind).
+    const far = Math.max(0, fz) / (W / 2), near = Math.max(0, -fz) / (W / 2);
+    const dolly = far * W * 0.24 - near * W * 0.07;
+    const lift = far * 3 * scale;
+    outPos.set(fx * 0.95, ((11.5 + lift) * h * (0.5 + 0.5 * scale) + small * 1.5) * wide, -(back + (wide - 1) * 14 * scale) + dolly);
+    // distance to centre-pitch play for this screen shape: the zoom is relative to it
+    this.refDist = Math.hypot(back + (wide - 1) * 14 * scale, (11.5 * h * (0.5 + 0.5 * scale) + small * 1.5) * wide - 0.5);
+    outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.72 - 3 * scale, -W / 2, W / 2));
   }
 
   /** target = ball position; lead.x = direction of play of the team in possession (-1..1, 0 when loose). */
@@ -73,10 +84,11 @@ export class CameraRig {
     const L = this.pitchLength; const scale = L / 105;
     // Ball velocity along the pitch, estimated from the target and smoothed (no sudden look-ahead swings).
     if (this.prevTarget) {
-      const jump = target.distanceTo(this.prevTarget);
-      const vx = jump > 8 ? 0 : (target.x - this.prevTarget.x) / dt; // ignore teleports (restarts)
-      if (jump > 8) this.blend = Math.max(this.blend, 1.6); // ball placed for a restart: glide over, don't lunge
+      const jump = target.distanceTo(this.prevTarget); const tele = jump > 8 + 40 * dt; // (a slow frame is not a teleport)
+      const vx = tele ? 0 : (target.x - this.prevTarget.x) / dt; // ignore teleports (restarts)
+      if (tele) this.blend = Math.max(this.blend, 1.6); // ball placed for a restart: glide over, don't lunge
       this.ballVx += (vx - this.ballVx) * (1 - Math.exp(-dt / 0.35));
+      const spd = tele ? 0 : jump / dt; this.ballSpeed += (spd - this.ballSpeed) * (1 - Math.exp(-dt / 0.5));
     } else { this.focusX = target.x; this.focusZ = target.z; }
     this.prevTarget = (this.prevTarget ?? new THREE.Vector3()).copy(target);
 
@@ -99,6 +111,13 @@ export class CameraRig {
       const tilt = Math.min(0.6, 0.25 / Math.max(0.4, scale));
       this.lookY = smoothDamp(this.lookY, 0.4 + Math.min(8, Math.max(0, target.y - 1)) * tilt, this.lookYV, 0.8 - 0.5 * this.urgency, 12, dt);
       const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l);
+      // Zoom: keep play on the far side as readable as near-side play (narrower field of view the further the
+      // action is from the camera), and ease out a touch for long, fast balls and when the ball nears the frame edge.
+      const ref = this.refDist;
+      const dist = Math.hypot(p.y - 0.5, p.z - this.focusZ);
+      const fast = THREE.MathUtils.clamp((this.ballSpeed - 12) / 18, 0, 1);
+      const zoomWant = THREE.MathUtils.clamp(Math.pow(ref / dist, 1.0), 0.64, 1.12) * (1 + 0.1 * fast + 0.08 * this.urgency);
+      this.zoomTo(zoomWant, dt, 0.9);
       this.apply(p, l, dt);
       return;
     }
@@ -111,7 +130,15 @@ export class CameraRig {
       case 'closeup': { const d = new THREE.Vector3(-lead.x, 0, -lead.z); if (d.lengthSq() < 0.01) d.set(0, 0, -1); d.normalize(); p.copy(target).addScaledVector(d, 7).setY(2.4); l.copy(target).setY(1.2); break; }
       default: return;
     }
+    this.zoomTo(1, dt, 0.6);
     this.apply(p, l, dt);
+  }
+
+  /** Ease the field of view toward base × factor. */
+  private zoomTo(factor: number, dt: number, smoothTime: number) {
+    this.zoom = smoothDamp(this.zoom, factor, this.zoomV, smoothTime + 0.6 * Math.min(1, this.blend / 1.2), 0.6, dt);
+    const fov = this.baseFov * this.zoom;
+    if (Math.abs(this.camera.fov - fov) > 1e-3) { this.camera.fov = fov; this.camera.updateProjectionMatrix(); }
   }
 
   private apply(p: THREE.Vector3, l: THREE.Vector3, dt: number) {
@@ -145,6 +172,7 @@ export class CameraRig {
 
   /** Frame a specific shot (celebrations, set pieces) with soft critically damped motion. */
   moveTo(dt: number, pos: THREE.Vector3, look: THREE.Vector3, smoothTime = 0.8) {
+    this.zoomTo(1, dt, 0.6);
     this.posDamp.step(this.pos, pos, smoothTime, 40, dt);
     this.lookDamp.step(this.look, look, smoothTime * 0.8, 40, dt);
     this.camera.position.copy(this.pos); this.camera.lookAt(this.look);

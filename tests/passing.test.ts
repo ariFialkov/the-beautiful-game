@@ -129,3 +129,19 @@ test('a runner receives in his stride: no turning round, and the ball stays unde
   }
   assert.ok(lost <= 1, `the first touch kept it under control (${lost}/9 got away)`);
 });
+
+test('the power bar sets how firmly a pass arrives, and both reach the team-mate', () => {
+  const pace = (power: number) => {
+    const { m, passer, mate } = sandbox();
+    place(passer, 0, 0, 0, 1); place(mate, 0, 18, 0, -1);
+    (m as any).setControlled(passer); m.ball.reset(0, 0.4); m.ball.owner = passer;
+    m.startKick(passer, 'pass', power, { x: 0, z: 1 }, { targetAgent: mate });
+    let arrive = 0, prev = 0;
+    const t = runUntil(m, 4, () => { if (m.ball.lastTouch === mate && !arrive) arrive = prev; prev = m.ball.speed(); return m.ball.owner === mate; });
+    return { t, arrive };
+  };
+  const soft = pace(0.1), firm = pace(1);
+  console.log(`  soft pass arrives at ${soft.arrive.toFixed(1)} m/s, firm at ${firm.arrive.toFixed(1)} m/s`);
+  assert.ok(soft.t > 0 && firm.t > 0, 'both were controlled');
+  assert.ok(firm.arrive > soft.arrive + 3, 'a fuller bar zips it in');
+});

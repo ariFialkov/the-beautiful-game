@@ -91,5 +91,5 @@ export function cardMini(card: PlayerCard | null, opts: { chem?: number; slot?: 
 
 export function controllerHint(): string {
   const l = input.buttonLabels();
-  return input.lastSource === 'gamepad' ? `${l.pass} Pass · ${l.shoot} Shoot · ${l.through} Through · ${l.lob} Cross · ${l.sprint} Sprint · ${l.switch} Switch` : input.lastSource === 'touch' ? 'Drag left to move · Buttons to pass, shoot, cross' : 'WASD/Arrows move · Space pass · Z shoot · C through · X cross (hold) · Shift sprint · Q switch · E slide';
+  return input.lastSource === 'gamepad' ? `${l.pass} Pass · ${l.shoot} Shoot · ${l.through} Through · ${l.lob} Cross · ${l.sprint} Sprint · ${l.switch} Switch` : input.lastSource === 'touch' ? 'Drag left to move · Buttons to pass, shoot, cross' : 'WASD/Arrows move · Space pass · Z shoot (ZZ low, R+Z finesse) · C through · X cross · Shift sprint · Q switch · E slide';
 }

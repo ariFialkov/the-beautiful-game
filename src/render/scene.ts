@@ -50,10 +50,13 @@ export class Stage {
     this.camera.aspect = w / h;
     // Keep the pitch readable in portrait by widening the vertical FOV.
     this.camera.fov = this.camera.aspect < 1 ? 66 : this.camera.aspect < 1.5 ? 54 : 46;
+    this.camera.userData.baseFov = this.camera.fov; // the match camera zooms relative to this
     this.camera.updateProjectionMatrix();
   }
   setScene(scene: THREE.Scene | null, frame: ((dt: number, time: number) => void) | null) {
     this.scene = scene; this.frame = frame;
+    const base = this.camera.userData.baseFov as number | undefined; // undo any match-camera zoom
+    if (base && this.camera.fov !== base) { this.camera.fov = base; this.camera.updateProjectionMatrix(); }
   }
   setFilter(on: boolean) { this.canvas.classList.toggle('stage-filter', on); }
   private loop = () => {
