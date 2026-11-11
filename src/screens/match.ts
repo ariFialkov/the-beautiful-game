@@ -65,8 +65,10 @@ export class MatchScreen implements Screen {
       <div class="banner"></div><div class="toast"></div><div class="power"><i></i></div>
       <div class="fk-panel"><b>FREE KICK</b><div class="fk-curl"><i></i></div><div class="fk-curl-label">Curl</div></div>
       <div class="controls-hint"></div>
+      <div class="replay-tag"><b>REPLAY</b><span class="skip"></span></div>
       <div class="pausebtn"></div>`;
     hud.querySelector('.pausebtn')!.appendChild(button('II', 'small', () => this.togglePause()));
+    hud.querySelector('.replay-tag')!.addEventListener('pointerdown', (e) => { e.preventDefault(); this.view.endReplay(); });
     this.banner = hud.querySelector('.banner')!; this.toast = hud.querySelector('.toast')!; this.power = hud.querySelector('.power')!;
     root.appendChild(hud);
     const showTouch = state.settings.showTouch === 'on' || (state.settings.showTouch === 'auto' && isTouchDevice());
@@ -75,12 +77,17 @@ export class MatchScreen implements Screen {
 
     match.on((e) => {
       switch (e.type) {
-        case 'goal': { const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
+        case 'goal': { this.replayDue = true; const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
         case 'post': this.showToast(e.bar ? 'Off the crossbar!' : 'Off the post!'); audio.post(); break;
         case 'save': this.showToast(e.caught ? `Held by ${e.keeper.card.shortName}` : `Parried by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
         case 'foul': this.showToast(e.card ? `Yellow card · ${e.by.card.shortName}` : e.penalty ? 'Penalty!' : `Foul by ${e.by.card.shortName}`); audio.whistle(); if (e.penalty) this.showBanner('PENALTY', 1.8); break;
         case 'setpiece': if (e.kind === 'freekick') { if (match.freeKick?.taker !== match.controlled) this.showToast(`Free kick · ${match.teams[e.team].setup.short}`); } else if (e.kind === 'penalty') this.showToast(`Penalty · ${match.teams[e.team].setup.short}`); break;
-        case 'kickoff': audio.whistle(); break;
+        case 'kickoff':
+          // after a goal: the instant replay (skippable), then the restart
+          if (this.replayDue && !this.ended && this.view.startReplay(() => this.replayDone())) { this.replayDue = false; match.setPaused(true); this.hud.classList.add('replaying'); this.banner.classList.remove('show'); this.bannerTimer = 0; this.updateSkipHint(); }
+          else audio.whistle();
+          this.replayDue = false;
+          break;
         case 'halftime': this.showBanner('HALF TIME', 2.5); audio.whistle(true); break;
         case 'overtime': this.showBanner(e.size === 3 ? 'SUDDEN DEATH · 3 v 3' : e.size === 2 ? 'SUDDEN DEATH · 2 v 2' : 'SUDDEN DEATH · 1 v 1', 2.2); audio.whistle(e.size === 3); break;
         case 'fulltime': this.showBanner('FULL TIME', 2.5); audio.whistle(true); this.onFullTime(); break;
@@ -92,8 +99,18 @@ export class MatchScreen implements Screen {
     this.showBanner(`${home.short} <small>vs</small> ${match.teams[1].setup.short}<small>${futsal ? 'Indoor court' : home.stadium.name + ' · ' + match.surface.label}</small>`, 2.4);
   }
 
+  private replayDue = false;
+  private replayDone() { this.hud.classList.remove('replaying'); this.match.setPaused(this.paused); audio.whistle(); }
+  private updateSkipHint() { const l = input.buttonLabels(); (this.hud.querySelector('.replay-tag .skip') as HTMLElement).textContent = input.lastSource === 'gamepad' ? `${l.pass} Skip` : input.lastSource === 'touch' ? 'Tap to skip' : 'Space / Esc to skip'; }
+
   private frame(dt: number, time: number) {
     const m = this.match;
+    if (this.view.replaying) {
+      // any button skips the replay (pause included, so it doesn't open the menu)
+      if (input.pass.justPressed || input.shoot.justPressed || input.through.justPressed || input.lob.justPressed || input.pause.justPressed) this.view.endReplay();
+      this.view.frame(dt, time);
+      return;
+    }
     if (input.pause.justPressed && !this.ended) this.togglePause();
     if (!this.paused) m.update(dt, input);
     this.view.frame(dt, time);

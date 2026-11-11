@@ -107,6 +107,10 @@ export class Agent {
       } else {
         this.vel = v2.scale(this.vel, Math.exp(-(act.type === 'header' ? 2 : 8) * dt));
       }
+    } else if (act?.type === 'celebrate' && act.data?.slideV) {
+      // a knee slide: carried on by its own momentum along the turf, slowing to a stop
+      const v0 = act.data.slideV as V2; const s0 = v2.len(v0); const u = act.t - act.data.ft;
+      this.vel = v2.scale(v0, Math.max(0, s0 - 4.2 * u) / Math.max(0.01, s0));
     } else {
       // Free running: accelerate toward the intended velocity with separate limits for speeding up,
       // braking and cornering, so sharp turns at pace need a plant and a slow-down.

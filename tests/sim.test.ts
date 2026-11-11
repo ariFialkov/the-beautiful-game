@@ -56,9 +56,34 @@ test('AI-vs-AI matches end on the scripted score (futsal)', () => {
 
 test('an idle human still gets the scripted result', () => {
   const { m, script, events } = runMatch('kickoff', 'win', 'idle-win', true);
-  assert.equal(m.teams[0].score, script.finalScore.home);
-  assert.equal(m.teams[1].score, script.finalScore.away);
+  // (the human's side may score off the script, but every such goal is answered: the margin is as drawn)
+  assert.equal(m.teams[0].score - m.teams[1].score, script.finalScore.home - script.finalScore.away);
+  assert.equal(m.teams[0].score - m.director!.answered, script.finalScore.home);
   console.log(`  idle human: ${m.teams[0].score}-${m.teams[1].score}  goals ${events.join(' ')} frac=${m.frac.toFixed(2)}`);
+});
+
+test('a losing script: the player can still score, and the opponent scores more (same result, same margin)', () => {
+  const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+  let script = generateMatchScript(new Rng('lose-but-score'), 'kickoff', 'loss', 0, 0.6);
+  for (let i = 0; script.finalScore.home > 0; i++) script = generateMatchScript(new Rng(`lose-but-score-${i}`), 'kickoff', 'loss', 0, 0.6); // (no goals scheduled for the player)
+  const m = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: 0, script, durationSec: script.durationSec, clockMinutes: 90,
+    teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+  const idle = { move: { x: 0, y: 0 }, sprint: { down: false }, shoot: { down: false, justReleased: false, justPressed: false }, pass: { down: false, justReleased: false }, through: { justPressed: false }, lob: { justPressed: false }, shield: { down: false }, slide: { justPressed: false }, switch: { justPressed: false }, finesse: { down: false } } as any;
+  while (m.frac < 0.12 || m.phase !== 'play') m.update(1 / 60, idle);
+  // a shot from the player's striker, already on its way into the bottom corner, outside any goal window
+  const at = m.teams[0].attackDir; const s = m.teams[0].agents[9]; const b = m.ball;
+  b.owner = null; b.held = false; b.x = at * 50; b.y = 0.3; b.z = 2.6; b.vx = at * 25; b.vy = 0; b.vz = 0.4; b.wx = b.wy = b.wz = 0; b.lastTouch = s; b.lastTouchTeam = 0; b.lastTouchTime = m.time;
+  b.px = b.x; b.py = b.y; b.pz = b.z;
+  const gk = m.teams[1].agents[0]; gk.pos = { x: at * 52, z: -3 }; gk.prevPos = { ...gk.pos };
+  let goal = -1; m.on((e) => { if (e.type === 'goal' && goal < 0) goal = e.team; });
+  for (let i = 0; i < 60 && goal < 0; i++) m.update(1 / 60, idle);
+  assert.equal(goal, 0, 'the goal stands');
+  assert.equal(m.director!.answered, 1);
+  while (!m.ended && m.frac < 1.3) m.update(1 / 60, idle);
+  assert.ok(m.ended);
+  assert.equal(m.teams[0].score - m.teams[1].score, script.finalScore.home - script.finalScore.away, 'still a defeat by the drawn margin');
+  assert.equal(m.teams[1].score, script.finalScore.away + m.director!.answered, 'the opponent answered every off-script goal'); // (the auto-piloted side may score again)
+  console.log(`  scripted ${script.finalScore.home}-${script.finalScore.away}, played ${m.teams[0].score}-${m.teams[1].score}`);
 });
 
 test('futsal: a level game goes to sudden death (3v3, then 2v2, then 1v1) and the golden goal decides it', () => {

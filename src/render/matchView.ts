@@ -54,6 +54,18 @@ function aimTexture(): THREE.CanvasTexture {
   aimTex = new THREE.CanvasTexture(c); aimTex.anisotropy = 4; aimTex.premultiplyAlpha = true; return aimTex;
 }
 
+/** Pack a drawn pose (with its place on the pitch) into a flat array, and back. */
+function packPose(x: number, z: number, ang: number, p: Pose): Float32Array {
+  const n = p.q.length; const out = new Float32Array(6 + n * 4);
+  out[0] = x; out[1] = z; out[2] = ang; out[3] = p.pelvis.x; out[4] = p.pelvis.y; out[5] = p.pelvis.z;
+  for (let i = 0; i < n; i++) { const q = p.q[i]; out[6 + i * 4] = q.x; out[7 + i * 4] = q.y; out[8 + i * 4] = q.z; out[9 + i * 4] = q.w; }
+  return out;
+}
+function unpackPose(a: Float32Array, p: Pose) {
+  p.pelvis.set(a[3], a[4], a[5]);
+  for (let i = 0; i < p.q.length; i++) p.q[i].set(a[6 + i * 4], a[7 + i * 4], a[8 + i * 4], a[9 + i * 4]);
+}
+
 const lerpAngle = (a: number, b: number, t: number) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 
 /** Renders a Match into the shared Stage, interpolating between fixed simulation steps. */
@@ -73,6 +85,11 @@ export class MatchView {
   /** FIFA-style landing marker for a ball in the air: sits where it will come down and grows as it drops. */
   private reticle: THREE.Mesh;
   private reticleAlpha = 0; private highBall = -1; private reticleKey = -1; private reticleScale = 1.3;
+  /** Instant replay: the last seconds of play, recorded as they're drawn (positions, poses, the ball). */
+  private rec: Array<{ t: number; ball: Float32Array; agents: Array<Float32Array | null> }> = [];
+  private recAgents: Agent[] = [];
+  private replay: { frames: MatchView['rec']; tau: number; t1: number; goalT: number; side: number; shot: number; onEnd: () => void } | null = null;
+  private poseA = new Pose(); private poseB = new Pose();
   /** Free kicks: the aim marker on the goal, and whether the third-person free-kick camera is on. */
   private aimMark: THREE.Mesh; private fkCam: object | null = null; private fkSide = 0;
 
@@ -122,18 +139,29 @@ export class MatchView {
     match.on((e) => { if (e.type === 'goal') this.stadium.cheer(1); if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5); });
   }
 
+  get replaying() { return !!this.replay; }
+
   frame(dt: number, time: number) {
     const m = this.match; const al = m.alpha;
+    if (this.replay) { this.playReplay(dt, time); return; }
+    const record = m.time - (this.rec.length ? this.rec[this.rec.length - 1].t : -1) >= 1 / 30 - 1e-4;
+    if (record && !this.recAgents.length) this.recAgents = Array.from(this.humanoids.keys());
+    const snap: Array<Float32Array | null> = [];
     for (const [a, h] of this.humanoids) {
       const x = a.prevPos.x + (a.pos.x - a.prevPos.x) * al, z = a.prevPos.z + (a.pos.z - a.prevPos.z) * al;
       const ang = lerpAngle(a.prevHeadingAngle, Math.atan2(a.heading.z, a.heading.x), al);
       h.place(x, z, Math.atan2(Math.cos(ang), Math.sin(ang)));
       if (a.motion) h.applyPose(this.pose.lerp(a.motion.prev, a.motion.pose, al));
-      const sel = a === m.controlled && m.humanTeam !== null && !this.cinematic;
+      const sel = a === m.controlled && m.humanTeam !== null && !this.cinematic && m.phase !== 'goal';
       h.setSelected(sel, m.autopilot ? 0xf7c948 : 0x19f5a4);
+      if (record) snap.push(a.motion ? packPose(x, z, ang, this.pose) : null);
     }
     const b = m.ball;
     const bx = b.px + (b.x - b.px) * al, by = b.py + (b.y - b.py) * al, bz = b.pz + (b.z - b.pz) * al;
+    if (record) {
+      this.rec.push({ t: m.time, ball: new Float32Array([bx, by, bz]), agents: snap });
+      while (this.rec.length && this.rec[0].t < m.time - 12) this.rec.shift();
+    }
     this.ball.position.set(bx, by, bz);
     // Spin the ball with its real angular velocity.
     const wl = Math.hypot(b.wx, b.wy, b.wz);
@@ -150,15 +178,73 @@ export class MatchView {
     const lead = new THREE.Vector3(playDir, 0, 0);
     if (m.phase === 'goal') { this.goalCamT += dt; this.wasGoal = true; } else if (this.wasGoal) { this.wasGoal = false; this.goalCamT = 0; this.rig.softBlend(1.4); }
     if (m.phase === 'goal' && m.lastScorer && this.goalCamT > 0.9 && !this.cinematic) {
-      const s = m.lastScorer; const sp = new THREE.Vector3(s.pos.x, 1.2, s.pos.z);
-      const cam = sp.clone().add(new THREE.Vector3(-s.heading.x * 5.5, 1.6, -s.heading.z * 5.5 - 2));
-      this.rig.moveTo(dt, cam, sp, 0.9);
+      // on the pitch side of the scorer (they turn to face it for the finale, with the fans behind them)
+      const s = m.lastScorer; const sp = new THREE.Vector3(s.pos.x, 1.1, s.pos.z);
+      const L = m.pitch.length, W = m.pitch.width; const sc = m.pitch.futsal ? 0.7 : 1;
+      const inward = new THREE.Vector3(-s.pos.x * 0.35, 0, -s.pos.z).normalize(); const side = new THREE.Vector3(-inward.z, 0, inward.x);
+      const cam = sp.clone().addScaledVector(inward, 4.3 * sc).addScaledVector(side, 1.3 * sc).setY(1.55);
+      cam.x = THREE.MathUtils.clamp(cam.x, -L / 2 + 1, L / 2 - 1); cam.z = THREE.MathUtils.clamp(cam.z, -W / 2 + 1, W / 2 - 1);
+      this.rig.moveTo(dt, cam, sp.setY(0.95), 0.6, 0.9);
     } else if (this.cinematic) this.rig.cinematic(dt, target, new THREE.Vector3(b.vx, 0, b.vz).normalize(), time);
     else if (this.freeKickCamera(dt, target)) { /* third person behind the free-kick taker */ }
     else { this.rig.endDir = m.teams[m.humanTeam ?? 0].attackDir; this.rig.update(dt, target, lead, time); }
     // controls follow the camera so left/right/up/down always match the screen
     m.controlBasis = groundBasis(this.stage.camera);
     this.sun.position.set(target.x - 40, 70, target.z - 50); this.sun.target.position.set(target.x, 0, target.z); this.sun.target.updateMatrixWorld();
+    this.stadium.update(dt, time);
+    this.weather.update(dt, this.stage.camera.position, time);
+  }
+
+  /** Play back the last goal: from a few seconds before it, side-on and following the ball, then (as the shot goes
+   *  in) a cut to behind the goal in slow motion. `onEnd` runs when it finishes or is skipped. */
+  startReplay(onEnd: () => void): boolean {
+    const m = this.match; const goalT = m.lastGoalAt;
+    const frames = this.rec.filter((f) => f.t >= goalT - 7 && f.t <= goalT + 1.8);
+    if (frames.length < 30 || goalT < 0) return false;
+    const t0 = Math.max(frames[0].t, goalT - 6);
+    const gf = frames.reduce((a, f) => (Math.abs(f.t - goalT) < Math.abs(a.t - goalT) ? f : a));
+    this.replay = { frames, tau: t0, t1: frames[frames.length - 1].t, goalT, side: Math.sign(gf.ball[0]) || 1, shot: -1, onEnd };
+    this.reticle.visible = false; this.aimMark.visible = false;
+    return true;
+  }
+  /** End the replay now (skipped) and cut back to the match camera. */
+  endReplay() {
+    const r = this.replay; if (!r) return; this.replay = null;
+    for (const h of this.humanoids.values()) h.root.visible = true;
+    this.rig.snapBroadcast(new THREE.Vector3(this.match.ball.x, 0.1, this.match.ball.z));
+    r.onEnd();
+  }
+  private playReplay(dt: number, time: number) {
+    const r = this.replay!; const m = this.match;
+    const rate = r.tau < r.goalT - 1.4 ? 1 : r.tau < r.goalT + 0.6 ? 0.4 : 0.75; // slow motion for the finish
+    r.tau += dt * rate;
+    if (r.tau >= r.t1) { this.endReplay(); return; }
+    const F = r.frames; let i = 0; while (i < F.length - 2 && F[i + 1].t <= r.tau) i++;
+    const A = F[i], B = F[i + 1]; const k = THREE.MathUtils.clamp((r.tau - A.t) / Math.max(1e-4, B.t - A.t), 0, 1);
+    this.recAgents.forEach((a, j) => {
+      const h = this.humanoids.get(a); const pa = A.agents[j], pb = B.agents[j]; if (!h) return;
+      if (!pa || !pb) { h.root.visible = false; return; }
+      h.root.visible = true;
+      const x = pa[0] + (pb[0] - pa[0]) * k, z = pa[1] + (pb[1] - pa[1]) * k, ang = lerpAngle(pa[2], pb[2], k);
+      h.place(x, z, Math.atan2(Math.cos(ang), Math.sin(ang)));
+      unpackPose(pa, this.poseA); unpackPose(pb, this.poseB); h.applyPose(this.pose.lerp(this.poseA, this.poseB, k));
+      h.setSelected(false, 0);
+    });
+    const bx = A.ball[0] + (B.ball[0] - A.ball[0]) * k, by = A.ball[1] + (B.ball[1] - A.ball[1]) * k, bz = A.ball[2] + (B.ball[2] - A.ball[2]) * k;
+    const sp = Math.hypot(B.ball[0] - A.ball[0], B.ball[1] - A.ball[1], B.ball[2] - A.ball[2]) / Math.max(1e-3, B.t - A.t);
+    if (sp > 0.3) this.ball.rotateOnWorldAxis(new THREE.Vector3(B.ball[2] - A.ball[2], 0, -(B.ball[0] - A.ball[0])).normalize(), (sp * dt * rate) / m.ball.radius);
+    this.ball.position.set(bx, by, bz); this.ballShadow.position.set(bx, 0.015, bz);
+    this.reticle.visible = false; this.aimMark.visible = false;
+    // cameras: side-on and low, following the ball; then behind the goal for the finish
+    const L = m.pitch.length, W = m.pitch.width; const sc = m.pitch.futsal ? 0.55 : 1;
+    const ball = new THREE.Vector3(bx, by, bz);
+    const shot = r.tau < r.goalT - 1.5 ? 0 : 1;
+    let cam: THREE.Vector3, look: THREE.Vector3;
+    if (shot === 0) { cam = new THREE.Vector3(bx - r.side * 9 * sc, 5.5 * sc + 1.5, Math.max(-W / 2 - 6, bz - 15 * sc)); look = ball.clone().setY(Math.max(0.6, by * 0.6)); }
+    else { cam = new THREE.Vector3(r.side * (L / 2 + 10 * sc), 3.6 * sc + 1, THREE.MathUtils.clamp(bz * 0.35 + 3 * sc, -W / 2, W / 2)); look = ball.clone().setY(Math.max(0.8, by)); }
+    if (shot !== r.shot) { r.shot = shot; this.rig.cutTo(cam, look); }
+    this.rig.moveTo(dt, cam, look, 0.25, shot === 1 ? 0.7 : 0.8);
+    m.controlBasis = groundBasis(this.stage.camera);
     this.stadium.update(dt, time);
     this.weather.update(dt, this.stage.camera.position, time);
   }

@@ -99,7 +99,7 @@ export class Motion {
     const duty = clamp((travel * steps) / (2 * Math.max(0.1, sp)), 0.16, 0.62);
     if (sp > 0.35) this.gaitOn = true;
     else if (sp < 0.2 && !this.feet.L.swing && !this.feet.R.swing) this.gaitOn = false;
-    const frozen = atype === 'slide' || atype === 'dive' || atype === 'fallen' || atype === 'header' || (atype === 'celebrate' && act!.data?.style === 2);
+    const frozen = atype === 'slide' || atype === 'dive' || atype === 'fallen' || atype === 'header' || (atype === 'celebrate' && (act!.data?.style === 2 || ((act!.data?.style === 'slide' || act!.data?.style === 'leap') && act!.data?.ft >= 0)));
     if (this.gaitOn) this.phase = (this.phase + dt * cycleHz) % 1;
     const width = (jockey ? 0.2 : atype === 'celebrate' ? 0.12 : a.isGK && sp < 1 ? 0.16 : lerp(0.11, 0.05, sf)) * h * a.card.look.build;
     const stanceDur = duty / Math.max(0.5, cycleHz);
@@ -359,15 +359,64 @@ export class Motion {
         break;
       }
       case 'celebrate': {
-        const style = d.style ?? 0; const tt = this.time;
-        if (style === 1) { T.arm.L.z = 1.5; T.arm.R.z = -1.5; T.arm.L.x = T.arm.R.x = 0; T.arm.L.elbow = T.arm.R.elbow = 0.05; T.pRoll += Math.sin(tt * 2) * 0.25; }
-        else if (style === 2) {
-          const k = ease(t / 0.3);
-          T.pelvis.y = lerp(T.pelvis.y, 0.55 * h, k); T.sPitch = lerp(T.sPitch, -0.4, k); T.headPitch = lerp(T.headPitch, -0.4, k);
-          for (const s of ['L', 'R'] as Side[]) { const f = T.foot[s]; f.pos.lerp(this.v6.set(x - fw.x * 0.5 * h + lw.x * sideSign(s) * 0.15, this.body.ankleHeight, z - fw.z * 0.5 * h + lw.z * sideSign(s) * 0.15), k); f.pitch = lerp(f.pitch, -1.3, k); }
-          T.arm.L.x = T.arm.R.x = -2.6 * k; T.arm.L.z = 0.5; T.arm.R.z = -0.5; T.arm.L.elbow = T.arm.R.elbow = 0.2;
-        } else if (style === 3) { T.arm.R.x = -2.9; T.arm.R.z = -0.2; T.arm.R.elbow = 0.1; T.arm.L.x = -1.2; T.arm.L.z = -0.3; T.arm.L.elbow = 2.0; T.headPitch = -0.5; }
-        else { const hop = Math.abs(Math.sin(tt * 4.2)); T.pelvis.y += 0.14 * h * hop; T.arm.L.x = -2.5 + Math.sin(tt * 7) * 0.4; T.arm.R.x = -2.5 + Math.cos(tt * 7) * 0.4; T.arm.L.z = 0.4; T.arm.R.z = -0.4; T.arm.L.elbow = T.arm.R.elbow = 0.9; T.headPitch = -0.3; }
+        // (showcase poses pass a numbered style: a finished celebration)
+        const legacy = typeof d.style === 'number';
+        const role: string = d.role ?? 'scorer';
+        const style: string = legacy ? ['plane', 'pump', 'slide', 'leap'][d.style % 4] : d.style ?? 'pump';
+        const ft: number = legacy ? 0 : d.ft ?? -1; const u = ft >= 0 ? t - ft : -1; const tt = this.time;
+        const arm = (s: Side, ax: number, az: number, el: number, k = 1) => { const ar = T.arm[s]; ar.x = lerp(ar.x, ax, k); ar.z = lerp(ar.z, sideSign(s) * az, k); ar.elbow = lerp(ar.elbow, el, k); ar.ik = null; ar.ikW = 0; };
+        const main: Side = act.dir > 0 ? 'R' : 'L'; const off: Side = main === 'R' ? 'L' : 'R';
+        if (role === 'scorer') {
+          if (u < 0) {
+            // the run away: arms already going
+            if (style === 'plane') { arm('L', -0.1, 1.45, 0.08); arm('R', -0.1, 1.45, 0.08); }
+            else if (style === 'leap') { arm(main, -2.75, 0.15, 0.12); T.headPitch = lerp(T.headPitch, -0.3, 0.6); }
+            else if (style === 'slide') { arm('L', -1.0 + Math.sin(tt * 9) * 0.3, 0.85, 0.5); arm('R', -1.0 - Math.sin(tt * 9) * 0.3, 0.85, 0.5); T.headPitch = lerp(T.headPitch, -0.2, 0.5); }
+            else { arm(main, -1.9, 0.35, 2.2); T.headPitch = lerp(T.headPitch, -0.25, 0.5); }
+            break;
+          }
+          if (style === 'slide') {
+            // down on the knees and sliding, leaning back, arms flung wide; then fists clenched, roaring
+            const k = ease(u / 0.2);
+            T.pelvis.y = lerp(T.pelvis.y, 0.5 * h, k); T.pelvis.z -= 0.05 * h * k;
+            for (const s of ['L', 'R'] as Side[]) { const f = T.foot[s]; f.pos.lerp(this.v6.set(x - fw.x * 0.43 * h + lw.x * sideSign(s) * 0.13 * h, this.body.ankleHeight, z - fw.z * 0.43 * h + lw.z * sideSign(s) * 0.13 * h), k); f.pitch = lerp(f.pitch, -1.45, k); }
+            const back = u < 1.4 ? 1 : Math.max(0.35, 1 - (u - 1.4) * 0.8);
+            T.pPitch = lerp(T.pPitch, -0.25 * back, k); T.sPitch = lerp(T.sPitch, -0.55 * back, k); T.headPitch = lerp(T.headPitch, -0.55 * back, k);
+            if (u < 1.4) { arm('L', -2.2, 1.05, 0.15, k); arm('R', -2.2, 1.05, 0.15, k); }
+            else { const p = 0.5 + 0.5 * Math.sin((u - 1.4) * 9); arm('L', -1.35 - p * 0.3, 0.75, 2.1); arm('R', -1.35 - p * 0.3, 0.75, 2.1); T.sPitch = lerp(T.sPitch, 0.1, 0.5); }
+          } else if (style === 'pump') {
+            // feet planted wide, knees bent, two hard fist pumps down to the hip, then the roar with both fists clenched
+            const k = ease(u / 0.15);
+            T.pelvis.y -= 0.12 * h * k; T.sPitch = lerp(T.sPitch, 0.3, k); T.headPitch = lerp(T.headPitch, -0.3, k);
+            const pumps = u < 1.1; const ph = (u % 0.55) / 0.55; const pull = ph < 0.35 ? ease(ph / 0.35) : 1 - ease((ph - 0.35) / 0.65);
+            if (pumps) { arm(main, lerp(-2.3, -0.45, pull), 0.3, lerp(2.3, 1.5, pull)); arm(off, 0.35, 0.55, 0.6); T.sPitch += 0.15 * pull; T.pelvis.y -= 0.04 * h * pull; }
+            else { const kk = ease((u - 1.1) / 0.25); arm('L', -1.25, 1.0, 2.2, kk); arm('R', -1.25, 1.0, 2.2, kk); T.sPitch = lerp(T.sPitch, -0.15, kk); T.headPitch = lerp(T.headPitch, -0.45, kk); }
+          } else if (style === 'leap') {
+            // a jump with a punch at the sky at the top, then arms up in a V
+            const jt = 0.62; const j = u < jt ? Math.sin(Math.PI * u / jt) : 0;
+            if (u < jt) {
+              T.pelvis.y += 0.4 * h * j;
+              for (const s of ['L', 'R'] as Side[]) { const f = T.foot[s]; f.pos.set(x - fw.x * 0.12 * h + lw.x * sideSign(s) * 0.11 * h, T.pelvis.y - (0.82 - 0.25 * j) * h, z - fw.z * 0.12 * h + lw.z * sideSign(s) * 0.11 * h); f.pitch = -0.7 * j; }
+              arm(main, lerp(-1.6, -3.05, j), 0.12, lerp(2.0, 0.0, j)); arm(off, -0.9, 0.5, 1.6); T.headPitch = -0.5 * j; T.sPitch = -0.2 * j;
+            } else { const kk = ease((u - jt) / 0.25); arm('L', -2.55, 0.55, 0.2, kk); arm('R', -2.55, 0.55, 0.2, kk); T.headPitch = lerp(T.headPitch, -0.45, kk); T.sPitch = lerp(T.sPitch, -0.2, kk); }
+          } else {
+            // the airplane run ends with both arms pointing to the sky
+            const kk = ease(u / 0.35); arm('L', lerp(-0.1, -2.85, kk), lerp(1.45, 0.3, kk), 0.1); arm('R', lerp(-0.1, -2.85, kk), lerp(1.45, 0.3, kk), 0.1); T.headPitch = lerp(T.headPitch, -0.55, kk);
+          }
+        } else if (role === 'mate') {
+          // running in with arms up, then arms round the scorer
+          if (d.near) { arm('L', -1.5, -0.05, 1.05, 0.6); arm('R', -1.5, -0.05, 1.05, 0.6); T.sPitch = lerp(T.sPitch, 0.2, 0.5); T.headPitch = lerp(T.headPitch, 0.1, 0.5); }
+          else if (t > (d.delay ?? 0)) { arm('L', -2.4, 0.55, 0.35); arm('R', -2.4, 0.55, 0.35); T.headPitch = lerp(T.headPitch, -0.2, 0.5); }
+        } else {
+          // dejected: hands on head, hands on hips, or bent over with hands on knees
+          const k = ease(t / 0.6); const v = d.variant ?? 0;
+          if (v === 0) { arm('L', -2.35, 1.05, 2.45, k); arm('R', -2.35, 1.05, 2.45, k); T.headPitch = lerp(T.headPitch, -0.35, k); }
+          else if (v === 1) { arm('L', 0.35, 0.8, 1.75, k); arm('R', 0.35, 0.8, 1.75, k); T.headPitch = lerp(T.headPitch, 0.55, k); }
+          else {
+            T.pelvis.y -= 0.14 * h * k; T.pPitch = lerp(T.pPitch, 0.45, k); T.sPitch = lerp(T.sPitch, 0.45, k); T.headPitch = lerp(T.headPitch, 0.1, k);
+            for (const s of ['L', 'R'] as Side[]) { const ar = T.arm[s]; ar.ik = V().set(x + fw.x * 0.28 * h + lw.x * sideSign(s) * 0.16 * h, 0.5 * h, z + fw.z * 0.28 * h + lw.z * sideSign(s) * 0.16 * h); ar.ikW = k; }
+          }
+        }
         break;
       }
       case 'throw': {

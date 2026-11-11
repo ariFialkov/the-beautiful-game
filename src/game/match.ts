@@ -26,6 +26,7 @@ export type Phase = 'kickoff' | 'play' | 'dead' | 'goal' | 'restart' | 'halftime
 /** Controller settings: how much the game helps passes and shots, and when it switches player for you. */
 export interface ControlPrefs { pass: 'assisted' | 'semi'; shot: 'assisted' | 'semi'; switching: 'auto' | 'air' | 'manual'; }
 
+export type CelebStyle = 'slide' | 'pump' | 'leap' | 'plane';
 export type SetPieceKind = 'kickoff' | 'throw' | 'corner' | 'goalkick' | 'freekick' | 'penalty';
 /** An in-match free kick, set up FIFA style: a wall sized by the danger, the keeper shading off it, and the taker
  *  lining it up (an aim point on the goal for a shooting chance, a direction for one that can only be played in). */
@@ -177,7 +178,7 @@ export class Match {
 
   /* ------------------------------ set pieces ------------------------------ */
   kickoff(teamIdx: number, initial = false) {
-    const t = this.teams[teamIdx];
+    const t = this.teams[teamIdx]; this.celebration = null;
     const { length: L, width: W } = this.pitch;
     this.ball.reset(0, 0);
     for (const team of this.teams) for (const a of team.agents) {
@@ -191,8 +192,15 @@ export class Match {
     taker.pos = { x: -0.5 * t.attackDir, z: 0 }; taker.prevPos = { ...taker.pos };
     const helper = t.agents[t.agents.length - 1];
     if (helper !== taker) { helper.pos = { x: -1.5 * t.attackDir, z: 2.5 }; helper.prevPos = { ...helper.pos }; }
+    this.kickoffHelper = helper !== taker ? helper : null;
+    // the other side starts outside the centre circle, in its own half
+    const R = this.centreCircle + 0.4;
+    for (const a of this.opponentsOf(teamIdx).agents) {
+      const d = Math.hypot(a.pos.x, a.pos.z);
+      if (d < R) { const k = d > 0.5 ? R / d : 1; a.pos = d > 0.5 ? { x: a.pos.x * k, z: a.pos.z * k } : { x: -this.opponentsOf(teamIdx).attackDir * R, z: 0 }; a.prevPos = { ...a.pos }; }
+    }
     this.setPiece = { kind: 'kickoff', team: teamIdx, taker, pos: { x: 0, z: 0 } };
-    this.phase = 'kickoff'; this.phaseTimer = initial ? 2.2 : 1.6;
+    this.phase = 'kickoff'; this.phaseTimer = initial ? 1.8 : 1.2; this.kickoffAt = this.time;
     this.possessionTeam = teamIdx; t.kickoffs++;
     if (this.humanTeam !== null) this.setControlled(this.humanTeam === teamIdx ? taker : this.closestToBall(this.humanTeam));
     this.emit({ type: 'kickoff', half: this.half });
@@ -413,10 +421,11 @@ export class Match {
     for (const a of this.agents) { a.intent.steer = null; a.intent.boost = false; }
     for (const t of this.teams) updateTeamAI(this, t, h);
     this.applyPhaseConstraints();
+    if (this.phase === 'goal') this.applyCelebration();
     if (this.phase === 'play') { this.updatePendingKicks(); this.dribbleAssist(); this.scheduleTouch(); this.anticipate(); }
 
     for (const a of this.agents) {
-      const mul = this.mods.speedMul[a.team] * this.teamSpeedBonus[a.team] * (this.phase === 'goal' || this.phase === 'dead' ? 0.55 : 1);
+      const mul = this.mods.speedMul[a.team] * this.teamSpeedBonus[a.team] * (this.phase === 'dead' || (this.phase === 'goal' && !this.celebration) ? 0.55 : 1);
       a.update(h, mul, this.surface.grip);
       const lim = { x: this.pitch.length / 2 + 3, z: this.pitch.width / 2 + 3 };
       a.pos.x = Math.max(-lim.x, Math.min(lim.x, a.pos.x)); a.pos.z = Math.max(-lim.z, Math.min(lim.z, a.pos.z));
@@ -443,6 +452,11 @@ export class Match {
     if (this.ball.owner) this.possessionTeam = this.ball.owner.team;
     this.updateClockPhases();
   }
+
+  /** The centre circle's radius (kick-offs). */
+  get centreCircle() { return this.pitch.futsal ? 3 : 9.15; }
+  private kickoffHelper: Agent | null = null;
+  private kickoffAt = 0;
 
   /** Radius opponents must keep from the ball at a set piece. */
   setPieceRoom(kind: SetPieceKind): number {
@@ -500,7 +514,14 @@ export class Match {
     if (!sp || (this.phase !== 'restart' && this.phase !== 'play')) return;
     if (this.phase === 'restart') { sp.taker.intent.steer = { x: 0, z: 0 }; }
     else if (sp.taker === this.ball.owner) { if (!sp.taker.pendingKick) sp.taker.intent.steer = { x: 0, z: 0 }; }
-    if (sp.kind === 'kickoff') return;
+    if (sp.kind === 'kickoff') {
+      // nobody moves (and the other side stays out of the circle) until the ball is played
+      for (const a of this.agents) {
+        if (a === sp.taker || a === this.kickoffHelper || a.isGK) continue;
+        a.intent.move = { x: 0, z: 0 }; a.intent.sprint = false; a.intent.steer = null; a.intent.face = v2.sub({ x: this.ball.x, z: this.ball.z }, a.pos);
+      }
+      return;
+    }
     const fk = this.freeKick;
     if (fk) fk.wall.forEach((a, i) => {
       // the wall holds its line, facing the ball, until it's struck
@@ -604,7 +625,7 @@ export class Match {
     const b = this.ball;
     if (a.isGK && this.setPiece?.kind !== 'goalkick' && this.inOwnBox(a, b.x, b.z)) { b.held = true; }
     b.owner = a; b.lastTouch = a; b.lastTouchTeam = a.team; this.possessionTeam = a.team;
-    a.ai.nextDecision = this.time + 0.35 + Math.random() * 0.3;
+    a.ai.nextDecision = this.time + (this.setPiece?.kind === 'kickoff' ? 0.1 : 0.35 + Math.random() * 0.3);
     this.aimUpfield(a);
   }
 
@@ -631,6 +652,9 @@ export class Match {
     if (this.autopilot) { this.charge = null; this.shotTap = null; return; }
     if (this.shotTap && this.time - this.shotTap.at > 0.6) this.shotTap = null;
     me.intent.move = move; me.intent.sprint = input.sprint.down; me.intent.face = null; me.intent.jockey = false; this.stick = move;
+    // Kick-off: the taker can play it as soon as the whistle has gone (no waiting for a timer)
+    if (this.phase === 'kickoff' && this.setPiece?.kind === 'kickoff' && this.setPiece.taker === me && this.time - this.kickoffAt > 0.45
+      && (input.pass.down || input.shoot.down || input.lob.down || input.through.justPressed)) { this.phase = 'play'; this.phaseTimer = 0; this.giveControl(me); }
     if (this.phase !== 'play' && this.phase !== 'restart') return;
     if (this.freeKick?.taker === me) { this.freeKickInput(input, dt); return; }
     const b = this.ball; const bp = { x: b.x, z: b.z };
@@ -679,6 +703,30 @@ export class Match {
     // On the ball, or close enough to a loose ball to strike it first time.
     const canKick = (b.owner === me && !b.held) || (!b.owner && dBall < 2.6 && b.y < 1.4);
     const aimDir = v2.len(move) > 0.2 ? v2.norm(move) : me.heading;
+    // First time (FIFA style): a pass on its way to you can be played on before it arrives - press pass, through ball,
+    // cross or shoot early and it's queued, then struck first time the moment the ball gets there (one-twos, one-timers).
+    const incoming = !b.owner && b.lastTouchTeam === me.team && b.lastTouch !== me && (pa?.receiver === me || me.ai.expectBall > this.time);
+    const q = this.queued;
+    if (q) {
+      if (q.agent !== me || this.time - q.at > 3 || (b.owner && b.owner !== me) || b.lastTouchTeam !== me.team || this.phase !== 'play') this.queued = null;
+      else if (!me.busy() && !me.pendingKick) {
+        const closing = ((me.pos.x - b.x) * b.vx + (me.pos.z - b.z) * b.vz) / Math.max(0.1, dBall);
+        const eta = b.owner === me ? 0 : closing > 0.5 ? dBall / closing : Infinity;
+        if (b.owner === me || dBall < 2.4 || eta < 0.5) { this.queued = null; this.playQueued(me, q); return; }
+      }
+    }
+    if (incoming && !canKick && this.phase === 'play') {
+      if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
+      if (input.pass.down) { if (!this.charge || this.charge.kind !== 'pass') this.charge = { kind: 'pass', t: 0 }; else this.charge.t += dt; }
+      if (input.lob.down) { if (!this.charge || this.charge.kind !== 'lob') this.charge = { kind: 'lob', t: 0 }; else this.charge.t += dt; }
+      const c = this.charge; const at = this.time;
+      if (input.shoot.justReleased) this.queued = { agent: me, kind: 'shoot', power: Math.min(1, Math.max(0.22, c?.t ?? 0.3) / 0.9), dir: aimDir, finesse: input.finesse.down, at };
+      else if (input.pass.justReleased) this.queued = { agent: me, kind: 'pass', power: Math.min(1, Math.max(0.2, c?.t ?? 0.2) / 0.5), dir: aimDir, at };
+      else if (input.through.justPressed) this.queued = { agent: me, kind: 'through', power: 0.7, dir: aimDir, at };
+      else if (input.lob.justReleased) this.queued = { agent: me, kind: 'lob', power: Math.min(1, Math.max(0.15, c?.t ?? 0.15) / 0.7), dir: aimDir, at };
+      if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
+      return; // (no tackling your own team-mate's pass)
+    }
     if (canKick && this.phase === 'play') {
       // Shooting (FIFA style): hold and release for a power shot; hold finesse (RB/R1) for a curled finesse shot;
       // tap shoot twice and hold the second press for a low driven shot.
@@ -722,6 +770,15 @@ export class Match {
       const c = this.closestToBall(team.index);
       if (c !== me && v2.dist(c.pos, bp) + 3 < dBall) this.setControlled(c);
     }
+  }
+
+  /** A first-time pass or shot queued while the ball was on its way. */
+  queued: { agent: Agent; kind: KickKind; power: number; dir: V2; finesse?: boolean; at: number } | null = null;
+  private playQueued(me: Agent, q: NonNullable<Match['queued']>) {
+    // the receiver is picked now, from where everyone is at the moment of the strike
+    const opts = q.kind === 'shoot' ? { finesse: q.finesse }
+      : { targetAgent: this.pickPassTarget(me, q.dir, q.kind === 'through', q.kind === 'lob', q.kind === 'through' ? undefined : q.power) ?? undefined };
+    this.startKick(me, q.kind, q.power, q.dir, opts);
   }
 
   /* ------------------------------ kicking ------------------------------ */
@@ -1520,9 +1577,81 @@ export class Match {
     this.phase = 'goal'; this.phaseTimer = 4.6; this.lastConceded = teamIdx === 0 ? 1 : 0; this.setPiece = null;
     this.ball.owner = null; this.ball.inFlightShot = null;
     for (const a of this.agents) { a.hasBall = false; a.pendingKick = null; if (a.action?.type === 'kick') a.action = null; }
-    if (scorer) { scorer.action = null; scorer.startAction('celebrate', 4.4, Math.random() < 0.5 ? 1 : -1, { style: Math.floor(Math.random() * 3) }); }
-    this.lastScorer = scorer; this.lastScorerTeam = teamIdx;
+    this.startCelebration(teamIdx, scorer);
+    this.lastScorer = scorer; this.lastScorerTeam = teamIdx; this.lastGoalAt = this.time;
     this.emit({ type: 'goal', team: teamIdx, scorer });
+  }
+
+  /** The goal celebration: the scorer wheels away toward the corner and finishes with a knee slide, a fist pump, a
+   *  jumping punch or an airplane run; team-mates chase after and mob them; the other side slumps. */
+  celebration: { team: number; scorer: Agent | null; style: CelebStyle; spot: V2; t0: number } | null = null;
+  lastGoalAt = -99;
+  private startCelebration(team: number, scorer: Agent | null) {
+    const { length: L, width: W } = this.pitch; const sc = this.pitch.futsal ? 0.45 : 1;
+    const styles: CelebStyle[] = ['slide', 'pump', 'leap', 'plane'];
+    let spot: V2 = { x: 0, z: 0 }; let style: CelebStyle = 'pump';
+    if (scorer) {
+      // off toward the nearer corner flag at that end (in front of the fans), not too far
+      const end = this.teams[team].attackDir * L / 2; const zs = Math.sign(scorer.pos.z || (Math.random() - 0.5));
+      const corner = { x: end - Math.sign(end) * 5 * sc, z: zs * (W / 2 - 3 * sc) };
+      const to = v2.sub(corner, scorer.pos); const d = v2.len(to);
+      spot = d > 22 * sc ? v2.add(scorer.pos, v2.scale(v2.norm(to), 22 * sc)) : corner;
+      style = styles[Math.floor(Math.random() * styles.length)];
+      if (style === 'slide' && v2.dist(spot, scorer.pos) < 7 * sc) style = 'pump'; // a knee slide needs a run-up
+      scorer.action = null; scorer.pendingKick = null;
+      scorer.startAction('celebrate', 30, Math.random() < 0.5 ? 1 : -1, { role: 'scorer', style, ft: -1 });
+    }
+    this.celebration = { team, scorer, style, spot, t0: this.time };
+    let k = 0;
+    for (const a of this.agents) {
+      if (a === scorer) continue;
+      if (a.action?.type === 'kick') a.action = null;
+      if (a.action && a.action.type !== 'celebrate') continue; // (let a diving keeper land)
+      const mine = a.team === team;
+      a.startAction('celebrate', 30, k++ % 2 ? 1 : -1, mine ? { role: 'mate', slot: k, delay: 0.25 + Math.random() * 0.6, near: false } : { role: 'sad', variant: a.isGK ? 2 : Math.floor(Math.random() * 3) });
+    }
+  }
+
+  private applyCelebration() {
+    const c = this.celebration; if (!c) return;
+    const el = this.time - c.t0; const s = c.scorer;
+    for (const a of this.agents) {
+      a.intent.steer = null; a.intent.jockey = false;
+      const act = a.action; const d = act?.type === 'celebrate' ? act.data : null;
+      if (!d) { if (!a.busy()) a.intent.move = { x: 0, z: 0 }; continue; }
+      if (d.role === 'scorer') {
+        const to = v2.sub(c.spot, a.pos); const dist = v2.len(to);
+        if (d.ft < 0) {
+          // the run: away toward the fans
+          a.intent.move = dist > 0.3 ? v2.norm(to) : { x: 0, z: 0 }; a.intent.sprint = true; a.intent.face = null;
+          const trigger = c.style === 'slide' ? dist < 5 && a.speed() > 4 : c.style === 'plane' ? el > 2.6 || dist < 1 : dist < 1.6;
+          if (trigger || el > 3.2) {
+            d.ft = act!.t;
+            if (c.style === 'slide') { const sp = Math.max(5, a.speed()); d.slideV = v2.scale(v2.norm(a.vel), sp); }
+          }
+        } else {
+          // the finale, on the spot (facing back toward the pitch and the cameras)
+          if (!d.slideV) { a.intent.move = { x: 0, z: 0 }; a.intent.sprint = false; }
+          if (!d.faceDir) d.faceDir = v2.norm({ x: -this.teams[c.team].attackDir * 0.6, z: -Math.sign(a.pos.z || 1) });
+          if (!d.slideV) a.intent.face = d.faceDir;
+        }
+      } else if (d.role === 'mate') {
+        // chase the scorer and mob them (each to their own place round them)
+        if (!s || el < d.delay) { a.intent.move = { x: 0, z: 0 }; continue; }
+        const ang = d.slot * 2.39996; const spot = v2.add(s.pos, { x: Math.cos(ang) * (0.95 + (d.slot % 3) * 0.35), z: Math.sin(ang) * (0.95 + (d.slot % 3) * 0.35) });
+        const to = v2.sub(spot, a.pos); const dist = v2.len(to);
+        a.intent.move = dist > 0.25 ? v2.scale(v2.norm(to), Math.min(1, dist / 2)) : { x: 0, z: 0 }; a.intent.sprint = dist > 4;
+        d.near = v2.dist(a.pos, s.pos) < 2.4;
+        a.intent.face = d.near ? v2.sub(s.pos, a.pos) : null;
+      } else {
+        // the other side: a slow, heavy walk back, or standing with hands on head
+        if (a.isGK) { a.intent.move = { x: 0, z: 0 }; continue; }
+        const home = { x: -this.teams[a.team].attackDir * 4, z: a.pos.z * 0.8 };
+        const to = v2.sub(home, a.pos);
+        a.intent.move = d.variant === 1 && el > 1 ? v2.scale(v2.norm(to), 0.28) : { x: 0, z: 0 }; a.intent.sprint = false;
+        a.intent.face = d.variant === 1 && el > 1 ? null : v2.sub(c.spot, a.pos);
+      }
+    }
   }
 
   private separateAgents() {

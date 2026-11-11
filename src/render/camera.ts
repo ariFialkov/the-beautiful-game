@@ -208,6 +208,11 @@ export class CameraRig {
   setFixed(pos: THREE.Vector3, look: THREE.Vector3) { this.pos.copy(pos); this.look.copy(look); this.posDamp.reset(); this.lookDamp.reset(); this.camera.position.copy(pos); this.camera.lookAt(look); }
 
   /** Frame a specific shot (celebrations, set pieces) with soft critically damped motion. */
+  /** Cut straight back to the match camera framing `target` (e.g. after a replay). */
+  snapBroadcast(target: THREE.Vector3) {
+    this.focusX = target.x; this.focusZ = target.z; this.fvx.v = 0; this.fvz.v = 0; this.lookY = 0.4; this.lookYV.v = 0; this.blend = 0; this.urgency = 0;
+    const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l); this.cutTo(p, l);
+  }
   /** Cut straight to a shot (no glide), e.g. the free-kick camera behind the taker. */
   cutTo(pos: THREE.Vector3, look: THREE.Vector3) {
     this.pos.copy(pos); this.look.copy(look); this.posDamp.reset(); this.lookDamp.reset(); this.snap();

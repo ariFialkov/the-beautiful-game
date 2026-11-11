@@ -164,3 +164,43 @@ test('an underhit through ball: the runner turns and comes back for it, even wit
     assert.ok(got > 0 && got < 4, `${human ? 'human' : 'AI'} receiver came back and collected a ${factor * 100}%-pace ball promptly (${got.toFixed(2)} s)`);
   }
 });
+
+const press = (k: string, down: boolean, jp: boolean, jr: boolean, move = { x: 0, y: 0 }) => { const p = neutral(); p.move = move; p[k] = { down, justPressed: jp, justReleased: jr }; return p; };
+
+test('first time: a pass pressed while the ball is on its way is played on without stopping it (one-two)', () => {
+  const { m, passer, mate } = sandbox();
+  place(passer, 0, 0); place(mate, 15, 0, -1, 0);
+  // the A pass to the team-mate (control switches to him as it is played)
+  (m as any).setControlled(passer); m.ball.reset(0.4, 0); m.ball.owner = passer;
+  m.update(1 / 60, press('pass', true, true, false, { x: 1, y: 0 }));
+  for (let i = 0; i < 8; i++) m.update(1 / 60, press('pass', true, false, false, { x: 1, y: 0 }));
+  m.update(1 / 60, press('pass', false, false, true, { x: 1, y: 0 }));
+  let t = 0; while (t < 1 && !(m.ball.lastTouch === passer && !m.ball.owner)) { m.update(1 / 60, neutral()); t += 1 / 60; }
+  assert.equal(m.controlled, mate, 'control on the receiver while the ball travels');
+  assert.ok(v2.dist({ x: m.ball.x, z: m.ball.z }, mate.pos) > 6, 'still well short of him');
+  // press pass early, stick back toward the passer: the return ball is queued
+  m.update(1 / 60, press('pass', true, true, false, { x: -1, y: 0 }));
+  for (let i = 0; i < 5; i++) m.update(1 / 60, press('pass', true, false, false, { x: -1, y: 0 }));
+  m.update(1 / 60, press('pass', false, false, true, { x: -1, y: 0 }));
+  assert.ok(m.queued, 'queued');
+  let owned = 0, returned = false;
+  for (let i = 0; i < 60 * 2.5 && !returned; i++) { m.update(1 / 60, neutral()); if (m.ball.owner === mate) owned++; returned = m.ball.lastTouch === mate && !m.ball.owner && m.ball.vx < -3; }
+  assert.ok(returned, 'played straight back first time');
+  assert.ok(owned < 12, `not stopped and settled first (on the ball ${owned} steps)`);
+});
+
+test('first time: a shot pressed while a pass is on its way is a one-timer', () => {
+  const { m, passer, mate } = sandbox();
+  const at = m.teams[0].attackDir;
+  place(passer, at * 30, -12, 0, 1); place(mate, at * 38, -2, at, 0);
+  (m as any).setControlled(passer); m.ball.reset(at * 30, -11.6); m.ball.owner = passer;
+  m.startKick(passer, 'pass', 0.5, v2.norm({ x: at * 8, z: 10 }), { targetAgent: mate });
+  let t = 0; while (t < 1 && !(m.ball.lastTouch === passer && !m.ball.owner)) { m.update(1 / 60, neutral()); t += 1 / 60; }
+  (m as any).setControlled(mate);
+  m.update(1 / 60, press('shoot', true, true, false, { x: at, y: 0 }));
+  for (let i = 0; i < 20; i++) m.update(1 / 60, press('shoot', true, false, false, { x: at, y: 0 }));
+  m.update(1 / 60, press('shoot', false, false, true, { x: at, y: 0 }));
+  let shot = false;
+  for (let i = 0; i < 60 * 3 && !shot; i++) { m.update(1 / 60, neutral()); shot = m.ball.lastTouch === mate && !!m.ball.inFlightShot; }
+  assert.ok(shot, 'struck first time at goal');
+});

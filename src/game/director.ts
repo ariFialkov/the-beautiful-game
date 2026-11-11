@@ -53,14 +53,33 @@ export class Director {
   get remaining() { return this.events.length - this.idx; }
   teamOf(e: GoalEvent): 0 | 1 { return e.side === 'home' ? 0 : 1; }
 
+  /** Goals the player scored off the script, each answered by the other side. */
+  answered = 0;
+
   /** Called by the match when a goal is scored and credited to `team`. */
   onGoal(team: number) {
     const e = this.pending;
-    if (e && this.teamOf(e) === team) this.idx++;
-    else console.warn('[director] unscripted goal slipped through', team, e);
+    if (e && this.teamOf(e) === team) { this.idx++; return; }
+    if (!this.freeScoring(team)) { console.warn('[director] unscripted goal slipped through', team, e); return; }
+    // The player scored when the script didn't have them scoring: the goal stands, and the other side gets one more
+    // later on (sooner if time is short), so the result - and the goal difference - stays as drawn.
+    const frac = this.match.frac;
+    const t = Math.min(Math.max(frac + 0.045 + Math.random() * 0.05, frac + 0.02), Math.max(0.985, frac + 0.025));
+    const ev: GoalEvent = { t, side: team === 0 ? 'away' : 'home', style: 'open' };
+    let i = this.idx; while (i < this.events.length && this.events[i].t <= t) i++;
+    this.events.splice(i, 0, ev);
+    this.answered++;
+  }
+
+  /** The player's side may score whenever they manage it (the bots answer it later, see onGoal) - except in sudden
+   *  death, where a golden goal would end the match, and in the closing minutes, when there'd be no time to answer. */
+  freeScoring(team: number): boolean {
+    const mt = this.match;
+    return team === 0 && mt.humanTeam === 0 && !mt.overtime && mt.frac < 0.95;
   }
 
   allowGoal(team: number): boolean {
+    if (this.freeScoring(team)) return true;
     const e = this.pending;
     if (!e) return false;
     return this.teamOf(e) === team && this.match.frac >= e.t - this.win.before;
@@ -72,8 +91,9 @@ export class Director {
     m.botSkill = 0.35 + base * 0.5; m.homeAiSkill = 0.55; m.speedMul = [1, 0.96 + base * 0.08]; m.tackleBias = 0; m.forced = false; m.pushTeam = null; m.pushLevel = 0; m.defenseLapse = 0;
     m.keeper = ['wall', 'wall']; m.goalAllowed = [false, false]; m.shotAppetite = [0.45, 0.45];
     if (!e) {
-      // Script complete: no more goals for anyone; keep bots lively but harmless.
-      m.shotAppetite = [0.3, 0.25];
+      // Script complete: no more goals for the bots; keep them lively but harmless.
+      m.shotAppetite = [this.freeScoring(0) ? 1 : 0.3, 0.25];
+      if (this.freeScoring(0)) m.keeper[1] = 'normal';
       return;
     }
     const team = this.teamOf(e);
@@ -106,6 +126,8 @@ export class Director {
       m.botSkill = 0.35 + base * 0.5 + (nextIsAway ? 0.1 : -0.1) - lead * 0.03;
     }
     m.botSkill = Math.max(0.1, Math.min(1, m.botSkill));
+    // while the player is free to score, the keeper they face plays them straight (no "wall")
+    if (this.freeScoring(0) && m.keeper[1] === 'wall') m.keeper[1] = 'normal';
   }
 
   /** Per-step steering. Forced goals are guided in; goals that are not scheduled are bent onto the woodwork,
