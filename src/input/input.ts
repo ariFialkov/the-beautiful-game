@@ -21,7 +21,9 @@ export interface Vec2 { x: number; y: number; }
 export type NavEvent = 'up' | 'down' | 'left' | 'right' | 'accept' | 'back' | 'pause';
 
 const KEYS = {
-  up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'], left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'],
+  up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
+  // the skill stick on a keyboard: the arrow keys
+  skillUp: ['ArrowUp'], skillDown: ['ArrowDown'], skillLeft: ['ArrowLeft'], skillRight: ['ArrowRight'],
   sprint: ['ShiftLeft', 'ShiftRight'], pass: ['Space', 'KeyJ'], shoot: ['KeyZ', 'KeyK'], through: ['KeyC', 'KeyI'], lob: ['KeyX', 'KeyL'],
   switch: ['KeyQ', 'Tab'], slide: ['KeyE', 'KeyU'], finesse: ['KeyR', 'KeyO'], shield: ['KeyF', 'KeyP'], pause: ['Escape', 'KeyP'], curlL: ['KeyQ'], curlR: ['KeyE'],
 };
@@ -46,7 +48,7 @@ export class InputManager {
   private prevPadButtons: boolean[] = [];
   private prevPadAxes = { x: 0, y: 0 };
   private prevKeyNav: Record<string, boolean> = {};
-  private touchState = { move: { x: 0, y: 0 }, buttons: {} as Record<string, boolean>, active: false };
+  private touchState = { move: { x: 0, y: 0 }, aim: { x: 0, y: 0 }, buttons: {} as Record<string, boolean>, active: false };
   private lastTime = performance.now();
 
   constructor() {
@@ -71,6 +73,8 @@ export class InputManager {
   private key(action: KeyAction) { return KEYS[action].some((k) => this.keys.has(k)); }
 
   setTouchMove(x: number, y: number) { this.touchState.move.x = x; this.touchState.move.y = y; this.touchState.active = true; this.lastSource = 'touch'; }
+  /** The touch skill stick: a swipe on the right of the screen. */
+  setTouchAim(x: number, y: number) { this.touchState.aim.x = x; this.touchState.aim.y = y; this.touchState.active = true; this.lastSource = 'touch'; }
   setTouchButton(name: string, down: boolean) { this.touchState.buttons[name] = down; this.lastSource = 'touch'; }
 
   /** Poll inputs once per frame. */
@@ -83,7 +87,7 @@ export class InputManager {
     let my = (this.key('up') ? 1 : 0) - (this.key('down') ? 1 : 0);
     let sprint = this.key('sprint'), pass = this.key('pass'), shoot = this.key('shoot'), through = this.key('through'), lob = this.key('lob');
     let sw = this.key('switch'), slide = this.key('slide'), finesse = this.key('finesse'), shield = this.key('shield'), pause = this.keys.has('Escape');
-    let ax = 0, ay = 0;
+    let ax = (this.key('skillRight') ? 1 : 0) - (this.key('skillLeft') ? 1 : 0), ay = (this.key('skillUp') ? 1 : 0) - (this.key('skillDown') ? 1 : 0);
 
     // Gamepad
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -92,7 +96,7 @@ export class InputManager {
       this.gamepadConnected = true;
       const dz = (v: number) => (Math.abs(v) < 0.18 ? 0 : (v - Math.sign(v) * 0.18) / 0.82);
       const gx = dz(pad.axes[0] ?? 0), gy = -dz(pad.axes[1] ?? 0);
-      ax = dz(pad.axes[2] ?? 0); ay = -dz(pad.axes[3] ?? 0);
+      ax = ax || dz(pad.axes[2] ?? 0); ay = ay || -dz(pad.axes[3] ?? 0);
       const b = (i: number) => !!pad.buttons[i]?.pressed || (pad.buttons[i]?.value ?? 0) > 0.5;
       const dpx = (b(15) ? 1 : 0) - (b(14) ? 1 : 0), dpy = (b(12) ? 1 : 0) - (b(13) ? 1 : 0);
       if (Math.abs(gx) + Math.abs(gy) > 0.05 || dpx || dpy || pad.buttons.some((x) => x.pressed)) this.lastSource = 'gamepad';
@@ -115,6 +119,7 @@ export class InputManager {
     if (this.touchState.active) {
       const t = this.touchState;
       if (Math.abs(t.move.x) + Math.abs(t.move.y) > 0.02) { mx = t.move.x; my = t.move.y; }
+      if (Math.abs(t.aim.x) + Math.abs(t.aim.y) > 0.02) { ax = t.aim.x; ay = t.aim.y; }
       const tb = t.buttons;
       sprint = sprint || !!tb.sprint; pass = pass || !!tb.pass; shoot = shoot || !!tb.shoot; through = through || !!tb.through; lob = lob || !!tb.lob; sw = sw || !!tb.switch; slide = slide || !!tb.slide; pause = pause || !!tb.pause; finesse = finesse || !!tb.finesse;
     }

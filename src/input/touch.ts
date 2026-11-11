@@ -14,6 +14,7 @@ export class TouchControls {
     this.el.className = 'touch';
     this.el.innerHTML = `
       <div class="joy-zone"><div class="joy"><i></i></div></div>
+      <div class="skill-zone"></div>
       <button class="tbtn sprint" data-b="sprint">Sprint</button>
       <button class="tbtn switch" data-b="switch">Switch</button>
       <div class="buttons">
@@ -39,6 +40,12 @@ export class TouchControls {
     this.loftEl = this.el.querySelector('.tloft')!;
     this.loftEl.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setLoft(!this.loftOn); });
     this.loftEl.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Skill moves: swipe on the right of the screen (the swipe is the right stick, from where it started)
+    const sz = this.el.querySelector('.skill-zone') as HTMLElement; let sid: number | null = null; let so = { x: 0, y: 0 };
+    sz.addEventListener('pointerdown', (e) => { if (sid !== null) return; sid = e.pointerId; so = { x: e.clientX, y: e.clientY }; sz.setPointerCapture(e.pointerId); });
+    sz.addEventListener('pointermove', (e) => { if (e.pointerId !== sid) return; const dx = e.clientX - so.x, dy = e.clientY - so.y; const l = Math.hypot(dx, dy); const k = Math.min(1, l / 45) / Math.max(1, l); input.setTouchAim(dx * k, -dy * k); });
+    const sEnd = (e: PointerEvent) => { if (e.pointerId !== sid) return; sid = null; input.setTouchAim(0, 0); };
+    sz.addEventListener('pointerup', sEnd); sz.addEventListener('pointercancel', sEnd);
     // Free kicks: hold a curl button to bend it
     this.curlEl = this.el.querySelector('.tcurl')!;
     for (const c of Array.from(this.curlEl.querySelectorAll<HTMLElement>('button'))) {

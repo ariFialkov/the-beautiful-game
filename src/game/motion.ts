@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Rng } from '../../shared/rng';
+import { skillFrame } from './skills';
 import { B, Body, Pose, Rig, aimRotation, twoBone, worldColliders, sideSign, type Capsule, type Side } from './skeleton';
 import type { Agent } from './player';
 
@@ -99,7 +100,7 @@ export class Motion {
     const duty = clamp((travel * steps) / (2 * Math.max(0.1, sp)), 0.16, 0.62);
     if (sp > 0.35) this.gaitOn = true;
     else if (sp < 0.2 && !this.feet.L.swing && !this.feet.R.swing) this.gaitOn = false;
-    const frozen = atype === 'slide' || atype === 'dive' || atype === 'fallen' || atype === 'header' || (atype === 'celebrate' && (act!.data?.style === 2 || ((act!.data?.style === 'slide' || act!.data?.style === 'leap') && act!.data?.ft >= 0)));
+    const frozen = atype === 'skill' || atype === 'slide' || atype === 'dive' || atype === 'fallen' || atype === 'header' || (atype === 'celebrate' && (act!.data?.style === 2 || ((act!.data?.style === 'slide' || act!.data?.style === 'leap') && act!.data?.ft >= 0)));
     if (this.gaitOn) this.phase = (this.phase + dt * cycleHz) % 1;
     const width = (jockey ? 0.2 : atype === 'celebrate' ? 0.12 : a.isGK && sp < 1 ? 0.16 : lerp(0.11, 0.05, sf)) * h * a.card.look.build;
     const stanceDur = duty / Math.max(0.5, cycleHz);
@@ -303,6 +304,21 @@ export class Motion {
         trail.pos.lerp(under, k); trail.pitch = lerp(trail.pitch, -0.6, k);
         const arm = T.arm[side === 'L' ? 'R' : 'L']; arm.ik = V().set(x - fw.x * 0.3 * h - lw.x * sg * 0.3 * h, 0.05, z - fw.z * 0.3 * h - lw.z * sg * 0.3 * h); arm.ikW = k;
         T.arm[side].x = lerp(T.arm[side].x, -0.8, k); T.arm[side].z = lerp(T.arm[side].z, sg * 0.9, k);
+        break;
+      }
+      case 'skill': {
+        // the move's own keys for both feet, the lean and the crouch, blended in and out of the run so moves flow
+        const u = clamp(t / Math.max(0.05, dur), 0, 1); const fr = skillFrame(d, u);
+        const w = Math.min(ease(t / 0.09), ease((dur - t) / 0.1));
+        const sS: Side = d.side > 0 ? 'R' : 'L', sO: Side = d.side > 0 ? 'L' : 'R';
+        for (const [s, fp] of [[sS, fr.footS], [sO, fr.footO]] as const) {
+          const foot = this.feet[s]; const tgt = this.v6.set(fp.x, this.body.ankleHeight + fp.y, fp.z);
+          foot.pos.lerp(tgt, Math.max(w, 0.35)); foot.yaw = yaw + sideSign(s) * 0.15; foot.stanceT = 0;
+          T.foot[s].pos.copy(foot.pos); T.foot[s].yaw = foot.yaw; T.foot[s].pitch = fp.y > 0.14 ? -0.25 : fp.y > 0.04 ? 0.2 : 0;
+        }
+        T.pRoll += fr.roll * 0.55 * w; T.sRoll += fr.roll * 0.35 * w; T.pelvis.y -= fr.crouch * w; T.sPitch += fr.pitch * w; T.pPitch += 0.06 * w;
+        for (const s of ['L', 'R'] as Side[]) { const ar = T.arm[s]; ar.z = lerp(ar.z, sideSign(s) * (0.5 + 0.5 * Math.abs(fr.roll)), w); ar.x = lerp(ar.x, -0.35 + 0.25 * Math.sin(this.time * 7 + (s === 'L' ? 0 : Math.PI)), w); ar.elbow = lerp(ar.elbow, 0.55, w); }
+        T.headPitch = lerp(T.headPitch, 0.35, 0.6 * w); // eyes on the ball
         break;
       }
       case 'header': {

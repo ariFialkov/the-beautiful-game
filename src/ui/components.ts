@@ -91,9 +91,9 @@ export function cardMini(card: PlayerCard | null, opts: { chem?: number; slot?: 
 
 export function controllerHint(): string {
   const l = input.buttonLabels();
-  return input.lastSource === 'gamepad' ? `${l.pass} Pass (${l.finesse}+ driven, ×2 bounce) · ${l.shoot} Shoot (${l.switch}+ chip) · ${l.through} Through (${l.switch}+ lofted, ×2 bounce) · ${l.lob} Cross (tap floated, hold driven) · ${l.sprint} Sprint`
-    : input.lastSource === 'touch' ? 'Drag to move · Finesse+Pass driven · Loft+Shoot chip · Loft+Through lofted · double-tap Pass/Through bounce'
-    : 'WASD move · Space pass (R+ driven, ×2 bounce) · Z shoot (Q+ chip, R+ finesse, ZZ low) · C through (Q+ lofted, ×2 bounce) · X cross (tap floated, hold driven) · Shift sprint · Q switch';
+  return input.lastSource === 'gamepad' ? `${l.pass} Pass (${l.finesse}+ driven, ×2 bounce) · ${l.shoot} Shoot (${l.switch}+ chip) · ${l.through} Through (${l.switch}+ lofted, ×2 bounce) · ${l.lob} Cross (tap floated, hold driven) · ${l.sprint} Sprint · R-stick skills`
+    : input.lastSource === 'touch' ? 'Drag to move · swipe right side for skills · Finesse+Pass driven · Loft+Shoot chip · Loft+Through lofted · double-tap Pass/Through bounce'
+    : 'WASD move · Space pass (R+ driven, ×2 bounce) · Z shoot (Q+ chip, R+ finesse, ZZ low) · C through (Q+ lofted, ×2 bounce) · X cross (tap floated, hold driven) · Shift sprint · Q switch · Arrows skill moves';
 }
 
 /** Controls while lining up a free kick (direct: aim on the goal; otherwise a direction to play it). */

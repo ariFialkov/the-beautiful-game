@@ -7,6 +7,7 @@ import { Director, FREE_PLAY, OVERRUN_LIMIT, type Modifiers } from './director';
 import { updateTeamAI, interceptPoint, receivePoint } from './ai';
 import { SURFACES, type Surface, type SurfaceId } from './surface';
 import { Motion } from './motion';
+import { SKILLS, SkillStick, skillExit, skillFrame, type SkillMove } from './skills';
 import { pointSegment, segmentSegment, type Capsule, type Side } from './skeleton';
 import type { InputManager } from '../input/input';
 
@@ -53,7 +54,7 @@ export type MatchEvent =
   | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' } | { type: 'overtime'; size: number }
   | { type: 'out'; kind: 'throw' | 'corner' | 'goalkick' } | { type: 'kick'; kind: KickKind; power: number; agent: Agent }
   | { type: 'tackle'; success: boolean; agent: Agent } | { type: 'switch'; agent: Agent } | { type: 'touch'; agent: Agent; heavy: boolean }
-  | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent };
+  | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent } | { type: 'skill'; agent: Agent; move: SkillMove };
 
 export class TeamState {
   score = 0; agents: Agent[] = []; kickoffs = 0;
@@ -429,6 +430,7 @@ export class Match {
     if (this.phase === 'goal') this.applyCelebration();
     if (this.phase === 'play') { this.updatePendingKicks(); this.dribbleAssist(); this.scheduleTouch(); this.anticipate(); }
 
+    this.driveSkills(h);
     for (const a of this.agents) {
       const mul = this.mods.speedMul[a.team] * this.teamSpeedBonus[a.team] * (this.phase === 'dead' || (this.phase === 'goal' && !this.celebration) ? 0.55 : 1);
       a.update(h, mul, this.surface.grip);
@@ -448,6 +450,7 @@ export class Match {
     if (this.phase === 'play') { this.updateOwnership(); this.collideBodies(); }
     this.holdBall();
     this.director?.steer(h);
+    this.skillBall(h);
     this.expirePassAssist();
     const ev = this.ball.update(h, this.goals);
     if (ev === 'post' || ev === 'bar') { this.emit({ type: 'post', bar: ev === 'bar' }); if (this.ball.inFlightShot) this.ball.inFlightShot = null; }
@@ -750,6 +753,18 @@ export class Match {
       if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
       return; // (no tackling your own team-mate's pass)
     }
+    // the skill stick (right stick / arrow keys / a swipe): read relative to where he's facing
+    if (b.owner === me && !b.held && this.phase === 'play') {
+      const ra = input.aim ?? { x: 0, y: 0 }; const w = Math.hypot(ra.x, ra.y) > 0.05 ? this.stickToWorld(ra.x, ra.y) : null;
+      const rel = w ? { f: w.x * me.heading.x + w.z * me.heading.z, r: w.x * -me.heading.z + w.z * me.heading.x } : null;
+      const sk = this.skillStick.update(rel, this.time);
+      if (sk) {
+        const act = me.action;
+        const chain = act?.type === 'skill' && act.data.move === 'roll' && sk.move === 'roll' && act.data.side === sk.side && act.t / act.duration > 0.75;
+        if (chain || !me.busy()) { this.startSkill(me, sk.move, sk.side); this.charge = null; return; }
+      }
+      if (me.action?.type === 'skill') return; // (mid-move)
+    }
     if (canKick && this.phase === 'play') {
       // Shooting (FIFA style): hold and release for a power shot; hold finesse (RB/R1) for a curled finesse shot;
       // tap shoot twice and hold the second press for a low driven shot.
@@ -818,6 +833,46 @@ export class Match {
       b.lastTouch = me; b.lastTouchTeam = me.team; b.lastTouchTime = this.time;
     }
     if (!input.pass.down && !input.lob.down && !input.shoot.down) this.charge = null;
+  }
+
+  /* ------------------------------ skill moves ------------------------------ */
+  private skillStick = new SkillStick();
+  /** Start a skill move with the ball at his feet (see skills.ts). */
+  startSkill(a: Agent, move: SkillMove, side: number): boolean {
+    const b = this.ball;
+    if (b.owner !== a || b.held || this.phase !== 'play' || v2.dist(a.pos, { x: b.x, z: b.z }) > 1.4) return false;
+    const def = SKILLS[move]; a.pendingKick = null; a.action = null;
+    a.startAction('skill', def.dur, side, { move, side, ox: a.pos.x, oz: a.pos.z, hx: a.heading.x, hz: a.heading.z, released: false, vel: { ...a.vel } });
+    this.emit({ type: 'skill', agent: a, move });
+    return true;
+  }
+  /** Move bodies through their skill moves (with real velocities, so everything else sees them move). */
+  private driveSkills(h: number) {
+    for (const a of this.agents) {
+      const act = a.action; if (act?.type !== 'skill') continue;
+      const d = act.data; const u = Math.min(1, (act.t + h) / act.duration);
+      const fr = skillFrame(d, u);
+      d.vel = { x: (fr.body.x - a.pos.x) / h, z: (fr.body.z - a.pos.z) / h };
+      a.heading = fr.heading; a.intent.steer = null; a.intent.move = { x: 0, z: 0 };
+    }
+  }
+  /** Carry the ball through a skill move, then release it with the move's touch. */
+  private skillBall(h: number) {
+    const b = this.ball;
+    for (const a of this.agents) {
+      const act = a.action; if (act?.type !== 'skill') continue;
+      const d = act.data; if (d.released) continue;
+      if (b.owner !== a || b.held) { d.released = true; continue; } // (lost it: tackled)
+      const def = SKILLS[d.move as SkillMove]; const u = Math.min(1, (act.t + h) / act.duration);
+      if (u >= def.release) {
+        const v = skillExit(d); b.vx = v.x; b.vy = v.y; b.vz = v.z; b.wx = v.z / BALL_R; b.wy = 0; b.wz = -v.x / BALL_R; if (!v.y) b.setRolling();
+        b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; a.touchCooldown = 0.2; d.released = true;
+        continue;
+      }
+      const t = skillFrame(d, u).ball;
+      b.vx = (t.x - b.x) / h; b.vz = (t.z - b.z) / h; b.vy = (t.y - b.y) / h + 9.81 * h * 0.5;
+      b.wx = b.vz / BALL_R; b.wy = 0; b.wz = -b.vx / BALL_R;
+    }
   }
 
   /** A first-time pass or shot queued while the ball was on its way. */
@@ -1418,7 +1473,7 @@ export class Match {
     const b = this.ball; const o = b.owner;
     if (!o || b.held) return;
     const d = v2.dist(o.pos, { x: b.x, z: b.z });
-    if (d > 3.4 || b.y > 1.6 || o.legsBusy()) b.owner = null;
+    if (d > 3.4 || (b.y > 1.6 && o.action?.type !== 'skill') || (o.legsBusy() && o.action?.type !== 'skill')) b.owner = null;
   }
 
   /** The direction a player wants to take the ball. */
@@ -1565,6 +1620,7 @@ export class Match {
       const act = a.action;
       if (act && act.data && !act.data.done && !act.fired && ['kick', 'touch', 'trap', 'header', 'dive', 'tackle', 'slide'].includes(act.type)) continue; // a planned contact owns it
       const dribbling = b.owner === a;
+      if (dribbling && act?.type === 'skill' && !act.data?.released) continue; // (the move has the ball)
       for (const c of a.motion!.colliders()) {
         if (dribbling && (c.part === 'foot' || c.part === 'shin')) continue; // the dribbler's own touches handle his feet
         const q = pointSegment(b.x, b.y, b.z, c);

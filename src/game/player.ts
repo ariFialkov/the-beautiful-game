@@ -2,11 +2,11 @@ import type { PlayerCard } from '@shared/types';
 import { v2, type V2 } from './pitch';
 import type { Motion } from './motion';
 
-export type ActionType = 'kick' | 'tackle' | 'slide' | 'dive' | 'fallen' | 'stumble' | 'throw' | 'celebrate' | 'touch' | 'trap' | 'header';
+export type ActionType = 'kick' | 'tackle' | 'slide' | 'dive' | 'fallen' | 'stumble' | 'throw' | 'celebrate' | 'touch' | 'trap' | 'header' | 'skill';
 export interface Action { type: ActionType; t: number; duration: number; fired: boolean; dir: number; data?: any; }
 
 /** Actions that take over the player's legs (no free running, no new decisions). */
-const BLOCKING: ReadonlySet<ActionType> = new Set(['tackle', 'slide', 'dive', 'fallen', 'stumble', 'throw', 'header']);
+const BLOCKING: ReadonlySet<ActionType> = new Set(['tackle', 'slide', 'dive', 'fallen', 'stumble', 'throw', 'header', 'skill']);
 
 export interface Intent {
   move: V2;            // desired movement direction, length 0..1
@@ -107,6 +107,9 @@ export class Agent {
         const c = act.data.contact as { x: number; z: number }; const rem = Math.max(0.06, (act.data.tc ?? 0.2) - act.t);
         let want = { x: (c.x - this.pos.x) / rem, z: (c.z - this.pos.z) / rem }; const l = v2.len(want); if (l > 6) want = v2.scale(want, 6 / l);
         this.vel = v2.lerp(this.vel, want, 1 - Math.exp(-14 * dt));
+      } else if (act.type === 'skill') {
+        // a skill move: the body follows the move's path (set by the match each step)
+        if (act.data?.vel) this.vel = act.data.vel;
       } else if (act.type === 'stumble') {
         this.vel = v2.scale(this.vel, Math.exp(-3 * dt));
       } else {

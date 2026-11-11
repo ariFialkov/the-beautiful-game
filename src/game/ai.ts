@@ -1,3 +1,4 @@
+import type { SkillMove } from './skills';
 import { v2, type V2 } from './pitch';
 import type { Agent } from './player';
 import type { Match, TeamState } from './match';
@@ -194,6 +195,13 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
     if (!futsal && Math.abs(a.pos.z) > m.pitch.width * 0.25 && Math.abs(a.pos.x - goal.x) < (futsal ? 10 : 25) && Math.abs(t.pos.x - goal.x) < m.pitch.boxDepth + 2 && Math.abs(t.pos.z) < m.pitch.boxWidth / 2) { kind = 'lob'; score += 0.25 + push * 0.3; }
     score *= 0.6 + skill * 0.5;
     if (!bestPass || score > bestPass.score) bestPass = { agent: t, score, kind };
+  }
+  // a skilful dribbler closed down tries a move on the defender (away from him)
+  if (!(mods.forced && push > 0) && pressure.agent && pressure.dist < (futsal ? 2.2 : 3.2) && rnd() < (futsal ? 0.08 : 0.1) * a.skill.dribble) { // (not while a goal is being forced: then it's quick and direct)
+    const p = pressure.agent; const rel = { f: (p.pos.x - a.pos.x) * a.heading.x + (p.pos.z - a.pos.z) * a.heading.z, r: (p.pos.x - a.pos.x) * -a.heading.z + (p.pos.z - a.pos.z) * a.heading.x };
+    const toward = rel.r >= 0 ? 1 : -1; const u = rnd();
+    const pick: [SkillMove, number] = rel.f > 0.5 && u < 0.25 ? ['dragback', 1] : u < 0.5 ? ['feint', toward] : u < 0.8 ? ['stepover', toward] : ['roulette', -toward];
+    if (m.startSkill(a, pick[0], pick[1])) return;
   }
   const ahead = { x: a.pos.x + dir * 6, z: a.pos.z };
   let spaceAhead = 8; for (const o of opp) spaceAhead = Math.min(spaceAhead, v2.dist(o.pos, ahead));
