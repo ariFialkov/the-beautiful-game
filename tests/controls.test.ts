@@ -33,3 +33,61 @@ for (const futsal of [false, true]) {
     }
   });
 }
+
+// ---------------------------------------------------------------- the goalkeeper in your hands
+import { Match as M2 } from '../src/game/match';
+import { PITCH_11 as P11, v2 as V2 } from '../src/game/pitch';
+import { TEAM_BY_ID as TB, rosterOf as RO, startingXI as SX } from '../shared/teams';
+const kb = (o: Record<string, any> = {}) => { const b = () => ({ down: false, justPressed: false, justReleased: false }); return { move: { x: 0, y: 0 }, sprint: b(), pass: b(), shoot: b(), through: b(), lob: b(), switch: b(), slide: b(), finesse: b(), shield: b(), ...o } as any; };
+function keeperMatch() {
+  const home = TB['lon-royals'], away = TB['mad-blancos'];
+  const m = new M2({ pitch: P11, mode: 'kickoff', humanTeam: 0, script: null, durationSec: 3000, clockMinutes: 90,
+    teams: [{ team: home, players: SX(RO(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: SX(RO(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+  for (let i = 0; i < 30; i++) m.update(1 / 60, kb());
+  m.phase = 'play'; m.phaseTimer = 0; m.setPiece = null;
+  for (const a of m.teams[1].agents) { a.pos = { x: a.pos.x * 0.2, z: a.pos.z }; a.prevPos = { ...a.pos }; } // (opponents out of the way)
+  const gk = m.teams[0].agents[0]; const at = m.teams[0].attackDir;
+  gk.pos = { x: -at * 49, z: 0 }; gk.prevPos = { ...gk.pos }; gk.heading = { x: at, z: 0 };
+  m.controlBasis = { right: { x: 0, z: at }, forward: { x: at, z: 0 } };
+  m.ball.reset(gk.pos.x, 0); m.ball.owner = gk; m.ball.held = true; gk.ai.dive = null;
+  return { m, gk, at };
+}
+test('keeper: in his hands you control him: walk with it, then roll it out, throw it, or drop-kick it', () => {
+  for (const [btn, kind] of [['pass', 'roll'], ['lob', 'throw'], ['shoot', 'punt']] as const) {
+    const { m, gk, at } = keeperMatch();
+    m.update(1 / 60, kb()); assert.equal(m.controlled, gk, 'control goes to the keeper with the ball');
+    const x0 = gk.pos.x; for (let i = 0; i < 40; i++) m.update(1 / 60, kb({ move: { x: 0, y: 1 } }));
+    assert.ok((gk.pos.x - x0) * at > 1, 'he walks with it');
+    assert.ok(m.ball.held && m.ball.owner === gk, 'still in his hands');
+    for (let i = 0; i < (kind === 'punt' ? 55 : 20); i++) m.update(1 / 60, kb({ [btn]: { down: true, justPressed: i === 0, justReleased: false }, move: { x: 0, y: 1 } })); // (a full bar for the long kick)
+    m.update(1 / 60, kb({ [btn]: { down: false, justPressed: false, justReleased: true }, move: { x: 0, y: 1 } }));
+    let apex = 0, dist = 0; const p0 = { x: m.ball.x, z: m.ball.z };
+    for (let i = 0; i < 60 * 3; i++) { m.update(1 / 60, kb()); if (m.ball.lastTouch === gk && !m.ball.owner) { apex = Math.max(apex, m.ball.y); dist = Math.max(dist, V2.dist(p0, { x: m.ball.x, z: m.ball.z })); } }
+    console.log(`  ${kind}: apex ${apex.toFixed(1)} m, travelled ${dist.toFixed(0)} m`);
+    assert.ok(dist > 8, `${kind}: released`);
+    if (kind === 'roll') assert.ok(apex < 0.6, 'rolled along the floor');
+    if (kind === 'punt') assert.ok(dist > 30 && apex > 6, 'a long high drop kick');
+    assert.notEqual(m.controlled, gk, 'control moved off the keeper');
+  }
+});
+test('keeper: dropping it to his feet, and an easy back pass to him', () => {
+  const { m, gk } = keeperMatch(); m.update(1 / 60, kb());
+  m.update(1 / 60, kb({ through: { down: true, justPressed: true, justReleased: false } }));
+  for (let i = 0; i < 20; i++) m.update(1 / 60, kb());
+  assert.ok(!m.ball.held && m.ball.owner === gk, 'at his feet, his to play');
+  // a defender aiming roughly back at him finds him
+  const def = m.teams[0].agents[2]; def.pos = { x: gk.pos.x + m.teams[0].attackDir * 18, z: 6 }; def.prevPos = { ...def.pos };
+  const back = V2.norm(V2.sub(gk.pos, def.pos)); const off = { x: back.x + back.z * 0.3, z: back.z - back.x * 0.3 };
+  assert.equal(m.pickPassTarget(def, V2.norm(off), false), gk);
+});
+test('keeper: you take goal kicks yourself, aimed with the stick: pass short, cross, or boot it long', () => {
+  const { m, gk, at } = keeperMatch(); m.ball.held = false; m.ball.owner = null;
+  (m as any).restart('goalkick', 0, { x: -at * 47, z: 6 });
+  assert.equal(m.controlled, gk, 'the keeper is yours for the goal kick');
+  for (let i = 0; i < 60 * 6 && m.phase !== 'play'; i++) m.update(1 / 60, kb({ sprint: { down: true, justPressed: false, justReleased: false } }));
+  for (let i = 0; i < 50; i++) m.update(1 / 60, kb({ shoot: { down: true, justPressed: i === 0, justReleased: false }, move: { x: 0, y: 1 } }));
+  m.update(1 / 60, kb({ shoot: { down: false, justPressed: false, justReleased: true }, move: { x: 0, y: 1 } }));
+  let dist = 0; const p0 = { x: m.ball.x, z: m.ball.z };
+  for (let i = 0; i < 60 * 3; i++) { m.update(1 / 60, kb()); if (m.ball.lastTouch === gk) dist = Math.max(dist, V2.dist(p0, { x: m.ball.x, z: m.ball.z })); }
+  assert.ok(dist > 35, `booted upfield (${dist.toFixed(0)} m)`);
+});

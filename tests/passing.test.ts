@@ -57,7 +57,7 @@ test('a full-power pass into space carries across the pitch; a light one stays s
   assert.ok(soft.dist > 8 && soft.dist < hard.dist * 0.6, 'a soft pass is a short one');
 });
 
-test('the stick picks the receiver (for lofted balls too, whatever the hold)', () => {
+test('the stick picks the receiver; for lofted balls the power picks the near or far man', () => {
   const { m, passer } = sandbox(); const mates = m.teams[0].agents;
   place(passer, 0, 0, 0, 1);
   const near = mates[9], far = mates[10], side = mates[8];
@@ -66,9 +66,11 @@ test('the stick picks the receiver (for lofted balls too, whatever the hold)', (
   assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.2, z: 1 }), false, false, 0.25), near);
   // the side man when aimed at him
   assert.equal(m.pickPassTarget(passer, v2.norm({ x: 9, z: 12 }), false, false, 0.3), side);
-  // lofted: the man the stick points at, a tap or a long hold alike (the hold is the ball's shape, not its length)
-  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 4, z: 38 }), false, true, 0.1), far);
-  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 4, z: 38 }), false, true, 0.9), far);
+  // lofted, two men the same way: a short charge finds the near man, a hard one the far man
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.1, z: 1 }), false, true, 0.1), near);
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.1, z: 1 }), false, true, 0.75), far);
+  // ...but the stick still decides the direction
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 9, z: 12 }), false, true, 0.75), side);
 });
 
 /** Fly a lofted pass from `passer` to `mate` (power p): where it first comes down, how high it went, how long it took. */
@@ -128,6 +130,17 @@ test('RB + pass is a driven pass: much quicker than a normal one, still to its m
   console.log(`  normal ${n.v0.toFixed(1)} m/s, driven ${d.v0.toFixed(1)} m/s`);
   assert.ok(d.v0 > n.v0 + 4, 'driven is much firmer');
   assert.ok(d.arrived > 0 && n.arrived > 0, 'both reach the team-mate');
+});
+
+test('a long driven pass skims low and quick to its man', () => {
+  const { m, passer, mate } = sandbox(); place(passer, 0, 0); place(mate, 40, 3, -1, 0);
+  (m as any).setControlled(passer); m.ball.reset(0.4, 0); m.ball.owner = passer;
+  m.startKick(passer, 'pass', 0.6, v2.norm({ x: 40, z: 3 }), { targetAgent: mate, driven: true });
+  let apex = 0, t0 = -1; const t = runUntil(m, 4, () => { const b = m.ball; if (t0 < 0 && b.lastTouch === passer && !b.owner) t0 = m.time; if (t0 >= 0 && b.lastTouch === passer) apex = Math.max(apex, b.y); return b.owner === mate || b.lastTouch === mate; });
+  console.log(`  40 m driven pass: there in ${(m.time - t0).toFixed(2)} s, apex ${apex.toFixed(2)} m`);
+  assert.ok(t > 0, 'it reached him');
+  assert.ok(m.time - t0 < 2.0, 'quickly');
+  assert.ok(apex < 1.4, 'and low');
 });
 
 test('double-tap pass: a bounce pass that hops on its way and still reaches its man', () => {

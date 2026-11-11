@@ -218,6 +218,14 @@ export class Motion {
     const contact = d.contact as { x: number; y: number; z: number } | undefined;
     switch (act.type) {
       case 'kick': {
+        if (d.keeperThrow) {
+          // a keeper's throw: an underarm bowl along the floor, or an overarm sling over the top
+          const k = clamp(t / Math.max(0.05, dur), 0, 1); const ts = d.strike ?? 0.2; const sw = t < ts ? ease(t / ts) : 1;
+          const arm = T.arm[d.side === 'L' ? 'L' : 'R'];
+          if (d.keeperThrow === 'roll') { arm.x = lerp(0.9, -1.1, sw); arm.z = sideSign(d.side === 'L' ? 'L' : 'R') * 0.2; arm.elbow = 0.25; T.pelvis.y -= 0.18 * h * Math.sin(Math.PI * k); T.sPitch = lerp(T.sPitch, 0.55, Math.sin(Math.PI * k)); }
+          else { arm.x = lerp(-0.2, -3.0, sw) + (t > ts ? (t - ts) * 4 : 0); arm.z = sideSign(d.side === 'L' ? 'L' : 'R') * lerp(0.9, 0.3, sw); arm.elbow = lerp(1.6, 0.1, sw); T.sPitch = lerp(T.sPitch, lerp(-0.25, 0.3, sw), 0.8); }
+          break;
+        }
         const side: Side = d.side ?? 'R'; const plant: Side = side === 'L' ? 'R' : 'L';
         const dir = d.dir ? this.v1.set(d.dir.x, 0, d.dir.z).normalize() : this.v1.copy(fw);
         const left = this.v2.set(dir.z, 0, -dir.x); // left of the kick direction
