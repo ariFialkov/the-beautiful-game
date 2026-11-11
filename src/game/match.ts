@@ -710,18 +710,33 @@ export class Match {
       else if (!me.busy() && !me.pendingKick) {
         const closing = ((me.pos.x - b.x) * b.vx + (me.pos.z - b.z) * b.vz) / Math.max(0.1, dBall);
         const eta = b.owner === me ? 0 : closing > 0.5 ? dBall / closing : Infinity;
-        if (b.owner === me || dBall < 2.4 || eta < 0.5) { this.queued = null; this.playQueued(me, q); return; }
+        if (b.owner === me || dBall < 2.4 || eta < 0.5) {
+          this.queued = null;
+          // a ball arriving above waist height is headed (or volleyed, a little lower) - the press decides what with it
+          const arr = this.ballAt(Math.max(0, Math.min(eta, 1.5)));
+          if (b.owner !== me && arr.y > 1.25) this.headerIntent = { agent: me, q, until: this.time + 1.5 };
+          else this.playQueued(me, q);
+          return;
+        }
       }
     }
+    // double tap (pass or through ball): the pass just asked for becomes a bounce pass (played with a hop over legs)
+    if ((input.pass.justPressed || input.through.justPressed) && this.phase === 'play' && this.makeBounce(me, input.pass.justPressed ? 'pass' : 'through')) {
+      if (input.pass.justPressed) this.swallowPass = true; this.charge = null; return;
+    }
+    if (this.swallowPass) { if (!input.pass.down) this.swallowPass = false; this.charge = null; if (incoming || canKick) return; }
+    const lobMod = !!input.loft?.down; // LB / L1 (Q), or the touch Loft toggle
     if (incoming && !canKick && this.phase === 'play') {
       if (input.shoot.down) { if (!this.charge || this.charge.kind !== 'shoot') this.charge = { kind: 'shoot', t: 0 }; else this.charge.t += dt; }
       if (input.pass.down) { if (!this.charge || this.charge.kind !== 'pass') this.charge = { kind: 'pass', t: 0 }; else this.charge.t += dt; }
       if (input.lob.down) { if (!this.charge || this.charge.kind !== 'lob') this.charge = { kind: 'lob', t: 0 }; else this.charge.t += dt; }
       const c = this.charge; const at = this.time;
-      if (input.shoot.justReleased) this.queued = { agent: me, kind: 'shoot', power: Math.min(1, Math.max(0.22, c?.t ?? 0.3) / 0.9), dir: aimDir, finesse: input.finesse.down, at };
-      else if (input.pass.justReleased) this.queued = { agent: me, kind: 'pass', power: Math.min(1, Math.max(0.2, c?.t ?? 0.2) / 0.5), dir: aimDir, at };
-      else if (input.through.justPressed) this.queued = { agent: me, kind: 'through', power: 0.7, dir: aimDir, at };
+      if (input.shoot.justReleased) this.queued = { agent: me, kind: 'shoot', power: Math.min(1, Math.max(0.22, c?.t ?? 0.3) / 0.9), dir: aimDir, finesse: input.finesse.down && !lobMod, chip: lobMod, at };
+      else if (input.pass.justReleased) this.queued = { agent: me, kind: 'pass', power: Math.min(1, Math.max(0.2, c?.t ?? 0.2) / 0.5), dir: aimDir, driven: input.finesse.down, at };
+      else if (input.through.justPressed) this.queued = { agent: me, kind: 'through', power: 0.7, dir: aimDir, lofted: lobMod, at };
       else if (input.lob.justReleased) this.queued = { agent: me, kind: 'lob', power: Math.min(1, Math.max(0.15, c?.t ?? 0.15) / 0.7), dir: aimDir, at };
+      // a press arriving just as he's already rising to a header still decides it
+      const ha = me.action; if (this.queued && ha?.type === 'header' && !ha.data?.done) { ha.data.intent = this.queued; ha.data.control = false; this.queued = null; }
       if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
       return; // (no tackling your own team-mate's pass)
     }
@@ -735,14 +750,17 @@ export class Match {
       const throwIn = this.setPiece?.kind === 'throw';
       if (input.shoot.justReleased && !me.busy()) {
         const held = this.charge?.t ?? 0.3; const low = !!this.charge?.low; const p = Math.min(1, Math.max(0.22, held) / 0.9);
-        if (!low && !throwIn && held < 0.16) this.shotTap = { at: this.time, power: p, finesse: input.finesse.down }; // maybe the first of a double tap
+        if (lobMod && !throwIn) { this.startKick(me, 'shoot', p, aimDir, { chip: true }); this.shotTap = null; } // LB + shoot: a chip
+        else if (!low && !throwIn && held < 0.16) this.shotTap = { at: this.time, power: p, finesse: input.finesse.down }; // maybe the first of a double tap
         else { this.startKick(me, throwIn ? 'pass' : 'shoot', p, aimDir, { finesse: input.finesse.down && !low, low }); this.shotTap = null; }
         this.charge = null;
       }
       else if (this.shotTap && !input.shoot.down && this.time - this.shotTap.at >= 0.3 && !me.busy()) { const t = this.shotTap; this.shotTap = null; this.startKick(me, 'shoot', t.power, aimDir, { finesse: t.finesse || input.finesse.down }); }
       // the receiver is locked in on release: whoever is best placed in the direction of the stick
-      else if (input.pass.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.2, this.charge?.t ?? 0.2) / 0.5); this.startKick(me, 'pass', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, false, p) ?? undefined }); this.charge = null; }
-      else if (input.through.justPressed && !me.busy()) this.startKick(me, 'through', 0.7, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, true) ?? undefined });
+      // (RB + pass: a driven pass, fizzed along the floor)
+      else if (input.pass.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.2, this.charge?.t ?? 0.2) / 0.5); this.startKick(me, 'pass', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, false, p) ?? undefined, driven: input.finesse.down }); this.charge = null; }
+      // (LB + through ball: lofted over the top into the runner's path)
+      else if (input.through.justPressed && !me.busy()) this.startKick(me, 'through', 0.7, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, true, lobMod) ?? undefined, lofted: lobMod });
       else if (input.lob.justReleased && !me.busy()) { const p = Math.min(1, Math.max(0.15, this.charge?.t ?? 0.15) / 0.7); this.startKick(me, 'lob', p, aimDir, { targetAgent: this.pickPassTarget(me, aimDir, false, true, p) ?? undefined }); this.charge = null; }
       if (input.shield.down && b.owner === me) { me.intent.sprint = false; me.intent.move = v2.scale(move, 0.35); me.intent.jockey = true; }
       if (!input.shoot.down && !input.pass.down && !input.lob.down) this.charge = null;
@@ -771,21 +789,74 @@ export class Match {
   }
 
   /** A first-time pass or shot queued while the ball was on its way. */
-  queued: { agent: Agent; kind: KickKind; power: number; dir: V2; finesse?: boolean; at: number } | null = null;
+  queued: { agent: Agent; kind: KickKind; power: number; dir: V2; finesse?: boolean; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; at: number } | null = null;
+  /** A queued action for a ball arriving at head height: the header (at goal, or on to a team-mate) it becomes. */
+  headerIntent: { agent: Agent; q: NonNullable<Match['queued']>; until: number } | null = null;
+  /** The release of a double-tapped pass is swallowed (the first tap's pass has become a bounce pass). */
+  private swallowPass = false;
   private playQueued(me: Agent, q: NonNullable<Match['queued']>) {
     // the receiver is picked now, from where everyone is at the moment of the strike
-    const opts = q.kind === 'shoot' ? { finesse: q.finesse }
-      : { targetAgent: this.pickPassTarget(me, q.dir, q.kind === 'through', q.kind === 'lob', q.kind === 'through' ? undefined : q.power) ?? undefined };
+    const opts = q.kind === 'shoot' ? { finesse: q.finesse, chip: q.chip }
+      : { targetAgent: this.pickPassTarget(me, q.dir, q.kind === 'through', q.kind === 'lob' || !!q.lofted, q.kind === 'through' ? undefined : q.power) ?? undefined, driven: q.driven, lofted: q.lofted, bounce: q.bounce };
     this.startKick(me, q.kind, q.power, q.dir, opts);
+  }
+  /** Double tap: turn the pass (or through ball) just asked for - not yet struck - into a bounce pass. */
+  private makeBounce(me: Agent, kind: 'pass' | 'through'): boolean {
+    const act = me.action;
+    if (act?.type === 'kick' && !act.fired && act.data?.kind === kind && act.t < (act.data.strike ?? 0)) { act.data.bounce = true; return true; }
+    const pk = me.pendingKick;
+    if (pk && pk.kind === kind && this.time - pk.t0 < 0.35) { pk.opts.bounce = true; return true; }
+    const q = this.queued;
+    if (q && q.agent === me && q.kind === kind && this.time - q.at < 0.35) { q.bounce = true; return true; }
+    return false;
   }
 
   /* ------------------------------ kicking ------------------------------ */
   /** Request a kick. The player takes it as soon as the ball is in reach (approaching it if needed). */
-  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number } }) {
+  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean }) {
     if (a.busy()) return;
     if (a === this.controlled) this.shotTap = null;
     a.pendingKick = { kind, power, dir, opts, t0: this.time };
     this.charge = null;
+  }
+
+  /** A ball struck to arrive at `to` with a given shape (launch angle `theta`): the pace that gives it, through the air
+   *  with drag and spin, is searched for. */
+  private shapedKick(from: V3, to: V3, theta: number, spin: number): { v: V3; w: V3; time: number } {
+    const yaw = Math.atan2(to.z - from.z, to.x - from.x); const D = Math.max(1, Math.hypot(to.x - from.x, to.z - from.z));
+    const w = spinVector(yaw, 0, spin); const s = new BallBody(); s.surface = this.surface;
+    const fly = (sp: number): { y: number; t: number } => {
+      s.x = from.x; s.y = Math.max(BALL_R, from.y); s.z = from.z; s.wx = w.x; s.wy = w.y; s.wz = w.z;
+      s.vx = Math.cos(yaw) * Math.cos(theta) * sp; s.vz = Math.sin(yaw) * Math.cos(theta) * sp; s.vy = Math.sin(theta) * sp;
+      let t = 0, pd = 0, py = s.y;
+      while (t < 6) {
+        const pvy = s.vy; py = s.y; s.integrate(1 / 120); t += 1 / 120;
+        const d = Math.hypot(s.x - from.x, s.z - from.z);
+        if (d >= D) { const k = (D - pd) / Math.max(1e-6, d - pd); return { y: py + (s.y - py) * k, t }; }
+        if (pvy < 0 && s.vy >= 0 && t > 0.05) return { y: -1 - (D - d), t }; // came down short
+        pd = d;
+      }
+      return { y: -99, t };
+    };
+    let lo = 2, hi = 42; let r = fly(hi);
+    for (let it = 0; it < 20; it++) { const mid = (lo + hi) / 2; r = fly(mid); if (r.y < to.y) lo = mid; else hi = mid; }
+    const sp = (lo + hi) / 2; r = fly(sp);
+    return { v: { x: Math.cos(yaw) * Math.cos(theta) * sp, y: Math.sin(theta) * sp, z: Math.sin(yaw) * Math.cos(theta) * sp }, w, time: r.t };
+  }
+
+  /** A bounce pass from `from` to `aim`: struck low (about 10 degrees) with topspin, weighted so that after skipping it
+   *  reaches the spot still at foot height and moving. Found by trying launch speeds on a copy of the ball. */
+  private bouncePass(from: V3, aim: V2): { v: V3; w: V3 } {
+    const s = new BallBody(); s.surface = this.surface; const yaw = Math.atan2(aim.z - from.z, aim.x - from.x); const D = Math.hypot(aim.x - from.x, aim.z - from.z);
+    const pitch = 0.22; let best: { v: V3; w: V3; err: number } | null = null;
+    for (let sp = 7; sp <= 32; sp += 0.75) {
+      const v = { x: Math.cos(yaw) * Math.cos(pitch) * sp, y: Math.sin(pitch) * sp, z: Math.sin(yaw) * Math.cos(pitch) * sp }; const w = spinVector(yaw, 0, 9);
+      s.x = from.x; s.y = Math.max(BALL_R, from.y); s.z = from.z; s.vx = v.x; s.vy = v.y; s.vz = v.z; s.wx = w.x; s.wy = w.y; s.wz = w.z;
+      const path = predictPath(s, 3, 1 / 60); let reached = false;
+      for (const p of path) { if (Math.hypot(p.x - from.x, p.z - from.z) >= D) { reached = true; const hv = Math.hypot(p.vx, p.vz); const err = (p.y > 0.7 ? p.y : 0) + Math.max(0, 5 - hv) * 0.3; if (!best || err < best.err) best = { v, w, err }; break; } }
+      if (reached && best && best.err < 0.05) break;
+    }
+    return best ?? { v: { x: Math.cos(yaw) * 12, y: 2, z: Math.sin(yaw) * 12 }, w: { x: 0, y: 0, z: 0 } };
   }
 
   private ballLocal(a: Agent) {
@@ -801,7 +872,7 @@ export class Match {
       if (a.legsBusy() || (b.owner && !mine) || this.time - pk.t0 > 1.4) { a.pendingKick = null; continue; }
       if (a.action?.type === 'kick') continue;
       const held = mine && b.held;
-      const strike = held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : 0.15;
+      const strike = held ? 0.2 : pk.kind === 'shoot' ? 0.2 : pk.kind === 'lob' ? 0.18 : a === this.controlled && !this.autopilot ? 0.19 : 0.15;
       // where the ball and the player will be at the moment of the strike
       const c = this.ballAt(strike);
       // (a taker stepping up to a placed ball strikes it from where he actually is, not where his run-up would carry him)
@@ -809,7 +880,7 @@ export class Match {
       const ap = placed ? v2.add(a.pos, v2.scale(a.vel, strike * 0.2)) : v2.add(a.pos, v2.scale(a.vel, strike * 0.6));
       const r = v2.sub({ x: c.x, z: c.z }, ap);
       const f = v2.dot(r, a.heading), lat = r.x * -a.heading.z + r.z * a.heading.x, d = v2.len(r);
-      const inReach = held || (f > -0.05 && f < 0.95 && Math.abs(lat) < 0.6 && c.y < 1.0 && d < 1.0);
+      const inReach = held || (f > -0.05 && f < 0.95 && Math.abs(lat) < 0.6 && c.y < (pk.kind === 'shoot' ? 1.25 : 1.0) && d < 1.0);
       if (inReach) {
         const side: Side = lat >= 0 ? 'R' : 'L'; // strike with the foot on the ball's side
         const relV = Math.hypot(b.vx - a.vel.x, b.vz - a.vel.z);
@@ -857,7 +928,7 @@ export class Match {
       if (!lofted) for (const o of opp) { const r = v2.sub(o.pos, a.pos); const along = v2.dot(r, d) / dist; if (along < 0.5 || along > dist - 0.5) continue; const perp = Math.abs(r.x * d.z - r.z * d.x) / dist; lane = Math.min(lane, Math.max(0, (perp - 0.6) / 1.6)); }
       const inBox = Math.abs(m.pos.x - t.attackDir * L / 2) < this.pitch.boxDepth && Math.abs(m.pos.z) < this.pitch.boxWidth / 2;
       // the power bar says how far: it picks between team-mates at similar angles
-      const depth = power === undefined || through ? 0 : Math.abs(dist - (lofted ? 8 + 45 * power : 4 + 34 * power)) * (lofted ? 0.04 : 0.025);
+      const depth = power === undefined || through || lofted ? 0 : Math.abs(dist - (4 + 34 * power)) * 0.025;
       const s = -ang * (semi ? 8 : 4.5) - depth - dist * (lofted ? 0.006 : through ? 0.01 : 0.02) - (through ? Math.max(0, dist - 32) * 0.06 : 0) + Math.min(marked, 6) * 0.06 + lane * 0.4
         + (through ? Math.max(0, fwd) * 0.02 : 0) + (lofted && inBox ? 0.5 : 0) - (m.isGK ? 2 : 0);
       if (s > bs) { bs = s; best = m; }
@@ -958,7 +1029,7 @@ export class Match {
       const { length: L, goalWidth: gw, goalHeight: gh } = this.pitch;
       const gx = team.attackDir * (L / 2 + 0.3);
       const power = d.power as number;
-      const style: 'power' | 'finesse' | 'low' = d.finesse ? 'finesse' : d.low ? 'low' : 'power';
+      const style: 'power' | 'finesse' | 'low' | 'chip' = d.chip ? 'chip' : d.finesse ? 'finesse' : d.low ? 'low' : 'power';
       let zHit: number;
       if (d.target) zHit = d.target.z;
       else if (dir0.x * team.attackDir > 0.15) {
@@ -989,7 +1060,13 @@ export class Match {
         side = Math.sign(left.z * want || 1) * (22 + power * 12);
       } else if (!human && d.finesse) side = Math.sign(left.z * -Math.sign(zHit || 1) || 1) * 35;
       const top = style === 'low' ? 10 + power * 12 : style === 'finesse' ? 4 : 2 + power * 5;
-      if (style === 'low' && !d.target) {
+      if (style === 'chip') {
+        // a chip: scooped up over the keeper with backspin, dropping under the bar (more power = further, and too much
+        // sails over)
+        const sol = this.shapedKick(from, { x: gx, y: 1.0, z: zHit }, 0.82, -14);
+        v = sol.v; w = sol.w; if (power > 0.6) { const k = 1 + (power - 0.6) * 0.18; v = { x: v.x * k, y: v.y * k, z: v.z * k }; }
+        yHit = 1.0;
+      } else if (style === 'low' && !d.target) {
         // low driven: struck flat with topspin so it skims and skids along the turf rather than arcing to a height
         const yaw = Math.atan2(zHit - from.z, gx - from.x); const pitch = 0.035 + (1 - power) * 0.03 - Math.max(0, from.y - BALL_R) * 0.05;
         v = { x: Math.cos(yaw) * Math.cos(pitch) * speed, y: Math.sin(pitch) * speed, z: Math.sin(yaw) * Math.cos(pitch) * speed };
@@ -1002,20 +1079,23 @@ export class Match {
       if (this.mods.goalAllowed[a.team] && push > 0) sigma *= 1 - push * 0.85;
       if (assist > 0) sigma *= 1 - 0.9 * assist;
       // a clean strike: the error is mostly in direction, very little in height (no skied shots from a good contact)
-      yawErr = gauss() * sigma; pitchErr = gauss() * sigma * (human ? (style === 'low' ? 0.15 : 0.3) : 0.6);
+      yawErr = gauss() * sigma; pitchErr = gauss() * sigma * (human ? (style === 'low' ? 0.15 : style === 'chip' ? 0.2 : 0.3) : 0.6);
       b.inFlightShot = { team: a.team, target: { x: gx, y: yHit, z: zHit } };
     } else {
       const through = kind === 'through';
-      const lofted = kind === 'lob' || throwIn || (d.held && kind !== 'pass');
-      const target: Agent | null = d.targetAgent ?? (d.clear ? null : this.pickPassTarget(a, dir0, through));
+      const loftThrough = through && !!d.lofted; // LB + through: over the top
+      const lofted = kind === 'lob' || throwIn || (d.held && kind !== 'pass') || loftThrough;
+      const target: Agent | null = d.targetAgent ?? (d.clear ? null : this.pickPassTarget(a, dir0, through, lofted));
+      d.inAir = lofted;
       d.passTarget = target;
       let aim: V2; let tFlight = 1;
       // Ground passes to a team-mate: the power bar sets how firmly it arrives (a soft 5 m/s to a zipped 12 m/s);
       // it always reaches him. (Quantised so the pass tables are shared.)
       const semi = human && this.controls.pass === 'semi';
-      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round(((semi ? 1 + 12 * d.power : 5 + 7 * d.power)) * 2) / 2 : 8.5;
+      // (firm by default; a driven pass - RB - fizzes in at 13-18 m/s)
+      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round(((semi ? 1 + 12 * d.power : d.driven ? 13 + 5 * d.power : 6 + 7.5 * d.power)) * 2) / 2 : 8.5;
       let throughSpeed = 0;
-      if (target && through && !lofted) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = tp.speed; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.2); }
+      if (target && through) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = loftThrough ? 0 : tp.speed; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
       else if (target) {
         // lead the receiver: iterate the meeting point against the ball's travel time
         aim = target.pos;
@@ -1026,7 +1106,7 @@ export class Match {
           if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + dd * 0.15), z: 0 });
         }
         target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
-      } else aim = v2.add(a.pos, v2.scale(dir0, d.clear ? 45 : human ? 8 + d.power * 40 : 12 + d.power * 16));
+      } else aim = v2.add(a.pos, v2.scale(dir0, d.clear ? 45 : human ? (lofted ? 22 + d.power * 18 : d.driven ? 20 + d.power * 30 : 8 + d.power * 40) : 12 + d.power * 16));
       const lim = { x: this.pitch.length / 2 + 2, z: this.pitch.width / 2 + 2 };
       aim = { x: Math.max(-lim.x, Math.min(lim.x, aim.x)), z: Math.max(-lim.z, Math.min(lim.z, aim.z)) };
       const dist = Math.max(2, v2.dist(aim, { x: from.x, z: from.z }));
@@ -1034,20 +1114,24 @@ export class Match {
         const crossIntoBox = target && Math.abs(aim.x - team.attackDir * this.pitch.length / 2) < this.pitch.boxDepth + 2;
         // Crosses and lofted passes are driven: flatter and faster the more power (the longer the button is held).
         // crosses are driven (flatter, harder with power); a lofted pass to feet is floated so it can be brought down
-        const theta = throwIn ? 0.45 : d.clear ? 0.72 : crossIntoBox ? 0.34 - 0.21 * d.power : 0.47 - 0.1 * d.power;
-        const yT = crossIntoBox ? 1.35 : BALL_R; d.cross = !!crossIntoBox;
+        // the button decides the shape: a tap floats it in high, a long hold drives it in flat and hard
+        const theta = throwIn ? 0.45 : d.clear ? 0.72 : loftThrough ? 0.6 : crossIntoBox ? 0.66 - 0.38 * d.power : 0.78 - 0.42 * d.power;
+        const yT = crossIntoBox ? 1.3 : throwIn || d.clear ? BALL_R : 0.35; d.cross = !!crossIntoBox; // (to feet: it lands there, not bounces there)
+        // the landing spot follows the stick a little (within a couple of metres of the team-mate)
+        const nudge = (p: V2) => { if (!human || !target || loftThrough) return p; const dd = v2.dist(p, { x: from.x, z: from.z }); const sp = v2.add({ x: from.x, z: from.z }, v2.scale(dir0, dd)); const off = v2.scale(v2.sub(sp, p), 0.2); const l = v2.len(off); return l > 2.2 ? v2.add(p, v2.scale(off, 2.2 / l)) : v2.add(p, off); };
         const solve = (p: V2) => {
-          const dd = Math.max(2, v2.dist(p, { x: from.x, z: from.z }));
-          const speed = Math.min(throwIn ? 15 : 33, Math.max(9, Math.sqrt((G * dd) / Math.sin(2 * theta)) * (crossIntoBox || throwIn || d.clear ? 1.15 + 0.1 * d.power : 1.1)));
-          return solveKick(from, { x: p.x, y: yT, z: p.z }, speed, 0, throwIn ? 0 : -18 + 12 * d.power, this.surface, theta);
+          const dd = Math.max(2, v2.dist(p, { x: from.x, z: from.z })); const spin = throwIn ? 0 : -18 + 12 * d.power;
+          const vac = Math.sqrt((G * dd) / Math.sin(2 * theta));
+          if (throwIn || d.clear) return solveKick(from, { x: p.x, y: yT, z: p.z }, Math.min(throwIn ? 15 : 33, Math.max(9, vac * 1.15)), 0, spin, this.surface, theta);
+          return this.shapedKick(from, { x: p.x, y: yT, z: p.z }, theta, spin);
         };
         let sol = solve(aim);
-        if (target && !throwIn) {
+        if (target && !throwIn && !loftThrough) {
           // re-lead the receiver with the real flight time of this trajectory
           const lead = v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 2.2) * (target.speed() > 2.5 ? 1 : 0.75)));
-          aim = { x: Math.max(-lim.x, Math.min(lim.x, lead.x)), z: Math.max(-lim.z, Math.min(lim.z, lead.z)) };
+          aim = nudge({ x: Math.max(-lim.x, Math.min(lim.x, lead.x)), z: Math.max(-lim.z, Math.min(lim.z, lead.z)) });
           sol = solve(aim); tFlight = sol.time; target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
-        }
+        } else if (loftThrough && target) { tFlight = sol.time; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
         v = sol.v; w = sol.w;
       } else {
         // Human passes: the power bar sets the pace (a soft pass still reaches its man, a full one fizzes across the pitch).
@@ -1058,11 +1142,16 @@ export class Match {
           ? (target ? Math.max(6, Math.min(31, needed)) : 6 + d.power * 25)
           : Math.max(6, Math.min(30, needed * (0.92 + d.power * 0.16)));
         const yaw = Math.atan2(aim.z - from.z, aim.x - from.x);
-        v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };
-        w = { x: v.z / BALL_R, y: 0, z: -v.x / BALL_R };
+        if (d.bounce) {
+          // the bounce pass (double tap): clipped low so it hops over legs and skips on to its man
+          const bs = this.bouncePass(from, aim); v = bs.v; w = bs.w;
+        } else {
+          v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };
+          w = { x: v.z / BALL_R, y: 0, z: -v.x / BALL_R };
+        }
       }
       // a clean strike: assisted passing is a touch more accurate (the trajectory is solved for the receiver's run)
-      const sigma = human ? (semi ? 0.025 + (1 - a.skill.pass) * 0.03 : 0.016 + (1 - a.skill.pass) * 0.022) : 0.11 - skill * 0.09;
+      const sigma = (human ? (semi ? 0.025 + (1 - a.skill.pass) * 0.03 : 0.016 + (1 - a.skill.pass) * 0.022) : 0.11 - skill * 0.09) * (d.driven ? 1.35 : 1);
       yawErr = gauss() * sigma * (sprinting ? 1.3 : 1); pitchErr = lofted ? gauss() * sigma * 0.5 : 0;
       b.inFlightShot = null; d.flight = tFlight;
     }
@@ -1075,7 +1164,7 @@ export class Match {
     // the human takes over the intended receiver straight away (FIFA-style pass switching)
     if (human && kind !== 'shoot' && d.passTarget && this.humanTeam === a.team) {
       this.setControlled(d.passTarget);
-      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + 8 /* lives until someone touches it or it stops */, lofted: (kind === 'lob' || throwIn) && !!d.cross, spot: d.spot ?? null, run: d.run ?? null };
+      this.passAssist = { passer: a, receiver: d.passTarget, aim: dir0, until: this.time + 8 /* lives until someone touches it or it stops */, lofted: !!d.inAir && !throwIn, spot: d.spot ?? null, run: d.run ?? null };
     }
     a.hasBall = false; a.cooldown = 0.3; a.pendingKick = null;
     const fk = this.freeKick;
@@ -1138,7 +1227,7 @@ export class Match {
       if ((act.type === 'touch' || act.type === 'trap' || act.type === 'header') && !d.done && d.contact && act.t >= d.tc - 0.04) {
         const pt = act.type === 'header' ? m.headPoint() : d.part === 'hands' ? m.handPoint('L').lerp(m.handPoint('R'), 0.5) : d.part === 'thigh' ? m.rig.pos(d.side === 'L' ? 15 : 19) : d.part === 'chest' ? m.rig.point(3, 0, 0.1, 0.12) : m.footPoint(d.side);
         const dist = Math.hypot(pt.x - b.x, pt.y - b.y, pt.z - b.z);
-        const reach = act.type === 'header' ? 0.16 : d.part === 'hands' ? 0.2 : 0.13;
+        const reach = act.type === 'header' ? 0.22 : d.part === 'hands' ? 0.2 : 0.13;
         const late = act.t > d.tc + 0.07;
         if (dist < BALL_R + reach || (late && dist < 0.45)) {
           d.done = true;
@@ -1408,7 +1497,16 @@ export class Match {
       if (!plan) continue;
       const lat = (plan.x - a.pos.x) * -a.heading.z + (plan.z - a.pos.z) * a.heading.x; const side: Side = lat >= 0 ? 'R' : 'L';
       const contact = { x: plan.x, y: plan.y, z: plan.z };
-      if (plan.part === 'head') a.startAction('header', Math.max(0.3, Math.min(0.6, plan.t * 2)), 1, { contact, tc: plan.t, done: false });
+      if (plan.part === 'head') {
+        // the player you control only heads it where you said (shoot: at goal, pass: on to a team-mate); with nothing
+        // pressed he cushions it down to his feet
+        const ctl = a === this.controlled && !this.autopilot;
+        const hi = ctl && this.headerIntent?.agent === a && this.time < this.headerIntent.until ? this.headerIntent : null;
+        // jump just as high as the ball needs, peaking at the moment of contact
+        const jump = Math.max(0, Math.min(0.7, plan.y - a.motion!.headPoint().y + 0.04));
+        a.startAction('header', Math.max(0.3, plan.t * 2), 1, { contact, tc: plan.t, done: false, jump, intent: hi?.q ?? null, control: ctl && !hi && b.lastTouchTeam === a.team });
+        if (hi) this.headerIntent = null;
+      }
       else a.startAction('trap', plan.t + 0.22, side === 'R' ? 1 : -1, { side, contact, tc: plan.t, part: plan.part, done: false });
     }
   }
@@ -1514,10 +1612,38 @@ export class Match {
   /** The head meets the ball: attackers in range go for goal, everyone else clears it. */
   private doHeader(a: Agent) {
     const b = this.ball; const team = this.teams[a.team];
-    const { length: L, goalWidth, boxDepth } = this.pitch;
+    const { length: L, goalWidth, goalHeight, boxDepth } = this.pitch;
     const gx = team.attackDir * L / 2;
     const attacking = Math.abs(a.pos.x - gx) < boxDepth + 4;
+    const hd = a.action?.data ?? {};
     let v: V3;
+    if (hd.control) {
+      // cushioned down to his feet
+      v = { x: a.heading.x * 1.3 + a.vel.x * 0.5, y: 1.1, z: a.heading.z * 1.3 + a.vel.z * 0.5 }; b.inFlightShot = null;
+      b.strike(v, { x: 0, y: 0, z: 0 }, a, this.time); a.cooldown = 0.15; this.emit({ type: 'header', agent: a }); return;
+    }
+    if (hd.intent) {
+      const q = hd.intent as NonNullable<Match['queued']>;
+      const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.15;
+      if (q.kind === 'shoot') {
+        // a header at goal where the stick points, the press setting how hard (and a downward header bounces up nicely)
+        let z = q.dir.x * team.attackDir > 0.15 ? a.pos.z + (q.dir.z / q.dir.x) * (gx - a.pos.x) : Math.sign(q.dir.z || 1) * goalWidth * 0.3;
+        z = Math.max(-goalWidth / 2 + 0.3, Math.min(goalWidth / 2 - 0.3, z));
+        const assist = this.director?.shotAssist(a.team) ?? 0;
+        if (assist > 0) { const k = this.opponentsOf(a.team).agents.find((x) => x.isGK); const kz = k ? k.pos.z : 0; z += ((Math.sign(z - kz) || 1) * (goalWidth / 2 - 0.4) - z) * assist; }
+        const sol = solveKick({ x: b.x, y: b.y, z: b.z }, { x: gx + team.attackDir * 0.3, y: Math.min(goalHeight - 0.4, 0.35 + (1 - q.power) * 0.9), z }, 10 + q.power * 9, 0, 0, this.surface);
+        const err = gauss() * 0.06 * (1.35 - a.skill.shoot * 0.7) * (1 - 0.8 * assist); const c = Math.cos(err), sn = Math.sin(err);
+        v = { x: sol.v.x * c - sol.v.z * sn, y: sol.v.y, z: sol.v.z * c + sol.v.x * sn }; b.inFlightShot = { team: a.team, target: { x: gx, y: 1, z } };
+      } else {
+        // a header on to a team-mate in the direction pressed
+        const mate = this.pickPassTarget(a, q.dir, false, true);
+        const to = mate ? v2.add(mate.pos, v2.scale(mate.vel, 0.6)) : v2.add({ x: b.x, z: b.z }, v2.scale(q.dir, 10));
+        const dd = Math.max(3, v2.dist(to, { x: b.x, z: b.z })); const sol = solveKick({ x: b.x, y: b.y, z: b.z }, { x: to.x, y: BALL_R, z: to.z }, Math.min(16, 6 + dd * 0.45), 0, 0, this.surface, 0.5);
+        v = sol.v; b.inFlightShot = null;
+        if (mate) { mate.ai.expectBall = this.time + 2; if (this.humanTeam === a.team) { this.setControlled(mate); this.passAssist = { passer: a, receiver: mate, aim: q.dir, until: this.time + 6, lofted: true, spot: null, run: null }; } }
+      }
+      b.strike(v, { x: 0, y: 0, z: 0 }, a, this.time); a.cooldown = 0.3; this.emit({ type: 'header', agent: a }); return;
+    }
     if (attacking) {
       const z = (Math.random() < 0.5 ? -1 : 1) * goalWidth * (0.2 + Math.random() * 0.2);
       const sol = solveKick({ x: b.x, y: b.y, z: b.z }, { x: gx + team.attackDir * 0.3, y: 0.6 + Math.random() * 1.2, z }, 13 + Math.random() * 4, 0, 0, this.surface);

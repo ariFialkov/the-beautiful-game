@@ -91,7 +91,9 @@ export function cardMini(card: PlayerCard | null, opts: { chem?: number; slot?: 
 
 export function controllerHint(): string {
   const l = input.buttonLabels();
-  return input.lastSource === 'gamepad' ? `${l.pass} Pass · ${l.shoot} Shoot · ${l.through} Through · ${l.lob} Cross · ${l.sprint} Sprint · ${l.switch} Switch` : input.lastSource === 'touch' ? 'Drag left to move · Buttons to pass, shoot, cross' : 'WASD/Arrows move · Space pass · Z shoot (ZZ low, R+Z finesse) · C through · X cross · Shift sprint · Q switch · E slide';
+  return input.lastSource === 'gamepad' ? `${l.pass} Pass (${l.finesse}+ driven, ×2 bounce) · ${l.shoot} Shoot (${l.switch}+ chip) · ${l.through} Through (${l.switch}+ lofted, ×2 bounce) · ${l.lob} Cross (tap floated, hold driven) · ${l.sprint} Sprint`
+    : input.lastSource === 'touch' ? 'Drag to move · Finesse+Pass driven · Loft+Shoot chip · Loft+Through lofted · double-tap Pass/Through bounce'
+    : 'WASD move · Space pass (R+ driven, ×2 bounce) · Z shoot (Q+ chip, R+ finesse, ZZ low) · C through (Q+ lofted, ×2 bounce) · X cross (tap floated, hold driven) · Shift sprint · Q switch';
 }
 
 /** Controls while lining up a free kick (direct: aim on the goal; otherwise a direction to play it). */

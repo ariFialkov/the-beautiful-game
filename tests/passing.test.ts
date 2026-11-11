@@ -57,7 +57,7 @@ test('a full-power pass into space carries across the pitch; a light one stays s
   assert.ok(soft.dist > 8 && soft.dist < hard.dist * 0.6, 'a soft pass is a short one');
 });
 
-test('the stick picks the receiver, and the power bar picks how far for a lofted pass', () => {
+test('the stick picks the receiver (for lofted balls too, whatever the hold)', () => {
   const { m, passer } = sandbox(); const mates = m.teams[0].agents;
   place(passer, 0, 0, 0, 1);
   const near = mates[9], far = mates[10], side = mates[8];
@@ -66,9 +66,105 @@ test('the stick picks the receiver, and the power bar picks how far for a lofted
   assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.2, z: 1 }), false, false, 0.25), near);
   // the side man when aimed at him
   assert.equal(m.pickPassTarget(passer, v2.norm({ x: 9, z: 12 }), false, false, 0.3), side);
-  // lofted, same direction: a short charge finds the near man, a long one the far man
-  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.1, z: 1 }), false, true, 0.1), near);
-  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 0.1, z: 1 }), false, true, 0.75), far);
+  // lofted: the man the stick points at, a tap or a long hold alike (the hold is the ball's shape, not its length)
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 4, z: 38 }), false, true, 0.1), far);
+  assert.equal(m.pickPassTarget(passer, v2.norm({ x: 4, z: 38 }), false, true, 0.9), far);
+});
+
+/** Fly a lofted pass from `passer` to `mate` (power p): where it first comes down, how high it went, how long it took. */
+function lofted(p: number) {
+  const { m, passer, mate } = sandbox();
+  place(passer, 0, 0, 0, 1); place(mate, 3, 28, 0, -1);
+  (m as any).setControlled(passer); m.ball.reset(0, 0.4); m.ball.owner = passer;
+  m.startKick(passer, 'lob', p, v2.norm({ x: 0.35, z: 1 }), { targetAgent: mate }); // (aimed a bit off: the assist puts it on him)
+  let apex = 0, t0 = -1, land: { x: number; z: number; t: number } | null = null;
+  for (let i = 0; i < 60 * 4 && !land; i++) {
+    m.update(1 / 60, neutral()); const b = m.ball;
+    if (t0 < 0 && b.lastTouch === passer && !b.owner) t0 = m.time;
+    if (t0 >= 0) { apex = Math.max(apex, b.y); if (b.y < 0.5 && b.vy < 0 && m.time - t0 > 0.3) land = { x: b.x, z: b.z, t: m.time - t0 }; if (b.lastTouch !== passer) land = { x: b.x, z: b.z, t: m.time - t0 }; }
+  }
+  return { land: land!, apex, mate };
+}
+
+test('lofted balls land on the team-mate: a tap floats it high, a long hold drives it in flat', () => {
+  const floated = lofted(0.15), driven = lofted(1);
+  for (const r of [floated, driven]) assert.ok(r.land && Math.hypot(r.land.x - r.mate.pos.x, r.land.z - r.mate.pos.z) < 3.5, `landed by the receiver (${r.land && Math.hypot(r.land.x - r.mate.pos.x, r.land.z - r.mate.pos.z).toFixed(1)} m)`);
+  console.log(`  floated: apex ${floated.apex.toFixed(1)} m in ${floated.land.t.toFixed(2)} s · driven: apex ${driven.apex.toFixed(1)} m in ${driven.land.t.toFixed(2)} s`);
+  assert.ok(floated.apex > driven.apex + 2, 'the tap is the higher ball');
+  assert.ok(driven.land.t < floated.land.t - 0.3, 'the held one gets there quicker');
+});
+
+test('a cross to the player you control is not finished for you: shoot to head it at goal, otherwise he brings it down', () => {
+  for (const press of [false, true]) {
+    const { m, passer, mate } = sandbox(); const at = m.teams[0].attackDir;
+    place(passer, at * 38, 26, 0, -1); place(mate, at * 44, 2, at, 0);
+    (m as any).setControlled(passer); m.ball.reset(at * 38, 25.6); m.ball.owner = passer;
+    m.startKick(passer, 'lob', 0.2, v2.norm({ x: at * 6, z: -24 }), { targetAgent: mate });
+    let t = 0; while (t < 1 && !(m.ball.lastTouch === passer && !m.ball.owner)) { m.update(1 / 60, neutral()); t += 1 / 60; }
+    assert.equal(m.controlled, mate);
+    if (press) { // shoot, held a moment, while the cross is in the air
+      for (let i = 0; i < 12; i++) m.update(1 / 60, press_('shoot', true, i === 0, false, { x: at, y: 0 }));
+      m.update(1 / 60, press_('shoot', false, false, true, { x: at, y: 0 }));
+    }
+    let shot = false, headed = false;
+    const busy = () => { const p = neutral(); p.sprint = { down: true, justPressed: false, justReleased: false }; return p; }; // (an active player: no auto-pilot)
+    for (let i = 0; i < 60 * 4.5 && !shot; i++) { m.update(1 / 60, busy()); if (m.ball.lastTouch === mate) { headed = true; shot = !!m.ball.inFlightShot; } }
+    if (press) assert.ok(shot, 'pressing shoot finishes it');
+    else { assert.ok(headed || m.ball.owner === mate, 'he dealt with it'); assert.ok(!shot, 'but no shot without pressing shoot'); }
+  }
+});
+const press_ = (k: string, down: boolean, jp: boolean, jr: boolean, move = { x: 0, y: 0 }) => { const p = neutral(); p.move = move; p[k] = { down, justPressed: jp, justReleased: jr }; return p; };
+
+test('RB + pass is a driven pass: much quicker than a normal one, still to its man', () => {
+  const speed = (driven: boolean) => {
+    const { m, passer, mate } = sandbox(); place(passer, 0, 0); place(mate, 20, 0, -1, 0);
+    (m as any).setControlled(passer); m.ball.reset(0.4, 0); m.ball.owner = passer;
+    m.startKick(passer, 'pass', 0.5, { x: 1, z: 0 }, { targetAgent: mate, driven });
+    let t = 0; while (t < 1 && !(m.ball.lastTouch === passer && !m.ball.owner)) { m.update(1 / 60, neutral()); t += 1 / 60; }
+    const v0 = m.ball.speed(); const arrived = runUntil(m, 4, () => m.ball.owner === mate || m.ball.lastTouch === mate);
+    return { v0, arrived };
+  };
+  const n = speed(false), d = speed(true);
+  console.log(`  normal ${n.v0.toFixed(1)} m/s, driven ${d.v0.toFixed(1)} m/s`);
+  assert.ok(d.v0 > n.v0 + 4, 'driven is much firmer');
+  assert.ok(d.arrived > 0 && n.arrived > 0, 'both reach the team-mate');
+});
+
+test('double-tap pass: a bounce pass that hops on its way and still reaches its man', () => {
+  const { m, passer, mate } = sandbox(); place(passer, 0, 0); place(mate, 18, 0, -1, 0);
+  (m as any).setControlled(passer); m.ball.reset(0.4, 0); m.ball.owner = passer;
+  m.update(1 / 60, press_('pass', true, true, false, { x: 1, y: 0 }));
+  m.update(1 / 60, press_('pass', false, false, true, { x: 1, y: 0 }));
+  m.update(1 / 60, neutral());
+  m.update(1 / 60, press_('pass', true, true, false, { x: 1, y: 0 }));
+  m.update(1 / 60, press_('pass', false, false, true, { x: 1, y: 0 }));
+  let apex = 0, struck = false, bounces = 0, prevVy = 0;
+  for (let i = 0; i < 60 * 3 && !(m.ball.owner === mate); i++) {
+    m.update(1 / 60, neutral()); const b = m.ball;
+    if (b.lastTouch === passer && !b.owner) { struck = true; apex = Math.max(apex, b.y); if (prevVy < -0.5 && b.vy > 0.3) bounces++; prevVy = b.vy; }
+  }
+  assert.ok(struck, 'played');
+  assert.ok(apex > 0.35 && apex < 1.6, `a low hop (apex ${apex.toFixed(2)} m)`);
+  assert.ok(bounces >= 1, 'it bounced on the way');
+  assert.ok(m.ball.owner === mate || m.ball.lastTouch === mate, 'and reached its man');
+});
+
+test('LB + through ball is lofted over the top; LB + shoot is a chip', () => {
+  const { m, passer, mate } = sandbox(); const dir = m.teams[0].attackDir;
+  place(passer, 0, 0, dir, 0); place(mate, dir * 12, 5, dir, 0);
+  (m as any).setControlled(passer); m.ball.reset(dir * 0.4, 0); m.ball.owner = passer;
+  m.update(1 / 60, { ...press_('through', true, true, false, { x: dir, y: 0.3 }), loft: { down: true, justPressed: false, justReleased: false } });
+  let apex = 0; for (let i = 0; i < 60 * 2; i++) { m.update(1 / 60, neutral()); if (m.ball.lastTouch === passer && !m.ball.owner) apex = Math.max(apex, m.ball.y); }
+  assert.ok(apex > 3, `lofted (apex ${apex.toFixed(1)} m)`);
+  // the chip
+  const c = sandbox(); const s = c.mate; const at = c.m.teams[0].attackDir;
+  place(s, at * 34, 0, at, 0); (c.m as any).setControlled(s); c.m.ball.reset(at * 34.4, 0); c.m.ball.owner = s;
+  for (let i = 0; i < 20; i++) c.m.update(1 / 60, { ...press_('shoot', true, i === 0, false, { x: at, y: 0 }), loft: { down: true, justPressed: false, justReleased: false } });
+  c.m.update(1 / 60, { ...press_('shoot', false, false, true, { x: at, y: 0 }), loft: { down: true, justPressed: false, justReleased: false } });
+  let ap = 0, y = -1; for (let i = 0; i < 60 * 4 && y < 0; i++) { c.m.update(1 / 60, neutral()); const b = c.m.ball; if (b.lastTouch === s && !b.owner) ap = Math.max(ap, b.y); if (Math.abs(b.x) > 52.5) y = b.y; }
+  console.log(`  lofted through apex ${apex.toFixed(1)} m · chip apex ${ap.toFixed(1)} m, at the line ${y.toFixed(2)} m`);
+  assert.ok(ap > 3.5, 'the chip goes up and over');
+  assert.ok(y > 0 && y < 2.44, 'and drops under the bar');
 });
 
 test("a through ball is played into the runner's path and he runs onto it", () => {

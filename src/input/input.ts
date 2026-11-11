@@ -1,6 +1,7 @@
 /** Unified input: keyboard, standard gamepads (PS5 / Xbox) and touch controls.
  *  Gamepad mapping follows the EA FC layout:
- *    Attack: A/Cross pass · B/Circle shoot · Y/Triangle through ball · X/Square cross/lob (hold = lower, harder) · RT/R2 sprint · RB/R1 finesse · LT/L2 shield
+ *    Attack: A/Cross pass · B/Circle shoot · Y/Triangle through ball · X/Square cross/lob (tap = floated, hold = driven) · RT/R2 sprint · RB/R1 finesse
+ *            (RB + pass = driven pass) · LB + Y lofted through ball · LB + B chip shot · double-tap A / Y bounce pass / bounce through ball · LT/L2 shield
  *    Defend: A/Cross contain · B/Circle standing tackle · X/Square slide tackle · LB/L1 switch player
  *    Menus: D-pad / left stick navigate · A select · B back · Start pause */
 
@@ -31,6 +32,8 @@ export class InputManager {
   aim: Vec2 = { x: 0, y: 0 }; // right stick
   sprint = new Button(); pass = new Button(); shoot = new Button(); through = new Button(); lob = new Button();
   switch = new Button(); slide = new Button(); finesse = new Button(); shield = new Button(); pause = new Button();
+  /** The LB / L1 modifier for lofted through balls and chip shots (held LB or Q, or the touch Loft toggle). */
+  loft = new Button();
   /** Free-kick curl from touch buttons: -1, 0, 1. */
   touchCurl = 0;
   gamepadConnected = false;
@@ -120,6 +123,7 @@ export class InputManager {
     if (len > 1) { mx /= len; my /= len; }
     this.move.x = mx; this.move.y = my; this.aim.x = ax; this.aim.y = ay;
     this.sprint.update(sprint, dt); this.pass.update(pass, dt); this.shoot.update(shoot, dt); this.through.update(through, dt); this.lob.update(lob, dt);
+    this.loft.update(sw || !!this.touchState.buttons.loft, dt);
     this.switch.update(sw, dt); this.slide.update(slide, dt); this.finesse.update(finesse, dt); this.shield.update(shield, dt); this.pause.update(pause, dt);
   }
 

@@ -102,6 +102,11 @@ export class Agent {
       } else if (act.type === 'dive' && act.data?.vel) {
         // carried at full launch speed until the ball arrives, then the landing bleeds it off
         const fl = act.data.flight ?? 0.3; const k = act.t < fl ? 1 : Math.max(0, 1 - (act.t - fl) / 0.3); this.vel = v2.scale(act.data.vel, k);
+      } else if (act.type === 'header' && act.data?.contact && !act.data.done && !act.data.wall) {
+        // rising to meet it: the body carries toward where the ball will be at the moment of contact
+        const c = act.data.contact as { x: number; z: number }; const rem = Math.max(0.06, (act.data.tc ?? 0.2) - act.t);
+        let want = { x: (c.x - this.pos.x) / rem, z: (c.z - this.pos.z) / rem }; const l = v2.len(want); if (l > 6) want = v2.scale(want, 6 / l);
+        this.vel = v2.lerp(this.vel, want, 1 - Math.exp(-14 * dt));
       } else if (act.type === 'stumble') {
         this.vel = v2.scale(this.vel, Math.exp(-3 * dt));
       } else {

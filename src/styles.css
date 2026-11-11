@@ -175,6 +175,8 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.02em; margin: 0
 .hud .fk-curl::before { content: ''; position: absolute; left: 50%; top: -3px; width: 1px; height: 12px; background: rgba(255,255,255,0.5); }
 .hud .fk-curl i { position: absolute; top: -3px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); left: 50%; }
 .hud .fk-curl-label { font-size: 10px; color: rgba(255,255,255,0.7); letter-spacing: 0.1em; text-transform: uppercase; }
+.touch .tloft { position: absolute; right: 60px; bottom: 150px; width: 48px; height: 30px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.35); background: rgba(10, 22, 44, 0.55); color: rgba(255,255,255,0.85); font-family: var(--font-display); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; pointer-events: auto; }
+.touch .tloft.on { background: var(--gold); color: #1b1300; border-color: var(--gold); }
 .touch .tfin.on { background: var(--accent); color: #06202a; border-color: var(--accent); }
 .touch .tbtn.sprint { left: calc(16px + var(--safe-l)); bottom: calc(16px + var(--safe-b)); position: absolute; pointer-events: auto; width: 74px; height: 74px; }
 .touch .tbtn.switch { right: calc(16px + var(--safe-r)); top: calc(64px + var(--safe-t)); position: absolute; pointer-events: auto; width: 56px; height: 56px; font-size: 10px; }

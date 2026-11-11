@@ -22,6 +22,7 @@ export class TouchControls {
         <button class="tbtn through" data-b="lob">Cross</button>
         <button class="tbtn lob" data-b="through">Through</button>
         <button class="tfin" type="button">Finesse</button>
+        <button class="tloft" type="button">Loft</button>
       </div>
       <div class="tcurl"><button type="button" data-c="-1">◀ Curl</button><button type="button" data-c="1">Curl ▶</button></div>`;
     parent.appendChild(this.el);
@@ -34,6 +35,10 @@ export class TouchControls {
     this.fin = this.el.querySelector('.tfin')!;
     this.fin.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setFinesse(!this.finesseOn); });
     this.fin.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Loft (the LB modifier) on touch: tap to arm, then Through = lofted through ball, Shoot = chip shot
+    this.loftEl = this.el.querySelector('.tloft')!;
+    this.loftEl.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setLoft(!this.loftOn); });
+    this.loftEl.addEventListener('contextmenu', (e) => e.preventDefault());
     // Free kicks: hold a curl button to bend it
     this.curlEl = this.el.querySelector('.tcurl')!;
     for (const c of Array.from(this.curlEl.querySelectorAll<HTMLElement>('button'))) {
@@ -49,7 +54,8 @@ export class TouchControls {
       const down = (e: PointerEvent) => { e.preventDefault(); b.classList.add('pressed'); input.setTouchButton(name === 'lob' && this.defending ? 'slide' : name, true); };
       const up = () => {
         b.classList.remove('pressed'); input.setTouchButton(name, false); input.setTouchButton('slide', false);
-        if (name === 'shoot' && this.finesseOn) { clearTimeout(this.finTimer); this.finTimer = window.setTimeout(() => this.setFinesse(false), 600); }
+        if ((name === 'shoot' || name === 'pass') && this.finesseOn) { clearTimeout(this.finTimer); this.finTimer = window.setTimeout(() => this.setFinesse(false), 600); }
+        if ((name === 'shoot' || name === 'through') && this.loftOn) { clearTimeout(this.loftTimer); this.loftTimer = window.setTimeout(() => this.setLoft(false), 600); }
       };
       b.addEventListener('pointerdown', down); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -65,10 +71,13 @@ export class TouchControls {
     if (!on) input.touchCurl = 0;
   }
   private fin!: HTMLElement; private finesseOn = false; private finTimer = 0;
+  private loftEl!: HTMLElement; private loftOn = false; private loftTimer = 0;
+  private setLoft(on: boolean) { this.loftOn = on; this.loftEl.classList.toggle('on', on); input.setTouchButton('loft', on); }
   private setFinesse(on: boolean) { this.finesseOn = on; this.fin.classList.toggle('on', on); input.setTouchButton('finesse', on); }
   setDefending(d: boolean) {
     if (d === this.defending) return; this.defending = d;
     this.fin.style.display = d ? 'none' : ''; if (d) this.setFinesse(false);
+    this.loftEl.style.display = d ? 'none' : ''; if (d) this.setLoft(false);
     const labels = d ? this.labelsDefend : this.labelsAttack;
     for (const [k, v] of Object.entries(labels)) if (this.buttons[k]) this.buttons[k].textContent = v;
   }

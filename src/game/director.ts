@@ -239,7 +239,7 @@ export class Director {
     const hs0 = Math.hypot(b.vx, b.vz); const dir = hs0 > 0.5 ? Math.atan2(b.vz, b.vx) : this.lastDir;
     let turn = Math.abs(dir - this.lastDir); if (turn > Math.PI) turn = 2 * Math.PI - turn;
     const kicked = Math.abs(hs0 - this.lastHs) > 2.5; this.lastDir = dir; this.lastHs = hs0;
-    if (b.held || b.owner) { this.vetted = b.lastTouchTime; return; }
+    if (b.held || (b.owner && hs0 < 2.5)) { this.vetted = b.lastTouchTime; return; } // (a dribble touch counts once it's rolling)
     if (b.lastTouchTime === this.vetted && turn < 0.06 && !kicked) return;
     this.vetted = b.lastTouchTime;
     if (Math.hypot(b.vx, b.vy, b.vz) < 1) return;
@@ -250,7 +250,7 @@ export class Director {
     if (keeper && !keeper.busy() && Math.abs(keeper.pos.x - hit.lineX) < 5 && Math.abs(hit.z) < gw / 2) {
       const kp = keeperSavePlan(mt, keeper, { t: hit.t, y: hit.y, z: hit.z });
       const avail = hit.t - kp.reaction - 0.06;
-      if (kp.reachable && avail > 0.12 && kp.travel <= kp.speed * avail * 0.6) return; // a comfortable save: leave it to the keeper
+      if (kp.reachable && avail > 0.2 && kp.travel <= kp.speed * avail * 0.45 && hit.y > 0.25 && hit.y < 2) return; // a comfortable save: leave it to the keeper
     }
     // the strike goes just wrong: over the bar if it was rising high, else wide of (or, now and then, onto) the nearer post
     const s = this.scratch; const over = hit.y > gh - 0.7;
@@ -269,6 +269,8 @@ export class Director {
       if (Math.abs(f1) < 0.08) { x0 = x1; break; }
       const nx = x1 - f1 * (x1 - x0) / ((f1 - f0) || 1e-6); x0 = x1; f0 = f1; x1 = Math.max(-0.5, Math.min(0.5, nx));
     }
+    // too close to send it wide in time: it goes over instead
+    if (!over) { const c = at(x1, 0); if (c && Math.abs(c.z) < gw / 2 + 0.1 && c.y < gh + 0.1) { let lo = 0, hi = 0.6; for (let it = 0; it < 12; it++) { const mid = (lo + hi) / 2; const cc = at(x1, mid); if (cc && cc.y < gh + 0.45) lo = mid; else hi = mid; } const hs = Math.hypot(b.vx, b.vz), sp = Math.hypot(hs, b.vy); const y1 = Math.atan2(b.vz, b.vx) + x1, p1 = Math.atan2(b.vy, hs) + hi; b.vx = Math.cos(y1) * Math.cos(p1) * sp; b.vz = Math.sin(y1) * Math.cos(p1) * sp; b.vy = Math.sin(p1) * sp; this.lastDir = Math.atan2(b.vz, b.vx); this.lastHs = Math.hypot(b.vx, b.vz); return; } }
     const d = x1; const hs = Math.hypot(b.vx, b.vz), sp = Math.hypot(hs, b.vy);
     this.lastVet = { at: mt.time, hit, tz, over, d, after: over ? at(0, d) : at(d, 0) };
     const y0 = Math.atan2(b.vz, b.vx) + (over ? 0 : d), p0 = Math.atan2(b.vy, hs) + (over ? d : 0);
