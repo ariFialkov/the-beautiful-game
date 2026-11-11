@@ -1,4 +1,5 @@
 import { Rng } from './rng';
+import { NAMES, FOREIGN_POOL } from './names';
 import type { PlayerCard, Position, PlayerAttributes } from './types';
 
 export type KitPattern = 'solid' | 'stripes' | 'hoops' | 'sash' | 'halves' | 'pinstripe' | 'chevron';
@@ -110,35 +111,58 @@ export const TEAMS: Team[] = [
   T({ id: 'riy-falcons', name: 'Riyadh Falcons', short: 'RIY', city: 'Riyadh', country: 'Saudi Arabia', league: 'Pro League Gulf', rating: 77, style: 'counter',
     home: { primary: '#f7c948', secondary: '#0a2a66', shorts: '#0a2a66', socks: '#f7c948', pattern: 'solid' }, away: { primary: '#ffffff', secondary: '#f7c948', shorts: '#ffffff', socks: '#ffffff', pattern: 'chevron' },
     crest: { shape: 'shield', icon: 'eagle', colors: ['#f7c948', '#0a2a66', '#ffffff'] }, stadium: { name: 'King Fahd Oasis', capacity: 68000, seats: '#f7c948', roof: true }, foreignShare: 0.5 }),
+  // --- Expansion clubs ---
+  T({ id: 'nld-cannons', name: 'North London Cannons', short: 'NLC', city: 'London', country: 'England', league: 'Premier Division', rating: 85, style: 'possession',
+    home: { primary: '#e0202e', secondary: '#ffffff', shorts: '#ffffff', socks: '#e0202e', pattern: 'solid' }, away: { primary: '#f2c94c', secondary: '#1b2a4a', shorts: '#1b2a4a', socks: '#f2c94c', pattern: 'solid' },
+    crest: { shape: 'shield', icon: 'bolt', colors: ['#e0202e', '#ffffff', '#c9a227'] }, stadium: { name: 'Holloway Grove', capacity: 60000, seats: '#e0202e', roof: true }, foreignShare: 0.6 }),
+  T({ id: 'bir-lions', name: 'Birmingham Lions', short: 'BIR', city: 'Birmingham', country: 'England', league: 'Premier Division', rating: 78, style: 'direct',
+    home: { primary: '#7a1f3d', secondary: '#7fc1ea', shorts: '#ffffff', socks: '#7fc1ea', pattern: 'halves' }, away: { primary: '#7fc1ea', secondary: '#7a1f3d', shorts: '#7a1f3d', socks: '#7fc1ea', pattern: 'solid' },
+    crest: { shape: 'shield', icon: 'lion', colors: ['#7a1f3d', '#7fc1ea', '#f7c948'] }, stadium: { name: 'Aston Meadow', capacity: 42000, seats: '#7a1f3d', roof: true }, foreignShare: 0.45 }),
+  T({ id: 'bil-leones', name: 'Bilbao Leones', short: 'BIL', city: 'Bilbao', country: 'Spain', league: 'La Primera', rating: 79, style: 'pressing',
+    home: { primary: '#e2231a', secondary: '#ffffff', shorts: '#111111', socks: '#111111', pattern: 'stripes' }, away: { primary: '#1d2b4f', secondary: '#4caf50', shorts: '#1d2b4f', socks: '#1d2b4f', pattern: 'solid' },
+    crest: { shape: 'shield', icon: 'lion', colors: ['#e2231a', '#ffffff', '#1d2b4f'] }, stadium: { name: 'San Mamés Berria', capacity: 53000, seats: '#e2231a', roof: true }, foreignShare: 0.05 }),
+  T({ id: 'rom-lupi', name: 'Roma Lupi', short: 'ROM', city: 'Rome', country: 'Italy', league: 'Serie Nazionale', rating: 81, style: 'counter',
+    home: { primary: '#8e1f2f', secondary: '#f0a830', shorts: '#ffffff', socks: '#8e1f2f', pattern: 'solid' }, away: { primary: '#f4f1ea', secondary: '#8e1f2f', shorts: '#f4f1ea', socks: '#f4f1ea', pattern: 'chevron' },
+    crest: { shape: 'circle', icon: 'sun', colors: ['#8e1f2f', '#f0a830', '#ffffff'] }, stadium: { name: 'Stadio dei Colli', capacity: 70000, seats: '#8e1f2f', roof: false }, foreignShare: 0.55 }),
+  T({ id: 'fra-adler', name: 'Frankfurt Adler', short: 'FRA', city: 'Frankfurt', country: 'Germany', league: 'Bundesklasse', rating: 79, style: 'counter',
+    home: { primary: '#111111', secondary: '#e1000f', shorts: '#111111', socks: '#111111', pattern: 'sash' }, away: { primary: '#ffffff', secondary: '#e1000f', shorts: '#ffffff', socks: '#ffffff', pattern: 'solid' },
+    crest: { shape: 'diamond', icon: 'eagle', colors: ['#111111', '#e1000f', '#ffffff'] }, stadium: { name: 'Waldarena', capacity: 58000, seats: '#e1000f', roof: true }, foreignShare: 0.5 }),
+  T({ id: 'lyo-lumiere', name: 'Lyon Lumière', short: 'LYO', city: 'Lyon', country: 'France', league: 'Ligue Nationale', rating: 78, style: 'possession',
+    home: { primary: '#ffffff', secondary: '#1b3fa0', shorts: '#ffffff', socks: '#ffffff', pattern: 'chevron' }, away: { primary: '#1b3fa0', secondary: '#e2231a', shorts: '#1b3fa0', socks: '#1b3fa0', pattern: 'solid' },
+    crest: { shape: 'hex', icon: 'lion', colors: ['#1b3fa0', '#e2231a', '#ffffff'] }, stadium: { name: 'Parc des Lumières', capacity: 59000, seats: '#1b3fa0', roof: true }, foreignShare: 0.45 }),
+  T({ id: 'rot-havenstad', name: 'Rotterdam Havenstad', short: 'ROT', city: 'Rotterdam', country: 'Netherlands', league: 'Eredivisie Noord', rating: 77, style: 'pressing',
+    home: { primary: '#e2231a', secondary: '#ffffff', shorts: '#111111', socks: '#111111', pattern: 'halves' }, away: { primary: '#111111', secondary: '#e2231a', shorts: '#111111', socks: '#111111', pattern: 'solid' },
+    crest: { shape: 'circle', icon: 'anchor', colors: ['#e2231a', '#ffffff', '#111111'] }, stadium: { name: 'De Haven', capacity: 47000, seats: '#e2231a', roof: true }, foreignShare: 0.4 }),
+  T({ id: 'por-dragoes', name: 'Porto Dragões', short: 'POR', city: 'Porto', country: 'Portugal', league: 'Liga Atlântica', rating: 79, style: 'pressing',
+    home: { primary: '#1d4ba0', secondary: '#ffffff', shorts: '#1d4ba0', socks: '#1d4ba0', pattern: 'stripes' }, away: { primary: '#f7a21b', secondary: '#1d4ba0', shorts: '#f7a21b', socks: '#f7a21b', pattern: 'solid' },
+    crest: { shape: 'shield', icon: 'eagle', colors: ['#1d4ba0', '#ffffff', '#f7c948'] }, stadium: { name: 'Estádio do Dragão Azul', capacity: 50000, seats: '#1d4ba0', roof: true }, foreignShare: 0.5 }),
+  T({ id: 'bru-blauwzwart', name: 'Brugge Blauw-Zwart', short: 'BRU', city: 'Bruges', country: 'Belgium', league: 'Pro League Belge', rating: 75, style: 'counter',
+    home: { primary: '#0f4ea8', secondary: '#111111', shorts: '#111111', socks: '#111111', pattern: 'stripes' }, away: { primary: '#ffffff', secondary: '#0f4ea8', shorts: '#ffffff', socks: '#ffffff', pattern: 'solid' },
+    crest: { shape: 'shield', icon: 'tower', colors: ['#0f4ea8', '#111111', '#ffffff'] }, stadium: { name: 'Jan Breydel Park', capacity: 29000, seats: '#0f4ea8', roof: true }, foreignShare: 0.55 }),
+  T({ id: 'bxl-mauves', name: 'Bruxelles Mauves', short: 'BXL', city: 'Brussels', country: 'Belgium', league: 'Pro League Belge', rating: 74, style: 'possession',
+    home: { primary: '#5b2a86', secondary: '#ffffff', shorts: '#ffffff', socks: '#5b2a86', pattern: 'solid' }, away: { primary: '#ffffff', secondary: '#5b2a86', shorts: '#5b2a86', socks: '#ffffff', pattern: 'pinstripe' },
+    crest: { shape: 'circle', icon: 'crown', colors: ['#5b2a86', '#ffffff', '#c9a227'] }, stadium: { name: 'Parc Royal', capacity: 22000, seats: '#5b2a86', roof: true }, foreignShare: 0.5 }),
+  T({ id: 'gla-hoops', name: 'Glasgow Hoops', short: 'GLH', city: 'Glasgow', country: 'Scotland', league: 'Caledonian League', rating: 76, style: 'possession',
+    home: { primary: '#108a43', secondary: '#ffffff', shorts: '#ffffff', socks: '#ffffff', pattern: 'hoops' }, away: { primary: '#111111', secondary: '#f7c948', shorts: '#111111', socks: '#111111', pattern: 'solid' },
+    crest: { shape: 'circle', icon: 'star', colors: ['#108a43', '#ffffff', '#f7c948'] }, stadium: { name: 'Parkside', capacity: 60000, seats: '#108a43', roof: true }, foreignShare: 0.55 }),
+  T({ id: 'gla-thistle', name: 'Glasgow Thistle', short: 'GLT', city: 'Glasgow', country: 'Scotland', league: 'Caledonian League', rating: 75, style: 'direct',
+    home: { primary: '#1b3fa0', secondary: '#ffffff', shorts: '#ffffff', socks: '#111111', pattern: 'solid' }, away: { primary: '#ffffff', secondary: '#e2231a', shorts: '#ffffff', socks: '#ffffff', pattern: 'sash' },
+    crest: { shape: 'shield', icon: 'lion', colors: ['#1b3fa0', '#e2231a', '#ffffff'] }, stadium: { name: 'Thistle Hill', capacity: 50000, seats: '#1b3fa0', roof: true }, foreignShare: 0.55 }),
+  T({ id: 'ist-aslanlar', name: 'Istanbul Aslanlar', short: 'IST', city: 'Istanbul', country: 'Turkey', league: 'Süper Lig Anadolu', rating: 78, style: 'counter',
+    home: { primary: '#f7a21b', secondary: '#a6192e', shorts: '#a6192e', socks: '#a6192e', pattern: 'halves' }, away: { primary: '#111111', secondary: '#f7a21b', shorts: '#111111', socks: '#111111', pattern: 'solid' },
+    crest: { shape: 'circle', icon: 'lion', colors: ['#a6192e', '#f7a21b', '#ffffff'] }, stadium: { name: 'Aslan Arena', capacity: 52000, seats: '#a6192e', roof: true }, foreignShare: 0.5 }),
+  T({ id: 'ist-kanaryalar', name: 'Istanbul Kanaryalar', short: 'KAN', city: 'Istanbul', country: 'Turkey', league: 'Süper Lig Anadolu', rating: 77, style: 'pressing',
+    home: { primary: '#f7d417', secondary: '#13235a', shorts: '#ffffff', socks: '#13235a', pattern: 'stripes' }, away: { primary: '#13235a', secondary: '#f7d417', shorts: '#13235a', socks: '#13235a', pattern: 'solid' },
+    crest: { shape: 'hex', icon: 'star', colors: ['#13235a', '#f7d417', '#ffffff'] }, stadium: { name: 'Kadıköy Park', capacity: 47000, seats: '#f7d417', roof: true }, foreignShare: 0.5 }),
+  T({ id: 'mex-aguilas', name: 'Ciudad de México Águilas', short: 'CMX', city: 'Mexico City', country: 'Mexico', league: 'Liga Azteca', rating: 75, style: 'direct',
+    home: { primary: '#f7d417', secondary: '#13235a', shorts: '#13235a', socks: '#f7d417', pattern: 'solid' }, away: { primary: '#13235a', secondary: '#f7d417', shorts: '#13235a', socks: '#13235a', pattern: 'chevron' },
+    crest: { shape: 'shield', icon: 'eagle', colors: ['#13235a', '#f7d417', '#e2231a'] }, stadium: { name: 'Estadio del Valle', capacity: 83000, seats: '#f7d417', roof: false }, foreignShare: 0.3 }),
+  T({ id: 'mty-sultanes', name: 'Monterrey Sultanes', short: 'MTY', city: 'Monterrey', country: 'Mexico', league: 'Liga Azteca', rating: 74, style: 'counter',
+    home: { primary: '#13235a', secondary: '#ffffff', shorts: '#13235a', socks: '#13235a', pattern: 'stripes' }, away: { primary: '#ffffff', secondary: '#13235a', shorts: '#ffffff', socks: '#ffffff', pattern: 'solid' },
+    crest: { shape: 'diamond', icon: 'tower', colors: ['#13235a', '#ffffff', '#c9a227'] }, stadium: { name: 'Cerro Arena', capacity: 53000, seats: '#13235a', roof: true }, foreignShare: 0.35 }),
 ];
-
 export const TEAM_BY_ID: Record<string, Team> = Object.fromEntries(TEAMS.map((t) => [t.id, t]));
 export const LEAGUES = Array.from(new Set(TEAMS.map((t) => t.league)));
-
-/* ---------------------------- name pools ---------------------------- */
-const NAMES: Record<string, { first: string[]; last: string[] }> = {
-  England: { first: ['Harry', 'Jack', 'Oliver', 'Callum', 'Reece', 'Marcus', 'Declan', 'Mason', 'Jude', 'Kyle', 'Jordan', 'Lewis', 'Trent', 'Conor', 'Aaron'], last: ['Walker', 'Stones', 'Hughes', 'Bennett', 'Shaw', 'Barnes', 'Foden', 'Wright', 'Palmer', 'Grealish', 'Mount', 'Mills', 'Hardy', 'Clarke', 'Dawson'] },
-  Spain: { first: ['Pablo', 'Álvaro', 'Dani', 'Marcos', 'Sergio', 'Rodrigo', 'Iker', 'Álex', 'Mikel', 'Jordi', 'Nico', 'Unai', 'Pedri', 'Ferran', 'Gavi'], last: ['García', 'Hernández', 'Torres', 'Navarro', 'Ruiz', 'Morales', 'Iglesias', 'Vidal', 'Castro', 'Soler', 'Olmo', 'Llorente', 'Asensio', 'Merino', 'Oyarzabal'] },
-  Italy: { first: ['Marco', 'Lorenzo', 'Alessandro', 'Federico', 'Giovanni', 'Nicolò', 'Matteo', 'Davide', 'Sandro', 'Riccardo', 'Gianluca', 'Leonardo', 'Manuel', 'Giacomo', 'Andrea'], last: ['Rossi', 'Bianchi', 'Romano', 'Ricci', 'Conti', 'Esposito', 'Greco', 'Lombardi', 'Barella', 'Moretti', 'Pellegrini', 'Chiesa', 'Scalvini', 'Locatelli', 'Raspadori'] },
-  Germany: { first: ['Leon', 'Jonas', 'Florian', 'Kai', 'Joshua', 'Niklas', 'Julian', 'Robin', 'Jamal', 'Maximilian', 'Tim', 'Lukas', 'Benjamin', 'Nico', 'Ilkay'], last: ['Müller', 'Schmidt', 'Fischer', 'Weber', 'Wagner', 'Becker', 'Hofmann', 'Koch', 'Richter', 'Wirtz', 'Brandt', 'Kimmich', 'Havertz', 'Gnabry', 'Schlotterbeck'] },
-  France: { first: ['Kylian', 'Antoine', 'Ousmane', 'Théo', 'Jules', 'Aurélien', 'Eduardo', 'Hugo', 'Mathis', 'Rayan', 'Warren', 'Bradley', 'Benjamin', 'Dayot', 'Olivier'], last: ['Martin', 'Bernard', 'Dubois', 'Laurent', 'Lefebvre', 'Moreau', 'Girard', 'Fournier', 'Camavinga', 'Thuram', 'Koundé', 'Upamecano', 'Mendy', 'Barcola', 'Zaïre'] },
-  Netherlands: { first: ['Virgil', 'Frenkie', 'Cody', 'Xavi', 'Denzel', 'Jurrien', 'Teun', 'Tijjani', 'Daley', 'Jeremie', 'Ryan', 'Lutsharel', 'Micky', 'Joshua', 'Bart'], last: ['de Jong', 'van Dijk', 'Gakpo', 'Simons', 'Dumfries', 'Timber', 'Koopmeiners', 'Reijnders', 'Blind', 'Frimpong', 'Gravenberch', 'Geertruida', 'van de Ven', 'Zirkzee', 'Verbruggen'] },
-  Portugal: { first: ['João', 'Bruno', 'Rafael', 'Rúben', 'Bernardo', 'Diogo', 'Gonçalo', 'Nuno', 'Vitinha', 'Pedro', 'Francisco', 'Tiago', 'André', 'Matheus', 'Rúben'], last: ['Silva', 'Fernandes', 'Leão', 'Dias', 'Neves', 'Costa', 'Ramos', 'Mendes', 'Santos', 'Pereira', 'Conceição', 'Trincão', 'Nunes', 'Palhinha', 'Vieira'] },
-  USA: { first: ['Christian', 'Weston', 'Tyler', 'Gio', 'Folarin', 'Ricardo', 'Antonee', 'Yunus', 'Chris', 'Tim', 'Brenden', 'Matt', 'Malik', 'Josh', 'Sergiño'], last: ['Pulisic', 'McKennie', 'Adams', 'Reyna', 'Balogun', 'Pepi', 'Robinson', 'Musah', 'Richards', 'Weah', 'Aaronson', 'Turner', 'Tillman', 'Sargent', 'Dest'] },
-  Brazil: { first: ['Vinícius', 'Rodrygo', 'Raphinha', 'Endrick', 'Bruno', 'Lucas', 'Gabriel', 'Marquinhos', 'Éder', 'Casemiro', 'Richarlison', 'Matheus', 'Danilo', 'Alisson', 'Savinho'], last: ['Júnior', 'Silva', 'Souza', 'Oliveira', 'Santos', 'Lima', 'Pereira', 'Costa', 'Martinelli', 'Paquetá', 'Guimarães', 'Cunha', 'Militão', 'Andrade', 'Ribeiro'] },
-  Argentina: { first: ['Lionel', 'Julián', 'Enzo', 'Alexis', 'Rodrigo', 'Lautaro', 'Nicolás', 'Cristian', 'Emiliano', 'Lisandro', 'Nahuel', 'Giovani', 'Thiago', 'Exequiel', 'Leandro'], last: ['Álvarez', 'Fernández', 'Mac Allister', 'De Paul', 'Martínez', 'Otamendi', 'Romero', 'Paredes', 'Molina', 'Lo Celso', 'Almada', 'Palacios', 'Garnacho', 'Tagliafico', 'Acuña'] },
-  Japan: { first: ['Takefusa', 'Kaoru', 'Ritsu', 'Wataru', 'Daichi', 'Takumi', 'Hiroki', 'Ayase', 'Ko', 'Junya', 'Keito', 'Reo', 'Yuki', 'Shogo', 'Zion'], last: ['Kubo', 'Mitoma', 'Doan', 'Endo', 'Kamada', 'Minamino', 'Ito', 'Ueda', 'Itakura', 'Nakamura', 'Tanaka', 'Hatate', 'Soma', 'Taniguchi', 'Suzuki'] },
-  'Saudi Arabia': { first: ['Salem', 'Saud', 'Firas', 'Ali', 'Abdullah', 'Mohammed', 'Turki', 'Nasser', 'Fahad', 'Sultan', 'Hassan', 'Yasser', 'Khalid', 'Abdulrahman', 'Marwan'], last: ['Al-Dawsari', 'Al-Buraikan', 'Al-Shehri', 'Al-Hassan', 'Al-Malki', 'Al-Najei', 'Al-Ghannam', 'Al-Oboud', 'Al-Shahrani', 'Kanno', 'Al-Harbi', 'Al-Bulayhi', 'Al-Tambakti', 'Al-Amri', 'Madu'] },
-  Nigeria: { first: ['Victor', 'Ademola', 'Samuel', 'Kelechi', 'Alex', 'Wilfred', 'Calvin', 'Frank', 'Taiwo', 'Moses'], last: ['Osimhen', 'Lookman', 'Chukwueze', 'Iheanacho', 'Iwobi', 'Ndidi', 'Bassey', 'Onyeka', 'Awoniyi', 'Simon'] },
-  Senegal: { first: ['Sadio', 'Kalidou', 'Idrissa', 'Ismaïla', 'Boulaye', 'Nicolas', 'Iliman', 'Pape', 'Habib', 'Lamine'], last: ['Mané', 'Koulibaly', 'Gueye', 'Sarr', 'Dia', 'Jackson', 'Ndiaye', 'Diallo', 'Camara', 'Diatta'] },
-  Belgium: { first: ['Kevin', 'Romelu', 'Jérémy', 'Leandro', 'Youri', 'Charles', 'Amadou', 'Arthur', 'Loïs', 'Johan'], last: ['De Bruyne', 'Lukaku', 'Doku', 'Trossard', 'Tielemans', 'De Ketelaere', 'Onana', 'Theate', 'Openda', 'Bakayoko'] },
-  Croatia: { first: ['Luka', 'Joško', 'Mateo', 'Ivan', 'Andrej', 'Marcelo', 'Lovro', 'Bruno', 'Josip', 'Borna'], last: ['Modrić', 'Gvardiol', 'Kovačić', 'Perišić', 'Kramarić', 'Brozović', 'Majer', 'Petković', 'Stanišić', 'Sosa'] },
-  'South Korea': { first: ['Heung-min', 'Min-jae', 'Kang-in', 'Hwang', 'Woo-yeong', 'Jin-su', 'Sang-ho', 'Seung-ho', 'Hyun-woo', 'Tae-hwan'], last: ['Son', 'Kim', 'Lee', 'Hee-chan', 'Jeong', 'Park', 'Na', 'Paik', 'Jo', 'Oh'] },
-  Mexico: { first: ['Hirving', 'Edson', 'Santiago', 'Raúl', 'César', 'Johan', 'Luis', 'Jorge', 'Orbelín', 'Uriel'], last: ['Lozano', 'Álvarez', 'Giménez', 'Jiménez', 'Montes', 'Vásquez', 'Chávez', 'Sánchez', 'Pineda', 'Antuna'] },
-  Norway: { first: ['Erling', 'Martin', 'Alexander', 'Sander', 'Antonio', 'Oscar', 'Kristoffer', 'Fredrik', 'Jørgen', 'Leo'], last: ['Haaland', 'Ødegaard', 'Sørloth', 'Berge', 'Nusa', 'Bobb', 'Ajer', 'Aursnes', 'Larsen', 'Østigård'] },
-  Uruguay: { first: ['Federico', 'Darwin', 'Ronald', 'Manuel', 'Rodrigo', 'Facundo', 'Matías', 'Nicolás', 'Maximiliano', 'Sebastián'], last: ['Valverde', 'Núñez', 'Araújo', 'Ugarte', 'Bentancur', 'Pellistri', 'Viña', 'de la Cruz', 'Gómez', 'Cáceres'] },
-};
-const FOREIGN_POOL = ['Nigeria', 'Senegal', 'Belgium', 'Croatia', 'South Korea', 'Mexico', 'Norway', 'Uruguay', 'Brazil', 'Argentina', 'France', 'Spain', 'Portugal', 'Netherlands', 'England', 'Germany', 'Italy'];
 
 export const SQUAD_TEMPLATE: Position[] = ['GK', 'GK', 'CB', 'CB', 'CB', 'LB', 'RB', 'RB', 'CDM', 'CM', 'CM', 'CAM', 'LM', 'RM', 'LW', 'RW', 'ST', 'ST'];
 export const STARTING_XI_433: Position[] = ['GK', 'RB', 'CB', 'CB', 'LB', 'CDM', 'CM', 'CAM', 'RW', 'ST', 'LW'];
@@ -162,43 +186,85 @@ function attrsFor(pos: Position, rating: number, rng: Rng): PlayerAttributes {
 
 function rarityFor(rating: number): PlayerCard['rarity'] { return rating >= 86 ? 'elite' : rating >= 75 ? 'gold' : rating >= 65 ? 'silver' : 'bronze'; }
 
-/** Deterministically generate a club's squad from its id. */
-export function generateRoster(team: Team): PlayerCard[] {
-  const rng = new Rng(`roster:${team.id}`);
-  const used = new Set<string>();
-  const numbers = rng.shuffle(Array.from({ length: 30 }, (_, i) => i + 2));
-  return SQUAD_TEMPLATE.map((pos, idx) => {
-    const foreign = rng.bool(team.foreignShare);
-    const nat = foreign ? rng.pick(FOREIGN_POOL.filter((c) => c !== team.country)) : team.country;
-    const pool = NAMES[nat] ?? NAMES.England;
-    let first = rng.pick(pool.first); let last = rng.pick(pool.last);
-    let guard = 0;
-    while (used.has(`${first} ${last}`) && guard++ < 20) { first = rng.pick(pool.first); last = rng.pick(pool.last); }
-    used.add(`${first} ${last}`);
-    const starter = idx === 0 || (idx >= 2 && idx <= 4) || idx === 5 || idx === 6 || idx === 8 || idx === 9 || idx === 11 || idx === 14 || idx === 15 || idx === 16;
-    const rating = Math.round(Math.max(55, Math.min(94, team.rating + (starter ? rng.gauss(0, 3) : rng.gauss(-7, 4)))));
-    return {
-      id: `${team.id}:${idx}`,
-      name: `${first} ${last}`,
-      shortName: last.length > 10 ? `${first[0]}. ${last}` : last,
-      nationality: nat,
-      teamId: team.id,
-      position: pos,
-      rating,
-      number: pos === 'GK' ? (idx === 0 ? 1 : numbers.pop()!) : numbers.pop()!,
-      age: rng.int(19, 34),
-      look: { skin: rng.int(0, 5), hair: rng.int(0, 5), hairColor: rng.int(0, 4), height: rng.range(1.72, 1.94), build: rng.range(0.9, 1.1) },
-      attrs: attrsFor(pos, rating, rng),
-      rarity: rarityFor(rating),
-    };
-  });
+/** Every club's squad, generated together and deterministically (the same world on the server and in the browser).
+ *  Names are allocated across the whole world from large per-nationality pools, least-used first, so surnames rarely
+ *  repeat and given names repeat little. The repeats that do happen are mostly brothers: now and then a player is the
+ *  brother of someone already in the same league (sometimes in the same squad), sharing surname and nationality. */
+function generateWorld(): Map<string, PlayerCard[]> {
+  const world = new Map<string, PlayerCard[]>();
+  const rng = new Rng('world:rosters:v2');
+  const lastUse = new Map<string, number>(); const firstUse = new Map<string, number>();
+  type Entry = { nat: string; first: string; last: string; age: number; team: string; card: PlayerCard };
+  const byLeague = new Map<string, Entry[]>();
+  const leastUsed = (pool: string[], use: Map<string, number>, nat: string, avoid?: Set<string>) => {
+    const ok = pool.filter((x) => !avoid?.has(x)); const from = ok.length ? ok : pool;
+    let min = Infinity; for (const x of from) min = Math.min(min, use.get(x) ?? 0);
+    return rng.pick(from.filter((x) => (use.get(x) ?? 0) === min));
+  };
+  const names = (n: string) => NAMES[n] ?? NAMES.England;
+  for (const team of TEAMS) {
+    const trng = new Rng(`roster:${team.id}`);
+    const numbers = trng.shuffle(Array.from({ length: 30 }, (_, i) => i + 2));
+    const league = byLeague.get(team.league) ?? []; byLeague.set(team.league, league);
+    const squad: PlayerCard[] = [];
+    SQUAD_TEMPLATE.forEach((pos, idx) => {
+      let nat = trng.bool(team.foreignShare) ? trng.pick(FOREIGN_POOL.filter((c) => c !== team.country)) : team.country;
+      let age = trng.int(19, 34); let brotherOf: Entry | null = null;
+      // Brothers: about one player in 15 has a brother already in the league (sometimes in the same squad).
+      if (rng.bool(0.065)) {
+        const single = league.filter((p) => league.filter((q) => q.last === p.last).length === 1);
+        const pool = rng.bool(0.3) ? single.filter((p) => p.team === team.id) : single.filter((p) => p.team !== team.id);
+        if (pool.length) brotherOf = rng.pick(pool);
+      }
+      let first: string, last: string;
+      if (brotherOf) {
+        nat = brotherOf.nat; last = brotherOf.last;
+        first = leastUsed(names(nat).first, firstUse, nat, new Set(league.filter((p) => p.last === last && p.nat === nat).map((p) => p.first)));
+        age = Math.max(18, Math.min(36, brotherOf.age + (rng.bool(0.5) ? 1 : -1) * rng.int(1, 4)));
+      } else {
+        // a fresh surname: the least used in the world, and never one already in this league (that would read as a brother)
+        const inLeague = new Set(league.map((p) => p.last));
+        last = leastUsed(names(nat).last, lastUse, nat, inLeague);
+        first = leastUsed(names(nat).first, firstUse, nat);
+      }
+      lastUse.set(last, (lastUse.get(last) ?? 0) + 1);
+      firstUse.set(first, (firstUse.get(first) ?? 0) + 1);
+      const starter = idx === 0 || (idx >= 2 && idx <= 4) || idx === 5 || idx === 6 || idx === 8 || idx === 9 || idx === 11 || idx === 14 || idx === 15 || idx === 16;
+      const rating = Math.round(Math.max(55, Math.min(94, team.rating + (starter ? trng.gauss(0, 3) : trng.gauss(-7, 4)))));
+      const card: PlayerCard = {
+        id: `${team.id}:${idx}`,
+        name: `${first} ${last}`,
+        shortName: last.length > 10 ? `${first[0]}. ${last}` : last,
+        nationality: nat,
+        teamId: team.id,
+        position: pos,
+        rating,
+        number: pos === 'GK' ? (idx === 0 ? 1 : numbers.pop()!) : numbers.pop()!,
+        age,
+        look: { skin: trng.int(0, 5), hair: trng.int(0, 5), hairColor: trng.int(0, 4), height: trng.range(1.72, 1.94), build: trng.range(0.9, 1.1) },
+        attrs: attrsFor(pos, rating, trng),
+        rarity: rarityFor(rating),
+      };
+      if (brotherOf) {
+        // family likeness; brothers in the same squad are told apart by an initial on the shirt
+        card.look = { ...card.look, skin: brotherOf.card.look.skin, hairColor: brotherOf.card.look.hairColor };
+        if (brotherOf.team === team.id) { card.shortName = `${first[0]}. ${last}`; brotherOf.card.shortName = `${brotherOf.first[0]}. ${last}`; }
+      }
+      squad.push(card);
+      league.push({ nat, first, last, age, team: team.id, card });
+    });
+    world.set(team.id, squad);
+  }
+  return world;
 }
+let worldCache: Map<string, PlayerCard[]> | null = null;
 
-const rosterCache = new Map<string, PlayerCard[]>();
+/** A club's squad (generated with the rest of the world, deterministically). */
+export function generateRoster(team: Team): PlayerCard[] { return rosterOf(team.id); }
+
 export function rosterOf(teamId: string): PlayerCard[] {
-  let r = rosterCache.get(teamId);
-  if (!r) { r = generateRoster(TEAM_BY_ID[teamId]); rosterCache.set(teamId, r); }
-  return r;
+  worldCache ??= generateWorld();
+  return worldCache.get(teamId)!;
 }
 export function allPlayers(): PlayerCard[] { return TEAMS.flatMap((t) => rosterOf(t.id)); }
 export function playerById(id: string): PlayerCard | undefined { const teamId = id.split(':')[0]; return rosterOf(teamId)?.find((p) => p.id === id); }

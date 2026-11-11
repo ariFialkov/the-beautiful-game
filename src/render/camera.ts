@@ -30,11 +30,17 @@ class Damp3 {
 }
 
 export type CamMode = 'broadcast' | 'low' | 'behindGoal' | 'drone' | 'closeup' | 'freekick' | 'showcase';
+/** The match camera the player picks: Tele (tight broadcast, the default), High broadcast, Ball cam, End-to-end. */
+export type CamStyle = 'tele' | 'high' | 'ball' | 'end';
+export const CAM_STYLES: Array<{ id: CamStyle; label: string }> = [{ id: 'tele', label: 'Tele' }, { id: 'high', label: 'High Broadcast' }, { id: 'ball', label: 'Ball Cam' }, { id: 'end', label: 'End-to-End' }];
 
 /** Broadcast camera in the style of EA FC's "Tele Broadcast": tracks a smoothed focus point driven by the ball,
  *  shifted toward the direction of play of the team in possession, with no shake and long blends between shots. */
 export class CameraRig {
   mode: CamMode = 'broadcast';
+  style: CamStyle = 'tele';
+  /** End-to-end camera: the direction the player's team attacks (the camera sits behind them). */
+  endDir = 1;
   heightMul = 1;
   private pos = new THREE.Vector3(0, 30, -60);
   private look = new THREE.Vector3();
@@ -59,23 +65,42 @@ export class CameraRig {
   /** Start a soft blend (e.g. coming back from a celebration close-up). */
   softBlend(seconds = 1.2) { this.blend = Math.max(this.blend, seconds); }
 
-  /** Where the broadcast camera wants to be for the current smoothed focus. */
+  /** Where the match camera wants to be for the current smoothed focus, for the chosen style. */
   private broadcastPose(outPos: THREE.Vector3, outLook: THREE.Vector3) {
     const L = this.pitchLength, W = this.pitchWidth; const scale = L / 105; const h = this.heightMul;
     const fx = this.focusX, fz = this.focusZ;
     // Narrow (portrait) screens: pull back and up so enough of the pitch's length is in view.
     const wide = this.camera.aspect < 1.2 ? 1 + (1.2 - this.camera.aspect) * 0.9 : 1;
     const small = scale < 0.6 ? 1 : 0; // futsal court: a little further back and up so quick high balls stay in shot
-    const back = (W / 2 + 7 * scale) * (0.6 + 0.4 * h) + small * 3;
+    if (this.style === 'end') {
+      // End-to-end: behind the player's team, looking up the pitch the way they attack, sliding across with the ball.
+      const d = this.endDir; const back = (20 + 6 * h) * (0.45 + 0.55 * scale);
+      const x = THREE.MathUtils.clamp(fx - d * back, -L / 2 - 10 * scale, L / 2 + 10 * scale);
+      const over = Math.max(0, Math.abs(x) - L / 2); // behind the goal line: rise over the end stand
+      outPos.set(x, ((10 + 4 * h) * (0.5 + 0.5 * scale) + over * 0.6) * wide, fz * 0.7);
+      outLook.set(fx + d * 6 * scale, this.lookY, fz * 0.92);
+      this.refDist = 0; return;
+    }
+    const base = (W / 2 + 7 * scale) * (0.6 + 0.4 * h) + small * 3;
+    const far = Math.max(0, fz) / (W / 2), near = Math.max(0, -fz) / (W / 2);
+    if (this.style === 'ball') {
+      // Ball cam: low and close on the near side, following the ball across the pitch.
+      const back = base * 0.55;
+      outPos.set(fx * 0.97, (6.5 * h * (0.55 + 0.45 * scale) + small) * wide, -(back + (wide - 1) * 10 * scale) + fz * 0.45);
+      outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.9 - 1.5 * scale, -W / 2, W / 2));
+      this.refDist = 0; return;
+    }
+    const high = this.style === 'high';
+    const back = base * (high ? 1.12 : 1) + (high ? 4 * scale : 0);
     // Dolly with play across the pitch: well in toward the far touchline (and a little higher, to see between the
     // players), only slightly back for the near side (the near stand's roof is behind).
-    const far = Math.max(0, fz) / (W / 2), near = Math.max(0, -fz) / (W / 2);
-    const dolly = far * W * 0.24 - near * W * 0.07;
+    const dolly = (far * W * 0.24 - near * W * 0.07) * (high ? 0.6 : 1);
     const lift = far * 3 * scale;
-    outPos.set(fx * 0.95, ((11.5 + lift) * h * (0.5 + 0.5 * scale) + small * 1.5) * wide, -(back + (wide - 1) * 14 * scale) + dolly);
+    const y0 = (high ? 21 : 11.5) * h * (0.5 + 0.5 * scale) + small * 1.5;
+    outPos.set(fx * 0.95, (y0 + lift) * wide, -(back + (wide - 1) * 14 * scale) + dolly);
     // distance to centre-pitch play for this screen shape: the zoom is relative to it
-    this.refDist = Math.hypot(back + (wide - 1) * 14 * scale, (11.5 * h * (0.5 + 0.5 * scale) + small * 1.5) * wide - 0.5);
-    outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * 0.72 - 3 * scale, -W / 2, W / 2));
+    this.refDist = Math.hypot(back + (wide - 1) * 14 * scale, y0 * wide - 0.5);
+    outLook.set(fx, this.lookY, THREE.MathUtils.clamp(fz * (high ? 0.8 : 0.72) - 3 * scale, -W / 2, W / 2));
   }
 
   /** target = ball position; lead.x = direction of play of the team in possession (-1..1, 0 when loose). */
@@ -103,7 +128,7 @@ export class CameraRig {
       const want = edge > 0.55 && this.blend < 0.6 ? Math.min(1, (edge - 0.55) / 0.35) : 0;
       this.urgency += (want - this.urgency) * (1 - Math.exp(-dt / 0.25)); // eased, so the catch-up never snaps
       // Narrow (portrait) screens see less of the pitch, so track tighter.
-      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.6, 1);
+      const narrow = THREE.MathUtils.clamp(this.camera.aspect / 1.78, 0.6, 1) * (this.style === 'ball' ? 0.7 : this.style === 'end' ? 0.55 : 1);
       const glide = 0.7 * Math.min(1, this.blend / 1.2); // slower focus while gliding to a restart
       this.focusX = smoothDamp(this.focusX, tx, this.fvx, (0.8 - 0.45 * this.urgency) * narrow + glide, Math.max(22 * scale, 14), dt);
       this.focusZ = smoothDamp(this.focusZ, target.z, this.fvz, (1.1 - 0.6 * this.urgency) * narrow * (0.6 + 0.4 * scale) + glide, Math.max(16 * scale, 9), dt);
@@ -113,10 +138,13 @@ export class CameraRig {
       const p = new THREE.Vector3(), l = new THREE.Vector3(); this.broadcastPose(p, l);
       // Zoom: keep play on the far side as readable as near-side play (narrower field of view the further the
       // action is from the camera), and ease out a touch for long, fast balls and when the ball nears the frame edge.
+      // Tele sits tighter than a plain broadcast camera; End-to-end and Ball cam keep a fixed framing.
       const ref = this.refDist;
       const dist = Math.hypot(p.y - 0.5, p.z - this.focusZ);
       const fast = THREE.MathUtils.clamp((this.ballSpeed - 12) / 18, 0, 1);
-      const zoomWant = THREE.MathUtils.clamp(Math.pow(ref / dist, 1.0), 0.64, 1.12) * (1 + 0.1 * fast + 0.08 * this.urgency);
+      const styleZoom = this.style === 'tele' ? 0.82 : this.style === 'ball' ? 0.95 : 1;
+      const byDist = ref > 0 ? THREE.MathUtils.clamp(Math.pow(ref / dist, this.style === 'high' ? 0.6 : 1.0), 0.66, 1.12) : 1;
+      const zoomWant = styleZoom * byDist * (1 + 0.1 * fast + 0.08 * this.urgency);
       this.zoomTo(zoomWant, dt, 0.9);
       this.apply(p, l, dt);
       return;

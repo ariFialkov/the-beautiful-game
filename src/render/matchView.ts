@@ -28,6 +28,18 @@ export function makeBallMesh(radius = 0.11): THREE.Mesh {
   m.castShadow = true; return m;
 }
 
+/** Landing reticle texture: a ring with crosshair ticks (drawn once). */
+let reticleTex: THREE.CanvasTexture | null = null;
+function reticleTexture(): THREE.CanvasTexture {
+  if (reticleTex) return reticleTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d')!;
+  const ring = (w: number, color: string) => { g.strokeStyle = color; g.lineWidth = w; g.beginPath(); g.arc(64, 64, 44, 0, Math.PI * 2); g.stroke();
+    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; g.beginPath(); g.moveTo(64 + Math.cos(a) * 30, 64 + Math.sin(a) * 30); g.lineTo(64 + Math.cos(a) * 58, 64 + Math.sin(a) * 58); g.stroke(); }
+    g.beginPath(); g.arc(64, 64, 4, 0, Math.PI * 2); g.stroke(); };
+  ring(16, 'rgba(0,0,0,0.5)'); ring(8, '#ffffff');
+  reticleTex = new THREE.CanvasTexture(c); return reticleTex;
+}
+
 const lerpAngle = (a: number, b: number, t: number) => { let d = b - a; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return a + d * t; };
 
 /** Renders a Match into the shared Stage, interpolating between fixed simulation steps. */
@@ -44,6 +56,9 @@ export class MatchView {
   private goalCamT = 0;
   private pose = new Pose();
   private wasGoal = false;
+  /** FIFA-style landing marker for a ball in the air: sits where it will come down and grows as it drops. */
+  private reticle: THREE.Mesh;
+  private reticleAlpha = 0; private highBall = -1;
 
   constructor(private stage: Stage, public match: Match, night: boolean) {
     const [h, a] = match.opts.teams;
@@ -79,6 +94,9 @@ export class MatchView {
     this.ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.12, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }));
     this.ballShadow.rotation.x = -Math.PI / 2; this.ballShadow.position.y = 0.015;
     this.scene.add(this.ballShadow);
+    this.reticle = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: reticleTexture(), transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+    this.reticle.rotation.x = -Math.PI / 2; this.reticle.position.y = 0.025; this.reticle.renderOrder = 2; this.reticle.visible = false;
+    this.scene.add(this.reticle);
     this.rig = new CameraRig(stage.camera, match.pitch.length, match.pitch.width);
     this.rig.heightMul = state.settings.cameraHeight;
     this.rig.setFixed(new THREE.Vector3(0, 12, -(match.pitch.width / 2 + 9)), new THREE.Vector3(0, 0.4, -3));
@@ -104,6 +122,7 @@ export class MatchView {
     this.ballShadow.position.set(bx, 0.015, bz);
     const sh = Math.max(0.3, 1 - (by - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.35 * sh;
+    this.updateReticle(dt);
 
     // Camera: ball-driven broadcast framing, biased toward the direction of play of the team in possession.
     const target = new THREE.Vector3(bx, by, bz);
@@ -116,12 +135,43 @@ export class MatchView {
       const cam = sp.clone().add(new THREE.Vector3(-s.heading.x * 5.5, 1.6, -s.heading.z * 5.5 - 2));
       this.rig.moveTo(dt, cam, sp, 0.9);
     } else if (this.cinematic) this.rig.cinematic(dt, target, new THREE.Vector3(b.vx, 0, b.vz).normalize(), time);
-    else this.rig.update(dt, target, lead, time);
+    else { this.rig.endDir = m.teams[m.humanTeam ?? 0].attackDir; this.rig.update(dt, target, lead, time); }
     // controls follow the camera so left/right/up/down always match the screen
     m.controlBasis = groundBasis(this.stage.camera);
     this.sun.position.set(target.x - 40, 70, target.z - 50); this.sun.target.position.set(target.x, 0, target.z); this.sun.target.updateMatrixWorld();
     this.stadium.update(dt, time);
     this.weather.update(dt, this.stage.camera.position, time);
+  }
+
+  /** Where (and how soon) a ball in the air will land, from the predicted flight; the marker grows as it comes down. */
+  private updateReticle(dt: number) {
+    const m = this.match; const b = m.ball;
+    let land: { x: number; z: number; t: number; flight: number } | null = null;
+    if (!b.owner && !b.held && m.phase === 'play' && (b.y > 0.7 || b.vy > 2.5)) {
+      const path = m.predicted(); let top = b.y;
+      for (let i = 1; i < path.length; i++) {
+        top = Math.max(top, path[i].y);
+        if (path[i].y <= b.radius + 0.03 && path[i - 1].y > path[i].y) { land = { x: path[i].x, z: path[i].z, t: path[i].t, flight: top }; break; }
+      }
+      // still in the air at the end of the prediction (a big clearance): carry it on ballistically
+      if (!land && path.length > 2) {
+        const p = path[path.length - 1], q = path[path.length - 2]; const h = p.t - q.t || 1 / 30;
+        const vy = (p.y - q.y) / h; const y0 = p.y - b.radius; const tl = (vy + Math.sqrt(vy * vy + 2 * 9.81 * Math.max(0, y0))) / 9.81;
+        if (p.y > b.radius + 0.05) land = { x: p.x + p.vx * tl, z: p.z + p.vz * tl, t: p.t + tl, flight: top };
+      }
+      // a ball that has gone high is marked until it comes down (skimming balls don't need it)
+      if (land && land.flight >= 1.4) this.highBall = b.lastTouchTime;
+      if (land && this.highBall !== b.lastTouchTime) land = null;
+    }
+    const want = land ? 1 : 0;
+    this.reticleAlpha += (want - this.reticleAlpha) * Math.min(1, dt * (want ? 10 : 6));
+    const mat = this.reticle.material as THREE.MeshBasicMaterial;
+    if (land) {
+      this.reticle.position.x = land.x; this.reticle.position.z = land.z;
+      const s = 2.2 + 2.0 * (1 - Math.min(1, land.t / 1.8)); // smaller while it's high and far off, full size as it drops
+      this.reticle.scale.set(s, s, 1);
+    }
+    mat.opacity = this.reticleAlpha; this.reticle.visible = this.reticleAlpha > 0.02;
   }
 
   dispose() {

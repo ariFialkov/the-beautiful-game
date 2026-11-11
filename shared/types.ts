@@ -1,7 +1,7 @@
 /** Shared API contracts between the outcome server and the game client. */
 
 export type GameMode = 'kickoff' | 'futsal' | 'fut' | 'freekick';
-export type MatchTier = 'loss' | 'draw' | 'win' | 'bigwin';
+export type MatchTier = 'loss' | 'draw' | 'win' | 'bigwin' | 'otwin';
 export type FreeKickTier = 'loss' | 'win';
 export type Side = 'home' | 'away'; // home is always the human player's team
 
@@ -35,6 +35,9 @@ export interface MatchScript {
   durationSec: number;
   /** Baseline opponent strength 0..1 used when no goal is being forced. */
   botStrength: number;
+  /** Futsal only: regulation ends level and a sudden-death overtime (3v3, then 2v2, then 1v1) is decided by this side,
+   *  `at` seconds into overtime. The golden goal is included in `finalScore` but not in `events`. */
+  overtime?: { side: Side; at: number };
 }
 
 export type ShotStyle = 'curl' | 'power' | 'chip' | 'driven';

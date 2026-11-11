@@ -16,13 +16,14 @@ function pickScore(rng: Rng, mode: 'kickoff' | 'futsal' | 'fut', tier: MatchTier
     case 'loss': { const d = rng.weighted([[1, 0.55], [2, 0.32], [3, 0.13]] as const); return { home: loserGoals, away: loserGoals + d }; }
     case 'win': { const d = rng.weighted([[1, 0.62], [2, 0.38]] as const); return { home: loserGoals + d, away: loserGoals }; }
     case 'bigwin': { const d = rng.weighted([[3, 0.6], [4, 0.3], [5, 0.1]] as const); return { home: Math.min(loserGoals, 2) + d, away: Math.min(loserGoals, 2) }; }
+    case 'otwin': return pickScore(rng, mode, 'draw'); // level after regulation; decided in sudden death
   }
 }
 
 function drama(order: Side[], tier: MatchTier): number {
   // Reward sequences where the eventual result was in doubt: lead changes, trailing winners, late equalisers.
   let h = 0, a = 0, score = 0, prevLead = 0;
-  const winner: Side | null = tier === 'draw' ? null : tier === 'loss' ? 'away' : 'home';
+  const winner: Side | null = tier === 'draw' || tier === 'otwin' ? null : tier === 'loss' ? 'away' : 'home';
   order.forEach((s, i) => {
     if (s === 'home') h++; else a++;
     const lead = Math.sign(h - a);
@@ -35,7 +36,9 @@ function drama(order: Side[], tier: MatchTier): number {
 }
 
 export function generateMatchScript(rng: Rng, mode: 'kickoff' | 'futsal' | 'fut', tier: MatchTier, multiplier: number, botStrength: number): MatchScript {
-  const finalScore = pickScore(rng, mode, tier);
+  // Futsal sudden death: a sudden-death win, or now and then a defeat, comes after a level regulation game.
+  const otSide: Side | null = mode === 'futsal' ? (tier === 'otwin' ? 'home' : tier === 'loss' && rng.bool(0.25) ? 'away' : null) : null;
+  const finalScore = otSide ? pickScore(rng, mode, 'draw') : pickScore(rng, mode, tier);
   const total = finalScore.home + finalScore.away;
   const sides: Side[] = [...Array(finalScore.home).fill('home' as Side), ...Array(finalScore.away).fill('away' as Side)];
 
@@ -43,7 +46,7 @@ export function generateMatchScript(rng: Rng, mode: 'kickoff' | 'futsal' | 'fut'
   let best: Side[] = sides.slice(); let bestScore = -1;
   for (let i = 0; i < 8; i++) {
     const cand = rng.shuffle(sides.slice());
-    const s = drama(cand, tier) + rng.range(0, 1.2);
+    const s = drama(cand, otSide ? 'draw' : tier) + rng.range(0, 1.2);
     if (s > bestScore) { bestScore = s; best = cand; }
   }
 
@@ -57,6 +60,12 @@ export function generateMatchScript(rng: Rng, mode: 'kickoff' | 'futsal' | 'fut'
   times.sort((a, b) => a - b);
   const styles: GoalEvent['style'][] = ['open', 'counter', 'longshot', 'header', 'scramble'];
   const events: GoalEvent[] = best.map((side, i) => ({ t: times[i] ?? Math.min(0.97, 0.1 + i * 0.1), side, style: rng.weighted(styles.map((s, k) => [s, [0.4, 0.25, 0.15, 0.1, 0.1][k]] as const)) }));
+  if (otSide) {
+    // when the golden goal comes: during 3v3 (first 15 s), 2v2 (next 15 s) or 1v1
+    const at = rng.weighted([[0, 0.45], [1, 0.35], [2, 0.2]] as const) === 0 ? rng.range(4, 13.5) : rng.bool(0.35 / 0.55) ? rng.range(16.5, 28.5) : rng.range(32, 45);
+    finalScore[otSide]++;
+    return { kind: 'match', mode, tier, multiplier, finalScore, events, durationSec: MATCH_DURATIONS[mode], botStrength, overtime: { side: otSide, at } };
+  }
   return { kind: 'match', mode, tier, multiplier, finalScore, events, durationSec: MATCH_DURATIONS[mode], botStrength };
 }
 

@@ -48,10 +48,33 @@ test('the camera moves in and zooms for play on the far side, and widens for the
   const settle = (z: number) => { for (let i = 0; i < 60 * 5; i++) rig.update(1 / 60, new THREE.Vector3(5, 0.1, z), new THREE.Vector3(1, 0, 0), i / 60); return { fov: cam.fov, dist: cam.position.distanceTo(new THREE.Vector3(5, 0, z)) }; };
   const mid = settle(0), far = settle(28), near = settle(-28);
   console.log(`  fov: far ${far.fov.toFixed(1)}°, centre ${mid.fov.toFixed(1)}°, near ${near.fov.toFixed(1)}° · distance to play: far ${far.dist.toFixed(0)} m, centre ${mid.dist.toFixed(0)} m, near ${near.dist.toFixed(0)} m`);
-  assert.ok(Math.abs(mid.fov - 46) < 1.5, 'centre play: the normal framing');
-  assert.ok(far.fov < 46 * 0.85, 'far side: zoomed in');
+  assert.ok(Math.abs(mid.fov - 46 * 0.82) < 1.5, 'centre play: the Tele framing (tighter than the base lens)');
+  assert.ok(far.fov < mid.fov * 0.85, 'far side: zoomed in');
   assert.ok(far.dist < 60, 'far side: the camera has moved in toward the play');
-  assert.ok(near.fov > 46, 'near side: a little wider');
+  assert.ok(near.fov > mid.fov, 'near side: a little wider');
   // the ball stays in shot in each case
   for (const z of [28, -28, 0]) { settle(z); cam.updateMatrixWorld(); const n = new THREE.Vector3(5, 0.1, z).project(cam); assert.ok(Math.abs(n.x) < 0.9 && Math.abs(n.y) < 0.9, `ball in shot at z ${z}`); }
 });
+
+for (const style of ['high', 'ball', 'end'] as const) for (const futsal of [false, true]) {
+  test(`the ${style} camera follows play smoothly and keeps the ball in shot (${futsal ? 'futsal' : '11-a-side'})`, () => {
+    const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+    const five = (x: any[]) => [x[0], x[2], x[8], x[10], x[9]];
+    const pitch = futsal ? PITCH_FUTSAL : PITCH_11;
+    const m = new Match({ pitch, mode: futsal ? 'futsal' : 'kickoff', humanTeam: null, script: null, durationSec: 600, clockMinutes: 90,
+      teams: [{ team: home, players: futsal ? five(startingXI(rosterOf(home.id))) : startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short },
+        { team: away, players: futsal ? five(startingXI(rosterOf(away.id))) : startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+    const cam = new THREE.PerspectiveCamera(46, 16 / 9, 0.5, 600); const rig = new CameraRig(cam, pitch.length, pitch.width); rig.style = style;
+    const dt = 1 / 60; const P: THREE.Vector3[] = []; let inPlay = 0, onScreen = 0;
+    for (let i = 0; i < 60 * 40; i++) {
+      m.update(dt); const b = m.ball; const t = new THREE.Vector3(b.x, b.y, b.z);
+      rig.endDir = m.teams[0].attackDir; rig.update(dt, t, new THREE.Vector3(b.owner ? m.teams[b.owner.team].attackDir : 0, 0, 0), i * dt); cam.updateMatrixWorld();
+      if (i < 120) continue; P.push(cam.position.clone());
+      if (m.phase === 'play') { inPlay++; const n = t.clone().project(cam); if (Math.abs(n.x) < 1 && Math.abs(n.y) < 1 && n.z < 1) onScreen++; }
+    }
+    const acc: number[] = []; for (let i = 2; i < P.length; i++) acc.push(P[i].clone().sub(P[i - 1].clone().multiplyScalar(2)).add(P[i - 2]).length() / (dt * dt));
+    console.log(`  ${style}${futsal ? ' futsal' : ''}: acc p95 ${q(acc, 0.95).toFixed(1)} m/s² · ball on screen ${(onScreen / inPlay * 100).toFixed(1)}%`);
+    assert.ok(q(acc, 0.95) < 30, 'smooth');
+    assert.ok(onScreen / inPlay > 0.98, 'the ball stays in shot');
+  });
+}

@@ -9,8 +9,10 @@ const SHAPES: Record<GameMode, Array<{ tier: string; label: string; multiplier: 
     { tier: 'win', label: 'Win', multiplier: 2.2, weight: 0.25 },
     { tier: 'bigwin', label: 'Win by 3+', multiplier: 5.0, weight: 0.04 },
   ],
+  // Futsal has no draws: a level game goes to sudden death (3v3, then 2v2, then 1v1). A sudden-death win pays less
+  // than a win in normal time; a sudden-death defeat is a loss.
   futsal: [
-    { tier: 'draw', label: 'Draw', multiplier: 1.0, weight: 0.18 },
+    { tier: 'otwin', label: 'Win in sudden death', multiplier: 1.6, weight: 0.12 },
     { tier: 'win', label: 'Win', multiplier: 2.2, weight: 0.27 },
     { tier: 'bigwin', label: 'Win by 3+', multiplier: 4.0, weight: 0.06 },
   ],

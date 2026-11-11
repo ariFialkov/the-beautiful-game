@@ -60,3 +60,25 @@ test('an idle human still gets the scripted result', () => {
   assert.equal(m.teams[1].score, script.finalScore.away);
   console.log(`  idle human: ${m.teams[0].score}-${m.teams[1].score}  goals ${events.join(' ')} frac=${m.frac.toFixed(2)}`);
 });
+
+test('futsal: a level game goes to sudden death (3v3, then 2v2, then 1v1) and the golden goal decides it', () => {
+  const cases: Array<[MatchTier, string]> = [];
+  for (const tier of ['otwin', 'loss'] as MatchTier[]) {
+    let found = 0;
+    for (let i = 0; i < 200 && found < 2; i++) { const sc = generateMatchScript(new Rng(`ot-${tier}-${i}`), 'futsal', tier, 1.6, 0.6); if (sc.overtime) { cases.push([tier, `ot-${tier}-${i}`]); found++; } }
+  }
+  assert.ok(cases.length >= 3, 'scripts with sudden death exist');
+  for (const [tier, seed] of cases) {
+    const { m, script, events } = runMatch('futsal', tier, seed, false);
+    assert.ok(script.overtime, 'script has overtime');
+    assert.ok(m.overtime, `sudden death was played (${tier} ${seed}: ended ${m.teams[0].score}-${m.teams[1].score} at ${m.frac.toFixed(3)}, goals ${events.join(' ')}, script ${JSON.stringify(script.finalScore)} ${JSON.stringify(script.events.map((e) => e.side[0] + '@' + e.t.toFixed(2)))})`);
+    assert.equal(m.teams[0].score, script.finalScore.home, `home ${tier}`);
+    assert.equal(m.teams[1].score, script.finalScore.away, `away ${tier}`);
+    const shouldBe = script.overtime!.at < 15 ? 3 : script.overtime!.at < 30 ? 2 : 1;
+    const el = m.clock - m.overtime!.start;
+    assert.ok(el >= script.overtime!.at - 4.5, `the golden goal did not come early (${el.toFixed(1)} s, planned ${script.overtime!.at.toFixed(1)} s)`);
+    assert.equal(m.overtime!.size, el < 15 ? 3 : el < 30 ? 2 : 1, 'the teams shrank on schedule: 3v3, 2v2 after 15 s, 1v1 after 30 s');
+    assert.equal(m.benched.length, 2 * (4 - m.overtime!.size), 'players taken off for each stage');
+    console.log(`  sudden death ${tier}: ${m.teams[0].score}-${m.teams[1].score}, planned at ${script.overtime!.at.toFixed(1)} s (${shouldBe}v${shouldBe}), ended ${m.overtime!.size}v${m.overtime!.size} after ${(m.clock - m.overtime!.start).toFixed(1)} s · goals ${events.join(' ')}`);
+  }
+});

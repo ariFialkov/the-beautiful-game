@@ -23,10 +23,13 @@ export interface MatchOptions {
 }
 export type KickKind = 'pass' | 'through' | 'lob' | 'shoot';
 export type Phase = 'kickoff' | 'play' | 'dead' | 'goal' | 'restart' | 'halftime' | 'fulltime';
+/** Controller settings: how much the game helps passes and shots, and when it switches player for you. */
+export interface ControlPrefs { pass: 'assisted' | 'semi'; shot: 'assisted' | 'semi'; switching: 'auto' | 'air' | 'manual'; }
+
 export type SetPieceKind = 'kickoff' | 'throw' | 'corner' | 'goalkick' | 'freekick' | 'penalty';
 export type MatchEvent =
   | { type: 'goal'; team: number; scorer: Agent | null; forced?: boolean }
-  | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' }
+  | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' } | { type: 'overtime'; size: number }
   | { type: 'out'; kind: 'throw' | 'corner' | 'goalkick' } | { type: 'kick'; kind: KickKind; power: number; agent: Agent }
   | { type: 'tackle'; success: boolean; agent: Agent } | { type: 'switch'; agent: Agent } | { type: 'touch'; agent: Agent; heavy: boolean }
   | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent };
@@ -64,6 +67,12 @@ export class Match {
   mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1] };
   teamSpeedBonus: [number, number] = [1, 1];
   charge: { kind: 'shoot' | 'pass' | 'lob'; t: number; low?: boolean } | null = null;
+  /** Futsal sudden-death overtime (null until it starts): 3v3, then 2v2 after 15 s, then 1v1 after 30 s. */
+  overtime: { start: number; size: number; at: number } | null = null;
+  /** Players sent off the court as overtime shrinks the teams: they walk to the touchline and watch. */
+  benched: Agent[] = [];
+  /** The human's controller settings (set by the match screen). */
+  controls: ControlPrefs = { pass: 'assisted', shot: 'assisted', switching: 'auto' };
   /** A quick tap of shoot waits a moment for a second press (double tap, then hold = low driven shot). */
   private shotTap: { at: number; power: number; finesse: boolean } | null = null;
   ended = false;
@@ -117,6 +126,7 @@ export class Match {
   opponentsOf(team: number) { return this.teams[team === 0 ? 1 : 0]; }
 
   clockText(): { text: string; stoppage: boolean } {
+    if (this.overtime) { const el = Math.max(0, this.clock - this.overtime.start); return { text: `SD ${this.overtime.size}v${this.overtime.size} ${Math.floor(el / 60)}:${String(Math.floor(el % 60)).padStart(2, '0')}`, stoppage: true }; }
     const mins = this.opts.clockMinutes; const f = this.frac;
     const halfLen = mins / 2;
     const shown = this.half === 1 ? Math.min(f * mins, halfLen) : Math.min(f * mins, mins);
@@ -219,7 +229,7 @@ export class Match {
         if (this.phase === 'restart' && !this.restartClear()) this.phaseTimer = STEP; // wait for the opponents to retreat
         else if (this.phase === 'kickoff' || this.phase === 'restart') { this.phase = 'play'; if (this.setPiece) this.giveControl(this.setPiece.taker); }
         else if (this.phase === 'dead') { const r = this.pendingRestart; this.pendingRestart = null; r?.(); }
-        else if (this.phase === 'goal') this.kickoff(this.lastConceded);
+        else if (this.phase === 'goal') { if (this.overtime) this.fullTime(); else this.kickoff(this.lastConceded); } // golden goal
         else if (this.phase === 'halftime') { this.half = 2; this.kickoff(this.firstKickoff === 0 ? 1 : 0); }
       }
     }
@@ -238,6 +248,11 @@ export class Match {
     this.updateActionTargets();
     const ballPos = { x: this.ball.x, y: this.ball.y, z: this.ball.z };
     for (const a of this.agents) a.motion!.update(h, ballPos);
+    for (const a of this.benched) { // sent off for sudden death: walk to the touchline and stand watching
+      const d = v2.sub(a.ai.target, a.pos); const l = v2.len(d);
+      a.intent.move = l > 0.4 ? v2.scale(v2.norm(d), Math.min(1, l / 2) * 0.8) : { x: 0, z: 0 }; a.intent.sprint = false; a.intent.steer = null;
+      a.intent.face = l <= 0.4 ? v2.sub(ballPos, a.pos) : null; a.update(h, 1, this.surface.grip); a.motion!.update(h, ballPos);
+    }
     this.resolveActions();
     if (this.phase === 'play') { this.updateOwnership(); this.collideBodies(); }
     this.holdBall();
@@ -334,11 +349,52 @@ export class Match {
       }
       this.stoppage = true;
     }
+    if (this.overtime) {
+      // sudden death: shrink the teams as it goes on; the scripted golden goal ends it (failsafe if it stalls)
+      const el = this.clock - this.overtime.start; const size = el < 15 ? 3 : el < 30 ? 2 : 1;
+      if (size < this.overtime.size && this.phase === 'play') this.shrinkTo(size);
+      if (pending && el > this.overtime.at + 30) this.awardRemaining();
+      return;
+    }
     if (this.half === 2 && f >= 1) {
-      if (!pending && this.phase === 'play') { this.fullTime(); return; }
+      if (!pending && this.phase === 'play') {
+        const ot = this.opts.script?.overtime;
+        if (ot && this.pitch.futsal && this.teams[0].score === this.teams[1].score) { this.startOvertime(ot); return; }
+        this.fullTime(); return;
+      }
       this.stoppage = true;
       if (f >= OVERRUN_LIMIT) this.awardRemaining();
     }
+  }
+
+  /** Level after regulation (futsal): sudden death, starting 3v3; the golden goal is now the director's next event. */
+  private startOvertime(ot: { side: 'home' | 'away'; at: number }) {
+    this.overtime = { start: this.clock, size: 4, at: ot.at }; this.stoppage = false;
+    this.director?.events.push({ t: (this.clock + ot.at) / this.opts.durationSec, side: ot.side, style: 'open' });
+    this.shrinkTo(3);
+    this.kickoff(this.firstKickoff);
+  }
+
+  /** Take players off until each side has `size` outfield players (+ keeper): those furthest from the ball go, never the
+   *  player you control or whoever has the ball. */
+  private shrinkTo(size: number) {
+    if (!this.overtime) return;
+    const bp = { x: this.ball.x, z: this.ball.z }; const W = this.pitch.width;
+    for (const t of this.teams) {
+      let outfield = t.agents.filter((a) => !a.isGK);
+      while (outfield.length > size) {
+        const cands = outfield.filter((a) => a !== this.controlled && a !== this.ball.owner && a !== this.setPiece?.taker);
+        const a = (cands.length ? cands : outfield).slice().sort((p, q) => v2.dist(q.pos, bp) - v2.dist(p.pos, bp))[0];
+        t.agents = t.agents.filter((x) => x !== a); this.agents = this.agents.filter((x) => x !== a);
+        a.action = null; a.pendingKick = null; a.hasBall = false; a.isHuman = false;
+        const k = this.benched.filter((x) => x.team === t.index).length;
+        a.ai.target = { x: (t.index === 0 ? -1 : 1) * (2.5 + k * 1.3), z: W / 2 + 1.4 }; // the bench, far touchline
+        this.benched.push(a);
+        outfield = t.agents.filter((x) => !x.isGK);
+      }
+    }
+    this.overtime.size = size;
+    this.emit({ type: 'overtime', size });
   }
 
   private fullTime() { this.phase = 'fulltime'; this.ended = true; this.ball.owner = null; this.emit({ type: 'fulltime' }); }
@@ -351,6 +407,9 @@ export class Match {
       const t = this.teams[team]; t.score++; d.onGoal(team);
       this.emit({ type: 'goal', team, scorer: t.agents[t.agents.length - 1], forced: true });
     }
+    // level after the regulation goals: sudden death is still played (it has its own failsafe)
+    const ot = this.opts.script?.overtime;
+    if (ot && !this.overtime && this.pitch.futsal && this.teams[0].score === this.teams[1].score) { this.startOvertime(ot); return; }
     this.fullTime();
   }
 
@@ -455,7 +514,9 @@ export class Match {
     if (input.shoot.justPressed) this.tackle(me, 'tackle');
     if (input.lob.justPressed || input.slide.justPressed) this.tackle(me, 'slide'); // cross button slides when defending
     if (input.switch.justPressed) this.setControlled(this.closestToBall(team.index, me));
-    if (this.time - this.lastSwitch > 0.7 && (!b.owner || b.owner.team !== team.index) && !me.busy()) {
+    // Auto switching: to whoever is clearly closer to the ball (Auto), only for balls in the air (Air balls), or never (Manual).
+    const sw = this.controls.switching;
+    if (sw !== 'manual' && this.time - this.lastSwitch > 0.7 && (!b.owner || b.owner.team !== team.index) && !me.busy() && (sw === 'auto' || (!b.owner && b.y > 1.5))) {
       const c = this.closestToBall(team.index);
       if (c !== me && v2.dist(c.pos, bp) + 3 < dBall) this.setControlled(c);
     }
@@ -529,7 +590,8 @@ export class Match {
       // aiming at the player or at where he is going both count
       const angTo = (p: V2) => { const q = v2.sub(p, a.pos); const l = v2.len(q); return l < 0.1 ? Math.PI : Math.acos(Math.max(-1, Math.min(1, v2.dot(v2.scale(q, 1 / l), dir)))); };
       const ang = Math.min(angTo(m.pos), angTo(fut));
-      if (ang > (lofted ? 0.8 : 0.95)) continue;
+      const semi = this.controls.pass === 'semi' && a === this.controlled; // semi-assisted: much closer to where you aim
+      if (ang > (semi ? 0.45 : lofted ? 0.8 : 0.95)) continue;
       const fwd = (m.pos.x - a.pos.x) * t.attackDir;
       let marked = 8; for (const o of opp) marked = Math.min(marked, v2.dist(o.pos, fut));
       let lane = 1;
@@ -537,7 +599,7 @@ export class Match {
       const inBox = Math.abs(m.pos.x - t.attackDir * L / 2) < this.pitch.boxDepth && Math.abs(m.pos.z) < this.pitch.boxWidth / 2;
       // the power bar says how far: it picks between team-mates at similar angles
       const depth = power === undefined || through ? 0 : Math.abs(dist - (lofted ? 8 + 45 * power : 4 + 34 * power)) * (lofted ? 0.04 : 0.025);
-      const s = -ang * 4.5 - depth - dist * (lofted ? 0.006 : through ? 0.01 : 0.02) - (through ? Math.max(0, dist - 32) * 0.06 : 0) + Math.min(marked, 6) * 0.06 + lane * 0.4
+      const s = -ang * (semi ? 8 : 4.5) - depth - dist * (lofted ? 0.006 : through ? 0.01 : 0.02) - (through ? Math.max(0, dist - 32) * 0.06 : 0) + Math.min(marked, 6) * 0.06 + lane * 0.4
         + (through ? Math.max(0, fwd) * 0.02 : 0) + (lofted && inBox ? 0.5 : 0) - (m.isGK ? 2 : 0);
       if (s > bs) { bs = s; best = m; }
     }
@@ -586,6 +648,7 @@ export class Match {
   private homePass(h: number) {
     const pa = this.passAssist; const b = this.ball;
     if (!pa) return;
+    if (this.controls.pass === 'semi') return; // semi-assisted passing: no help in flight
     if (b.owner || b.lastTouch !== pa.passer || this.time > pa.until || this.phase !== 'play') { this.passAssist = null; return; }
     const sp = Math.hypot(b.vx, b.vz); if (sp < 1.5 || this.time < pa.from) return;
     const ux = b.vx / sp, uz = b.vz / sp; const r = pa.receiver;
@@ -620,7 +683,7 @@ export class Match {
       else if (dir0.x * team.attackDir > 0.15) {
         zHit = a.pos.z + (dir0.z / dir0.x) * (gx - a.pos.x);
         const edge = gw / 2 - (style === 'finesse' ? 0.55 : 0.4);
-        if (Math.abs(zHit) > edge) zHit = Math.sign(zHit) * (edge + (Math.abs(zHit) - edge) * (human ? 0.25 : 0.1)); // aim assist
+        if (Math.abs(zHit) > edge) zHit = Math.sign(zHit) * (edge + (Math.abs(zHit) - edge) * (human ? (this.controls.shot === 'semi' ? 0.7 : 0.25) : 0.1)); // aim assist (less on semi)
         if (style === 'finesse' && human && Math.abs(zHit) < edge) zHit = Math.sign(zHit || 1) * Math.min(edge, Math.abs(zHit) + gw * 0.18); // finesse: toward the corner
       } else zHit = a.pos.z + dir0.z * 20;
       const push = this.mods.pushTeam === a.team ? this.mods.pushLevel : 0;
@@ -644,7 +707,7 @@ export class Match {
         const sol = solveKick(from, { x: gx, y: Math.max(0.12, yHit), z: zHit }, speed, side, top, this.surface);
         v = sol.v; w = sol.w;
       }
-      let sigma = human ? (0.075 - a.skill.shoot * 0.05) * (0.55 + power * 0.7) * (sprinting ? 1.2 : 1) * (style === 'finesse' ? 0.85 : 1) : 0.13 - skill * 0.1;
+      let sigma = human ? (0.075 - a.skill.shoot * 0.05) * (0.55 + power * 0.7) * (sprinting ? 1.2 : 1) * (style === 'finesse' ? 0.85 : 1) * (this.controls.shot === 'semi' ? 1.3 : 1) : 0.13 - skill * 0.1;
       if (this.mods.goalAllowed[a.team] && push > 0) sigma *= 1 - push * 0.85;
       // a clean strike: the error is mostly in direction, very little in height (no skied shots from a good contact)
       yawErr = gauss() * sigma; pitchErr = gauss() * sigma * (human ? (style === 'low' ? 0.15 : 0.3) : 0.6);
@@ -657,7 +720,8 @@ export class Match {
       let aim: V2; let tFlight = 1;
       // Ground passes to a team-mate: the power bar sets how firmly it arrives (a soft 5 m/s to a zipped 12 m/s);
       // it always reaches him. (Quantised so the pass tables are shared.)
-      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round((5 + 7 * d.power) * 2) / 2 : 8.5;
+      const semi = human && this.controls.pass === 'semi';
+      const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round(((semi ? 1 + 12 * d.power : 5 + 7 * d.power)) * 2) / 2 : 8.5;
       let throughSpeed = 0;
       if (target && through && !lofted) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = tp.speed; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.2); }
       else if (target) {
@@ -705,7 +769,7 @@ export class Match {
         v = { x: Math.cos(yaw) * speed, y: dist > 30 ? 1.2 : 0, z: Math.sin(yaw) * speed };
         w = { x: v.z / BALL_R, y: 0, z: -v.x / BALL_R };
       }
-      if (human && target && !lofted) {
+      if (human && target && !lofted && !semi) {
         // lane finder: a defender standing right in the line is played around (the homing bends it back after him)
         const hs0 = Math.hypot(v.x, v.z); const u = { x: v.x / hs0, z: v.z / hs0 }; let turn = 0, along0 = 0;
         for (const o of this.opponentsOf(a.team).agents) {

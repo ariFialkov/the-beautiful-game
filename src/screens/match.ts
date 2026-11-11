@@ -4,7 +4,8 @@ import { app } from '../main';
 import { state, fmt, isTouchDevice } from '../app/state';
 import { api } from '../app/api';
 import { audio } from '../app/audio';
-import { el, button, controllerHint } from '../ui/components';
+import { el, button, controllerHint, cycleToggle, CONTROL_OPTIONS } from '../ui/components';
+import { CAM_STYLES } from '../render/camera';
 import { crestSvg } from '../ui/crest';
 import { Match } from '../game/match';
 import { PITCH_11, PITCH_FUTSAL } from '../game/pitch';
@@ -48,9 +49,11 @@ export class MatchScreen implements Screen {
       ],
     });
     this.match = match;
+    match.controls = { ...state.settings.controls };
     // FUT chemistry: a sharper, quicker squad (cosmetic feel only; the result is fixed by the script)
     if (p.chemistry !== undefined) match.teamSpeedBonus[0] = 0.94 + (p.chemistry / 100) * 0.1;
     this.view = new MatchView(app.stage, match, Math.random() < 0.5);
+    this.view.rig.style = futsal ? state.settings.cameraFutsal : state.settings.camera;
     app.stage.setScene(this.view.scene, (dt, t) => this.frame(dt, t));
     input.menuMode = false;
     audio.unlock(); audio.startCrowd(); audio.crowdLevel(0.15);
@@ -78,6 +81,7 @@ export class MatchScreen implements Screen {
         case 'setpiece': if (e.kind === 'freekick') this.showToast(`Free kick · ${match.teams[e.team].setup.short}`); else if (e.kind === 'penalty') this.showToast(`Penalty · ${match.teams[e.team].setup.short}`); break;
         case 'kickoff': audio.whistle(); break;
         case 'halftime': this.showBanner('HALF TIME', 2.5); audio.whistle(true); break;
+        case 'overtime': this.showBanner(e.size === 3 ? 'SUDDEN DEATH · 3 v 3' : e.size === 2 ? 'SUDDEN DEATH · 2 v 2' : 'SUDDEN DEATH · 1 v 1', 2.2); audio.whistle(e.size === 3); break;
         case 'fulltime': this.showBanner('FULL TIME', 2.5); audio.whistle(true); this.onFullTime(); break;
         case 'kick': if (e.agent.isHuman || Math.random() < 0.5) audio.kick(e.kind === 'shoot' ? 0.9 : 0.4); break;
         case 'tackle': if (e.success) audio.kick(0.3); break;
@@ -113,6 +117,14 @@ export class MatchScreen implements Screen {
     const modal = el('div', 'modal pause'); const card = el('div', 'panel card col');
     card.innerHTML = `<h2>Paused</h2><p class="muted small">Leaving now settles the round at its pre-determined result.</p>`;
     card.appendChild(button('Resume', 'primary', () => this.togglePause()));
+    // camera and controller settings, applied live
+    const futsal = this.match.pitch.futsal; const cfg = state.settings;
+    const opts = el('div', 'col pause-opts');
+    opts.appendChild(cycleToggle('Camera', CAM_STYLES, () => this.view.rig.style, (v) => { this.view.rig.style = v; this.view.rig.softBlend(1.0); state.saveSettings(futsal ? { cameraFutsal: v } : { camera: v }); }));
+    opts.appendChild(cycleToggle('Passing', CONTROL_OPTIONS.pass, () => cfg.controls.pass, (v) => { state.saveSettings({ controls: { ...state.settings.controls, pass: v } }); this.match.controls = { ...state.settings.controls }; }));
+    opts.appendChild(cycleToggle('Shooting', CONTROL_OPTIONS.shot, () => state.settings.controls.shot, (v) => { state.saveSettings({ controls: { ...state.settings.controls, shot: v } }); this.match.controls = { ...state.settings.controls }; }));
+    opts.appendChild(cycleToggle('Player switching', CONTROL_OPTIONS.switching, () => state.settings.controls.switching, (v) => { state.saveSettings({ controls: { ...state.settings.controls, switching: v } }); this.match.controls = { ...state.settings.controls }; }));
+    card.appendChild(opts);
     card.appendChild(button('Settle & leave', 'danger', () => { this.togglePause(); this.onFullTime(true); }));
     modal.appendChild(card); this.root.appendChild(modal);
     focus.setRoot(card); focus.onBack = () => this.togglePause();

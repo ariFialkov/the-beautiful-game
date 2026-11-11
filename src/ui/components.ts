@@ -93,3 +93,19 @@ export function controllerHint(): string {
   const l = input.buttonLabels();
   return input.lastSource === 'gamepad' ? `${l.pass} Pass · ${l.shoot} Shoot · ${l.through} Through · ${l.lob} Cross · ${l.sprint} Sprint · ${l.switch} Switch` : input.lastSource === 'touch' ? 'Drag left to move · Buttons to pass, shoot, cross' : 'WASD/Arrows move · Space pass · Z shoot (ZZ low, R+Z finesse) · C through · X cross · Shift sprint · Q switch · E slide';
 }
+
+/** A settings toggle that cycles through options on click (works with the focus/gamepad navigation). */
+export function cycleToggle<T extends string>(label: string, options: Array<{ id: T; label: string }>, get: () => T, set: (v: T) => void): HTMLButtonElement {
+  const b = document.createElement('button'); b.className = 'toggle'; b.setAttribute('data-focus', '');
+  const render = () => { const cur = options.find((o) => o.id === get()) ?? options[0]; b.innerHTML = `<span>${label}</span><span class="state">${cur.label}</span>`; };
+  render();
+  b.addEventListener('click', () => { const i = options.findIndex((o) => o.id === get()); set(options[(i + 1) % options.length].id); render(); });
+  return b;
+}
+
+/** Camera and controller settings, shared by the Settings screen and the in-match pause menu. */
+export const CONTROL_OPTIONS = {
+  pass: [{ id: 'assisted', label: 'Assisted' }, { id: 'semi', label: 'Semi' }] as Array<{ id: 'assisted' | 'semi'; label: string }>,
+  shot: [{ id: 'assisted', label: 'Assisted' }, { id: 'semi', label: 'Semi' }] as Array<{ id: 'assisted' | 'semi'; label: string }>,
+  switching: [{ id: 'auto', label: 'Auto' }, { id: 'air', label: 'Air balls' }, { id: 'manual', label: 'Manual' }] as Array<{ id: 'auto' | 'air' | 'manual'; label: string }>,
+};

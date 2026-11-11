@@ -29,7 +29,9 @@ export const FREE_PLAY: Modifiers = {
 };
 
 /** Window timing per pitch: futsal scripts pack more goals into a shorter match, so its windows open earlier and escalate faster. */
-const WINDOWS = { full: { before: 0.06, after: 0.02, esc: 0.05 }, futsal: { before: 0.1, after: 0.01, esc: 0.03 } };
+const WINDOWS = { full: { before: 0.06, after: 0.02, esc: 0.05 }, futsal: { before: 0.1, after: 0.01, esc: 0.03 },
+  // futsal sudden death: the golden goal is meant for a particular stage (3v3, 2v2 or 1v1), so its window is tight
+  overtime: { before: 0.024, after: 0.004, esc: 0.02 } };
 
 /** Hard stop: fraction of regulation after which any remaining scripted goals are awarded outright. */
 export const OVERRUN_LIMIT = 1.2;
@@ -44,7 +46,7 @@ export class Director {
     this.events = script.events.slice();
     this.mods.botSkill = 0.35 + script.botStrength * 0.5;
   }
-  private get win() { return this.match.pitch.futsal ? WINDOWS.futsal : WINDOWS.full; }
+  private get win() { return this.match.overtime ? WINDOWS.overtime : this.match.pitch.futsal ? WINDOWS.futsal : WINDOWS.full; }
   get pending(): GoalEvent | null { return this.events[this.idx] ?? null; }
   get done() { return this.idx >= this.events.length; }
   get remaining() { return this.events.length - this.idx; }

@@ -1,4 +1,6 @@
 import type { ServerConfigPublic, Wallet } from '@shared/types';
+import type { CamStyle } from '../render/camera';
+import type { ControlPrefs } from '../game/match';
 
 export interface Settings {
   sound: boolean;
@@ -6,6 +8,11 @@ export interface Settings {
   cameraHeight: number; // 0.6..1.6 multiplier
   showTouch: 'auto' | 'on' | 'off';
   vibration: boolean;
+  /** Match camera for 11-a-side games, and for futsal. */
+  camera: CamStyle;
+  cameraFutsal: CamStyle;
+  /** Controller assistance and player switching. */
+  controls: ControlPrefs;
 }
 
 type Listener = () => void;
@@ -14,7 +21,7 @@ class AppState {
   config: ServerConfigPublic | null = null;
   wallet: Wallet | null = null;
   nextServerSeedHash = '';
-  settings: Settings = { sound: true, quality: 'auto', cameraHeight: 1, showTouch: 'auto', vibration: true };
+  settings: Settings = { sound: true, quality: 'auto', cameraHeight: 1, showTouch: 'auto', vibration: true, camera: 'tele', cameraFutsal: 'end', controls: { pass: 'assisted', shot: 'assisted', switching: 'auto' } };
   homeTeamId = 'lon-royals';
   awayTeamId = 'mad-blancos';
   stake = 50;
@@ -26,7 +33,7 @@ class AppState {
   private listeners = new Set<Listener>();
 
   constructor() {
-    try { const s = localStorage.getItem('tbg.settings'); if (s) this.settings = { ...this.settings, ...JSON.parse(s) }; } catch { /* ignore */ }
+    try { const s = localStorage.getItem('tbg.settings'); if (s) { const o = JSON.parse(s); this.settings = { ...this.settings, ...o, controls: { ...this.settings.controls, ...(o.controls ?? {}) } }; } } catch { /* ignore */ }
     try { const t = localStorage.getItem('tbg.teams'); if (t) { const o = JSON.parse(t); this.homeTeamId = o.home ?? this.homeTeamId; this.awayTeamId = o.away ?? this.awayTeamId; this.stake = o.stake ?? this.stake; this.conditions = o.conditions ?? this.conditions; } } catch { /* ignore */ }
   }
   subscribe(fn: Listener) { this.listeners.add(fn); return () => this.listeners.delete(fn); }

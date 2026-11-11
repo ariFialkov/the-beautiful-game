@@ -2,7 +2,7 @@
 
 A 3D football game with real stakes, playable on desktop and mobile as an installable PWA. Four modes — **Kick Off**, **Ultimate Team**, **Free Kick** and **Futsal** — wrapped around a strictly deterministic, RTP-controlled outcome engine.
 
-The front end plays like a skill game: fluid player movement, dribbling, passing, shooting, tackling, keepers, 24 clubs with full rosters, kits, crests and stadiums. The back end decides every round like a classic betting game *before kick-off*; the match is then paced toward that result by an in-game "director" that steers the bots.
+The front end plays like a skill game: fluid player movement, dribbling, passing, shooting, tackling, keepers, 40 clubs in 15 leagues with full rosters, kits, crests and stadiums. The back end decides every round like a classic betting game *before kick-off*; the match is then paced toward that result by an in-game "director" that steers the bots.
 
 ## Play it now
 
@@ -48,6 +48,8 @@ Paytables live in `shared/paytable.ts`. Each mode has a fixed *shape* of paying 
 
 1. **Outcome first.** `POST /api/round/start` takes the stake, draws a uniform number from `HMAC_SHA256(serverSeed, clientSeed:nonce)`, maps it through the mode's paytable to a tier (loss / draw / win / big win, or win / loss for free kicks) and seeds a PRNG with the rest of the digest to generate a *script*. The stake is taken immediately and the payout is fixed. The server-seed hash is published before the round and the seed is revealed on settlement, so every round is provably fair.
 2. **Match script.** For Kick Off, Futsal and Ultimate Team the script is a final score plus a timeline of goals (fraction of regulation time, side, style). Goal orders are chosen for drama: lead changes, the eventual winner trailing, late equalisers.
+   - **Futsal sudden death:** futsal has no draws. A futsal script can end level after regulation, followed by a golden goal at a set moment of the sudden-death overtime and for a set side. Every sudden-death win (its own tier, paying less than a win in normal time) and some defeats are decided this way.
+   - **Overtime format:** it starts 3v3; with no goal after 15 s, it's 2v2; after another 15 s, 1v1 (each side keeps its keeper). The players who come off walk to the touchline, and the first goal ends it.
 3. **The director** (`src/game/director.ts`) enforces it. Around each scripted goal a window opens for that side only: the attacking side's bots get sharper and quicker, the defending keeper becomes beatable, tackles favour the attackers, and if the goal still has not come the shot in flight is steered into the net. Between windows *no* goal is allowed: keepers are walls and anything that would cross the line hits the woodwork. The human can play as well or as badly as they like — the score at full time is always the scripted one. If the human stalls, an auto-pilot takes over the controlled player; a hard failsafe awards any remaining goals only after an extended stoppage time.
 4. **Free Kick** is turn-based with the player kicking first. The server pre-computes a reactive decision tree per round (`FreeKickRoundPlan`): what the bot does if the player scores, what it does if the player misses, the bot's shot style and miss style, whether the opposing keeper is guaranteed to stop the player this round, and whether the player's shot is quietly steered in. Losing scripts let the bot miss early kicks for suspense but end on a round where the keeper is a wall; winning scripts end on a round where the player's shot goes in and the bot misses.
 
@@ -89,7 +91,17 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Defending:** one player presses the carrier, one covers goal-side, and the rest mark only opponents who come into their zone.
   - **Attacking:** the two nearest teammates offer diagonal angles, and teammates' positions push apart so nobody stacks up on the same patch.
 - **Set pieces:** opponents must clear the ball by the full distance before a restart can be taken: 9.15 m for free kicks and corners (5 m in futsal), out of the box and 12 m away for goal kicks, and 3 m for throws. They jog out, the restart waits until they have, and anyone still in the way after about three seconds is moved. Teammates give the taker room, and the taker or keeper picks a free teammate with a clear lane.
-- **Camera:** the broadcast camera follows a critically damped focus point driven by the ball, leaning toward the attacking direction of the team in possession and blending between shots without shake. It dollies in and zooms (narrower field of view) when play is on the far side, widens slightly for the near side, and eases out for long, fast balls.
+- **Camera:** pick it in Settings or the pause menu. Every camera follows a critically damped focus point driven by the ball and blends without shake.
+  - **Tele** (the default for 11-a-side): a tight broadcast view that leans toward the attacking direction of the team in possession. It dollies in and zooms when play is on the far side, widens slightly for the near side, and eases out for long, fast balls.
+  - **High Broadcast:** higher and further back, showing more of the pitch.
+  - **Ball Cam:** low and close on the near side.
+  - **End-to-End** (the default for futsal): behind your team, looking up the pitch the way you attack.
+- **Controller settings** (Settings or the pause menu):
+  - **Passing:** Assisted (the default), or Semi: the receiver must be closer to where you aim, the power bar sets more of the pace, and there's no help in flight.
+  - **Shooting:** Assisted, or Semi: less pull toward the frame, a little more error.
+  - **Player switching:** Auto, Air balls only, or Manual.
+- **Landing marker:** when the ball is in the air, a crosshair on the pitch shows where it will come down, growing as it drops.
+- **Clubs and names:** 40 clubs across 15 leagues. Squads are generated together from large pools of everyday names for 36 nationalities, so names rarely repeat. Shared surnames are brothers in the same league, sometimes in the same squad, and brothers in one squad have initials on their shirts.
 
 ## Controls
 
@@ -121,7 +133,7 @@ Touch button labels switch between attacking and defending actions automatically
 ## Project layout
 
 ```
-shared/        data + logic shared by server and client (types, RNG, paytable, scripts, 24 teams + roster generator)
+shared/        data + logic shared by server and client (types, RNG, paytable, scripts, 40 teams, name pools + roster generator)
 server/        Node outcome server: provably-fair rounds, wallet, FUT club/packs, admin RTP, static PWA hosting
 src/app        client state, API client, router, audio
 src/input      keyboard / gamepad / touch → unified input

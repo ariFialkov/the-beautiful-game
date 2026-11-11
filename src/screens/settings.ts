@@ -4,7 +4,8 @@ import { app } from '../main';
 import { state } from '../app/state';
 import { api } from '../app/api';
 import { audio } from '../app/audio';
-import { el, button, topbar } from '../ui/components';
+import { el, button, topbar, cycleToggle, CONTROL_OPTIONS } from '../ui/components';
+import { CAM_STYLES } from '../render/camera';
 import { Showcase } from '../render/showcase';
 import { TEAM_BY_ID, rosterOf, startingXI } from '@shared/teams';
 import { focus } from '../ui/focus';
@@ -28,6 +29,17 @@ export class SettingsScreen implements Screen {
     prefs.appendChild(toggle('Vibration', () => state.settings.vibration ? 'On' : 'Off', () => state.saveSettings({ vibration: !state.settings.vibration })));
     prefs.appendChild(toggle('Camera height', () => `${Math.round(state.settings.cameraHeight * 100)}%`, () => { const v = state.settings.cameraHeight; state.saveSettings({ cameraHeight: v >= 1.4 ? 0.7 : Math.round((v + 0.15) * 100) / 100 }); }));
     grid.appendChild(prefs);
+
+    // Camera and controller settings (also in the pause menu during a match)
+    const cam = el('div', 'panel col'); cam.appendChild(el('div', 'label', 'Camera & controller'));
+    const save = (patch: Partial<typeof state.settings.controls>) => state.saveSettings({ controls: { ...state.settings.controls, ...patch } });
+    cam.appendChild(cycleToggle('Camera (11-a-side)', CAM_STYLES, () => state.settings.camera, (v) => state.saveSettings({ camera: v })));
+    cam.appendChild(cycleToggle('Camera (futsal)', CAM_STYLES, () => state.settings.cameraFutsal, (v) => state.saveSettings({ cameraFutsal: v })));
+    cam.appendChild(cycleToggle('Passing assistance', CONTROL_OPTIONS.pass, () => state.settings.controls.pass, (v) => save({ pass: v })));
+    cam.appendChild(cycleToggle('Shooting assistance', CONTROL_OPTIONS.shot, () => state.settings.controls.shot, (v) => save({ shot: v })));
+    cam.appendChild(cycleToggle('Player switching', CONTROL_OPTIONS.switching, () => state.settings.controls.switching, (v) => save({ switching: v })));
+    cam.appendChild(el('p', 'small muted', 'Tele is a tight broadcast view; High Broadcast shows more of the pitch; Ball Cam is low and close; End-to-End sits behind your team. Semi assistance gives you more control (and less help) over pass pace and shot placement.'));
+    grid.appendChild(cam);
 
     const ctl = el('div', 'panel col'); ctl.appendChild(el('div', 'label', `Controls · ${input.gamepadConnected ? (input.gamepadKind === 'playstation' ? 'PS5 controller connected' : 'Xbox controller connected') : 'no controller detected'}`));
     const ps = input.gamepadKind === 'playstation';

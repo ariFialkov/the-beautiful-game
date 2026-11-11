@@ -27,18 +27,28 @@ test('empirical RTP from tier sampling converges', () => {
 });
 
 test('match scripts always end with the tier result', () => {
-  const tiers: MatchTier[] = ['loss', 'draw', 'win', 'bigwin'];
+  const tiers: MatchTier[] = ['loss', 'draw', 'win', 'bigwin', 'otwin'];
+  let ot = 0;
   for (let i = 0; i < 500; i++) for (const tier of tiers) for (const mode of ['kickoff', 'futsal'] as const) {
+    if (tier === 'otwin' && mode !== 'futsal') continue;
     const s = generateMatchScript(new Rng(`m${i}${tier}${mode}`), mode, tier, 2, 0.5);
     const { home, away } = s.finalScore;
     if (tier === 'loss') assert.ok(away > home);
     if (tier === 'draw') assert.equal(home, away);
     if (tier === 'win') assert.ok(home > away && home - away < 3);
     if (tier === 'bigwin') assert.ok(home - away >= 3);
-    assert.equal(s.events.length, home + away);
-    assert.equal(s.events.filter((e) => e.side === 'home').length, home);
+    if (tier === 'otwin') assert.ok(s.overtime?.side === 'home' && home === away + 1, 'a sudden-death win is by the golden goal');
+    if (s.overtime) {
+      // level in regulation; the golden goal is extra, scheduled in overtime rather than as a timed event
+      ot++; assert.equal(mode, 'futsal'); assert.ok(s.overtime.at > 0 && s.overtime.at < 50);
+      const regHome = home - (s.overtime.side === 'home' ? 1 : 0), regAway = away - (s.overtime.side === 'away' ? 1 : 0);
+      assert.equal(regHome, regAway, 'level after regulation');
+    }
+    assert.equal(s.events.length, home + away - (s.overtime ? 1 : 0));
+    assert.equal(s.events.filter((e) => e.side === 'home').length, home - (s.overtime?.side === 'home' ? 1 : 0));
     for (let k = 1; k < s.events.length; k++) assert.ok(s.events[k].t >= s.events[k - 1].t);
   }
+  assert.ok(ot > 500, 'sudden death happens (every futsal sudden-death win, and some futsal defeats)');
 });
 
 test('free kick decision trees are decisive and consistent with the tier', () => {
