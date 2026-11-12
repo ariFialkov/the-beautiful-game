@@ -109,6 +109,7 @@ function shotAt(m: Match, team: number, z = 2.6) {
 test('a losing scenario that lets the player score first: the goal stands, and the bots come back to win', () => {
   const { m } = directed('loss', 'comeback', 'late comeback');
   while (m.frac < 0.08 || m.phase !== 'play') m.update(1 / 60, idleIn);
+  for (const a of m.agents) if (!a.isGK) { a.pos = { x: 0, z: -30 + a.index }; a.prevPos = { ...a.pos }; } // (nobody standing in the way: it's the director's verdict on a clean shot being tested)
   shotAt(m, 0);
   let goal = -1; m.on((e) => { if (e.type === 'goal' && goal < 0) goal = e.team; });
   for (let i = 0; i < 60 && goal < 0; i++) m.update(1 / 60, idleIn);

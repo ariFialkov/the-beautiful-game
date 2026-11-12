@@ -408,7 +408,7 @@ export class FreeKickGame {
     this.camPos.lerp(want, k); this.camLook.lerp(look, k);
     cam.position.copy(this.camPos); cam.lookAt(this.camLook);
     this.sun.target.position.set(L / 2 - 10, 0, 0); this.sun.position.set(L / 2 - 50, 70, -50); this.sun.target.updateMatrixWorld();
-    this.stadium.update(dt, time);
+    this.stadium.update(dt, time, this.stage.camera);
     void input;
   }
 

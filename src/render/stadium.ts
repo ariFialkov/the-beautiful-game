@@ -3,6 +3,8 @@ import type { Team } from '@shared/teams';
 import { pitchTexture, textTexture } from './kits';
 
 import type { PitchSpec } from '../game/pitch';
+import type { Match } from '../game/match';
+import { Turf } from './turf';
 
 export class Stadium {
   group = new THREE.Group();
@@ -12,8 +14,10 @@ export class Stadium {
   private excitement = 0;
   readonly lights: THREE.Group = new THREE.Group();
   pitchMaterial!: THREE.MeshLambertMaterial;
+  /** Natural grass (11-a-side; futsal is played on a court). */
+  turf: Turf | null = null;
 
-  constructor(public spec: PitchSpec, home: Team, away: Team, public night: boolean, lowDetail: boolean) {
+  constructor(public spec: PitchSpec, home: Team, away: Team, public night: boolean, lowDetail: boolean, weather = 'none') {
     const { length: L, width: W } = spec;
     // Pitch surface + surrounding grass apron
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshLambertMaterial({ color: night ? 0x1a2230 : 0x5c6670 }));
@@ -21,10 +25,15 @@ export class Stadium {
     const apron = new THREE.Mesh(new THREE.PlaneGeometry(L + 30, W + 30), new THREE.MeshLambertMaterial({ color: spec.futsal ? 0x1c2a44 : 0x2a7a37 }));
     apron.rotation.x = -Math.PI / 2; apron.position.y = -0.02; apron.receiveShadow = true;
     this.group.add(apron);
-    this.pitchMaterial = new THREE.MeshLambertMaterial({ map: pitchTexture(L, W, spec.futsal) });
-    const pitch = new THREE.Mesh(new THREE.PlaneGeometry(L, W), this.pitchMaterial);
-    pitch.rotation.x = -Math.PI / 2; pitch.position.y = 0; pitch.receiveShadow = true;
-    this.group.add(pitch);
+    if (spec.futsal) {
+      this.pitchMaterial = new THREE.MeshLambertMaterial({ map: pitchTexture(L, W, spec.futsal) });
+      const pitch = new THREE.Mesh(new THREE.PlaneGeometry(L, W), this.pitchMaterial);
+      pitch.rotation.x = -Math.PI / 2; pitch.position.y = 0; pitch.receiveShadow = true;
+      this.group.add(pitch);
+    } else {
+      this.turf = new Turf(spec, pitchTexture(L, W, false), weather, lowDetail ? 0 : 12);
+      this.pitchMaterial = this.turf.base; this.group.add(this.turf.group);
+    }
 
     for (const s of [-1, 1]) this.group.add(this.buildGoal(s));
     this.buildStands(home, lowDetail);
@@ -150,8 +159,9 @@ export class Stadium {
     }
   }
 
-  /** Crowd bounce: excitement 0..1 ramps up after goals. */
-  update(dt: number, time: number) {
+  /** Crowd bounce: excitement 0..1 ramps up after goals. The turf's wind, blades and trails too. */
+  update(dt: number, time: number, camera?: THREE.Camera, match?: Match) {
+    if (this.turf && camera) this.turf.update(dt, time, camera, match);
     if (!this.crowd || !this.crowdBase || !this.crowdPhase) return;
     this.excitement = Math.max(0, this.excitement - dt * 0.35);
     if (this.excitement < 0.02) return;

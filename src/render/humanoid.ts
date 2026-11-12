@@ -98,9 +98,9 @@ export class Humanoid {
     }
     // blob shadow and selection ring live on the root (not on the bones)
     this.shadow = new THREE.Mesh(new THREE.CircleGeometry(1, 20), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32, depthWrite: false }));
-    this.shadow.rotation.x = -Math.PI / 2; this.shadow.position.y = 0.02; this.shadow.scale.set(0.42, 0.42, 1); this.root.add(this.shadow);
+    this.shadow.rotation.x = -Math.PI / 2; this.shadow.position.y = 0.033; // (above the grass tips) this.shadow.scale.set(0.42, 0.42, 1); this.root.add(this.shadow);
     this.selectRing = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.7, 28), new THREE.MeshBasicMaterial({ color: 0x19f5a4, transparent: true, opacity: 0.9, depthWrite: false }));
-    this.selectRing.rotation.x = -Math.PI / 2; this.selectRing.position.y = 0.03; this.selectRing.visible = false; this.root.add(this.selectRing);
+    this.selectRing.rotation.x = -Math.PI / 2; this.selectRing.position.y = 0.037; this.selectRing.visible = false; this.root.add(this.selectRing);
     // the rest pose until the first update
     this.applyPose(new Pose().copy((() => { const p = new Pose(); p.pelvis.copy(this.body.offsets[B.pelvis]); return p; })()));
   }

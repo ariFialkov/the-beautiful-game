@@ -78,10 +78,14 @@ export function pitchTexture(length: number, width: number, futsal: boolean): TH
   if (futsal) { ctx.fillStyle = '#2b6cb0'; ctx.fillRect(0, 0, W, H); ctx.fillStyle = 'rgba(255,255,255,0.04)'; for (let x = 0; x < W; x += 64) ctx.fillRect(x, 0, 32, H); }
   else {
     const stripes = 14;
-    for (let i = 0; i < stripes; i++) { ctx.fillStyle = i % 2 ? '#2e8b3d' : '#35a047'; ctx.fillRect((i * W) / stripes, 0, W / stripes + 1, H); }
-    // grass noise
-    ctx.fillStyle = 'rgba(0,0,0,0.05)';
-    for (let i = 0; i < 4000; i++) ctx.fillRect(Math.random() * W, Math.random() * H, 3, 3);
+    // (a faint painted stripe: the turf shader makes the real ones, from the way each was mown)
+    for (let i = 0; i < stripes; i++) { ctx.fillStyle = i % 2 ? '#2f8f3f' : '#339a44'; ctx.fillRect((i * W) / stripes, 0, W / stripes + 1, H); }
+    // wear: the goalmouths and the centre spot take a beating
+    const wear = (xm: number, zm: number, r: number, a: number) => { const gr = ctx.createRadialGradient((xm + length / 2) * sx, (zm + width / 2) * sy, 0, (xm + length / 2) * sx, (zm + width / 2) * sy, r * sx); if (!gr) return; gr.addColorStop(0, `rgba(150,140,80,${a})`); gr.addColorStop(1, 'rgba(150,140,80,0)'); ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H); };
+    if (typeof ctx.createRadialGradient === 'function') { // (a bare test canvas may not draw gradients)
+      for (const s of [-1, 1]) { wear(s * (length / 2 - 3), 0, 5, 0.22); wear(s * (length / 2 - 11), 0, 3, 0.12); }
+      wear(0, 0, 4, 0.1);
+    }
   }
   ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(3, 0.12 * sx); ctx.lineCap = 'round';
   const m = 0; // margin in metres

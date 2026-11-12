@@ -136,7 +136,7 @@ export class MatchView {
     const [h, a] = match.opts.teams;
     const low = stage.quality === 'low';
     const surf = match.surface;
-    this.stadium = new Stadium(match.pitch, h.team, a.team, night, low);
+    this.stadium = new Stadium(match.pitch, h.team, a.team, night, low, surf.weather === 'rain' || surf.weather === 'snow' ? surf.weather : surf.id === 'firm' ? 'firm' : 'none');
     this.scene.add(this.stadium.group);
     this.sun = makeLighting(this.scene, night, stage.quality === 'high', match.pitch.futsal ? 30 : 60).sun;
     // Conditions: overcast rain, snow cover, baked firm ground.
@@ -149,6 +149,7 @@ export class MatchView {
     } else if (surf.id === 'firm') {
       this.stadium.pitchMaterial.color.setRGB(1.08, 1.02, 0.85); this.sun.intensity *= 1.15;
     }
+    this.stadium.turf?.tint(this.stadium.pitchMaterial.color, this.stadium.pitchMaterial.emissive);
     this.weather = new WeatherFx(surf.weather, low);
     if (this.weather.object) this.scene.add(this.weather.object);
     setHumanoidQuality(stage.quality === 'high');
@@ -164,10 +165,10 @@ export class MatchView {
     if (surf.weather === 'snow') (this.ball.material as THREE.MeshStandardMaterial).color.set(0xff8a3d); // orange ball in the snow
     this.scene.add(this.ball);
     this.ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.12, 12), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35, depthWrite: false }));
-    this.ballShadow.rotation.x = -Math.PI / 2; this.ballShadow.position.y = 0.015;
+    this.ballShadow.rotation.x = -Math.PI / 2; this.ballShadow.position.y = 0.034; // (above the grass tips)
     this.scene.add(this.ballShadow);
     this.reticle = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: reticleTexture(), transparent: true, premultipliedAlpha: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }));
-    this.reticle.rotation.x = -Math.PI / 2; this.reticle.position.y = 0.025; this.reticle.renderOrder = 2; this.reticle.visible = false;
+    this.reticle.rotation.x = -Math.PI / 2; this.reticle.position.y = 0.036; this.reticle.renderOrder = 2; this.reticle.visible = false;
     this.scene.add(this.reticle);
     this.aimMark = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: aimTexture(), transparent: true, premultipliedAlpha: true, opacity: 0.95, depthWrite: false, depthTest: false }));
     this.aimMark.renderOrder = 3; this.aimMark.visible = false; this.aimMark.scale.set(1.1, 1.1, 1);
@@ -276,7 +277,7 @@ export class MatchView {
     // Spin the ball with its real angular velocity.
     const wl = Math.hypot(b.wx, b.wy, b.wz);
     if (wl > 0.01) { const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(b.wx / wl, b.wy / wl, b.wz / wl), wl * dt); this.ball.quaternion.premultiply(q); }
-    this.ballShadow.position.set(bx, 0.015, bz);
+    this.ballShadow.position.set(bx, 0.034, bz);
     const sh = Math.max(0.3, 1 - (by - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.35 * sh;
     this.updateReticle(dt);
@@ -303,7 +304,7 @@ export class MatchView {
     // controls follow the camera so left/right/up/down always match the screen
     m.controlBasis = groundBasis(this.stage.camera);
     this.sun.position.set(target.x - 40, 70, target.z - 50); this.sun.target.position.set(target.x, 0, target.z); this.sun.target.updateMatrixWorld();
-    this.stadium.update(dt, time);
+    this.stadium.update(dt, time, this.stage.camera, m);
     this.weather.update(dt, this.stage.camera.position, time);
   }
 
@@ -346,7 +347,7 @@ export class MatchView {
     const bx = A.ball[0] + (B.ball[0] - A.ball[0]) * k, by = A.ball[1] + (B.ball[1] - A.ball[1]) * k, bz = A.ball[2] + (B.ball[2] - A.ball[2]) * k;
     const sp = Math.hypot(B.ball[0] - A.ball[0], B.ball[1] - A.ball[1], B.ball[2] - A.ball[2]) / Math.max(1e-3, B.t - A.t);
     if (sp > 0.3) this.ball.rotateOnWorldAxis(new THREE.Vector3(B.ball[2] - A.ball[2], 0, -(B.ball[0] - A.ball[0])).normalize(), (sp * dt * rate) / m.ball.radius);
-    this.ball.position.set(bx, by, bz); this.ballShadow.position.set(bx, 0.015, bz);
+    this.ball.position.set(bx, by, bz); this.ballShadow.position.set(bx, 0.034, bz);
     this.reticle.visible = false; this.aimMark.visible = false;
     // cameras: side-on and low, following the ball; then behind the goal for the finish
     const L = m.pitch.length, W = m.pitch.width; const sc = m.pitch.futsal ? 0.55 : 1;
@@ -358,7 +359,7 @@ export class MatchView {
     if (shot !== r.shot) { r.shot = shot; this.rig.cutTo(cam, look); }
     this.rig.moveTo(dt, cam, look, 0.25, shot === 1 ? 0.7 : 0.8);
     m.controlBasis = groundBasis(this.stage.camera);
-    this.stadium.update(dt, time);
+    this.stadium.update(dt, time, this.stage.camera);
     this.weather.update(dt, this.stage.camera.position, time);
   }
 
