@@ -25,10 +25,13 @@ export interface Modifiers {
   shotAppetite: [number, number];
   /** 0..1 chance that the team defending a goal window misreads a ball or doesn't commit to a tackle. */
   defenseLapse: number;
+  /** 0..1 per team: the chance a defensive touch in its own box (a clearance, a block, a keeper's first touch) goes
+   *  into its own net. Only while a goal the result needs for the other side is overdue. */
+  ownGoal: [number, number];
 }
 
 export const FREE_PLAY: Modifiers = {
-  botSkill: 0.6, homeAiSkill: 0.6, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], pushTeam: null, pushLevel: 0, forced: false, tackleBias: 0, shotAppetite: [1, 1], defenseLapse: 0,
+  botSkill: 0.6, homeAiSkill: 0.6, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], pushTeam: null, pushLevel: 0, forced: false, tackleBias: 0, shotAppetite: [1, 1], defenseLapse: 0, ownGoal: [0, 0],
 };
 
 /** Window timing per pitch: futsal packs more goals into a shorter match, so its windows open earlier and escalate faster. */
@@ -58,7 +61,7 @@ export type Beat = { do: 'goal'; side: 0 | 1; at: number; soft?: boolean } | { d
  *  keeper can't reach - and goals that mustn't happen are saved or, when the keeper couldn't get there, missed: the
  *  strike that would have gone in is decided as a miss at the moment it's hit. */
 export class Director {
-  mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [false, false], shotAppetite: [1, 1] };
+  mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [false, false], shotAppetite: [1, 1], ownGoal: [0, 0] };
   readonly scenario: string;
   readonly beats: Beat[];
   private bi = 0;
@@ -77,7 +80,7 @@ export class Director {
     const sf = script.finalScore;
     const tier = script.overtime ? 'draw' : script.tier === 'otwin' ? 'draw' : script.tier;
     const d = script.overtime ? 0 : sf.home - sf.away;
-    [this.lo, this.hi] = tier === 'loss' ? [-99, -1] : tier === 'draw' ? [0, 0] : tier === 'win' ? [1, 2] : [3, 99];
+    [this.lo, this.hi] = tier === 'loss' ? [-99, -1] : tier === 'draw' ? [0, 0] : [1, 2];
     this.pref = Math.max(this.lo, Math.min(this.hi, d));
     this.rng = new Rng(`scenario:${script.tier}:${sf.home}-${sf.away}:${script.events.map((e) => e.side[0] + e.t.toFixed(3)).join(',')}`);
     const sc = pickScenario(tier, this.pref, script, this.rng);
@@ -201,7 +204,7 @@ export class Director {
     const m = this.mods; const mt = this.match; const frac = mt.frac;
     this.plan(frac);
     const base = this.script.botStrength;
-    m.botSkill = 0.35 + base * 0.5; m.homeAiSkill = 0.55; m.speedMul = [1, 0.96 + base * 0.08]; m.tackleBias = 0; m.forced = false; m.pushTeam = null; m.pushLevel = 0; m.defenseLapse = 0;
+    m.botSkill = 0.35 + base * 0.5; m.homeAiSkill = 0.55; m.speedMul = [1, 0.96 + base * 0.08]; m.tackleBias = 0; m.forced = false; m.pushTeam = null; m.pushLevel = 0; m.defenseLapse = 0; m.ownGoal = [0, 0];
     m.goalAllowed = [this.allowGoal(0), this.allowGoal(1)];
     // the keeper facing a side that may not score is at its best; otherwise it plays them straight
     m.keeper = [m.goalAllowed[1] ? 'normal' : 'wall', m.goalAllowed[0] ? 'normal' : 'wall'];
@@ -229,6 +232,13 @@ export class Director {
         m.shotAppetite[team] = 3 + esc * 3; m.tackleBias = (team === 0 ? 1 : -1) * (0.8 + esc * 0.2);
         if (team === 1) { m.botSkill = 1; m.homeAiSkill = 0.15; } else { m.homeAiSkill = 1; m.botSkill = 0.1; }
         m.defenseLapse = 0.45 + esc * 0.5;
+        // the player's side is owed a goal and it isn't coming: the defence starts to crack under the pressure -
+        // a clearance sliced in, a block that loops over the keeper, a back-pass the keeper lets under his foot - so
+        // the result never rests on the player scoring it himself
+        // (only for a goal the result can't do without - never to pad a margin)
+        if (team === 0 && (mt.overtime || this.D < this.lo)) m.ownGoal[1] = 0.3 + esc * 0.6;
+        // (and the same for the player's AI team-mates when the bots are owed one - never the player you control)
+        if (team === 1 && (mt.overtime || this.D > this.hi)) m.ownGoal[0] = 0.3 + esc * 0.6;
       }
     }
     m.botSkill = Math.max(0.1, Math.min(1, m.botSkill));
@@ -321,7 +331,7 @@ function pickScenario(tier: string, pref: number, script: MatchScript, rng: Rng)
   const classic = (): Beat[] => {
     // the server's own drama-ordered schedule (for a winning result, the player's goal comes first)
     const ev = script.events.slice();
-    if (tier === 'win' || tier === 'bigwin') { const i = ev.findIndex((e) => e.side === 'home'); if (i > 0) { const [e] = ev.splice(i, 1); ev.unshift({ ...e, t: Math.min(e.t, ev[0].t) }); } }
+    if (tier === 'win') { const i = ev.findIndex((e) => e.side === 'home'); if (i > 0) { const [e] = ev.splice(i, 1); ev.unshift({ ...e, t: Math.min(e.t, ev[0].t) }); } }
     const out: Beat[] = ev.map((e) => ({ do: 'goal', side: e.side === 'home' ? H : A, at: e.t, soft: e.side === 'home' && (tier === 'loss' || tier === 'draw') }));
     return [...out, { do: 'settle' }];
   };
@@ -350,16 +360,11 @@ function pickScenario(tier: string, pref: number, script: MatchScript, rng: Rng)
       ['tight', 1, () => [{ do: 'free', until: r(0.8, 0.88) }, { do: 'settle' }]],
       ['scheduled', 2, classic],
     );
-  } else if (tier === 'win') {
+  } else {
     options.push(
       ['early lead', 3, () => [{ do: 'goal', side: H, at: r(0.1, 0.28) }, { do: 'free', until: r(0.7, 0.8) }, { do: 'settle' }]],
       // two up, then a nervy finish when the bots pull one back
       ['nervy finish', 2, () => [{ do: 'goal', side: H, at: r(0.1, 0.24) }, { do: 'goal', side: H, at: r(0.3, 0.46) }, { do: 'free', until: r(0.62, 0.74) }, { do: 'settle' }]],
-      ['scheduled', 2, classic],
-    );
-  } else {
-    options.push(
-      ['rout', 3, () => { const n = Math.max(3, pref); const out: Beat[] = []; for (let i = 0; i < n; i++) out.push({ do: 'goal', side: H, at: 0.1 + (0.62 * (i + r(0.1, 0.8))) / n }); return [...out, { do: 'free', until: 0.85 }, { do: 'settle' }]; }],
       ['scheduled', 2, classic],
     );
   }

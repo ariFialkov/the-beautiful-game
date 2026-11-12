@@ -323,3 +323,24 @@ test('first time: a shot pressed while a pass is on its way is a one-timer', () 
   for (let i = 0; i < 60 * 3 && !shot; i++) { m.update(1 / 60, neutral()); shot = m.ball.lastTouch === mate && !!m.ball.inFlightShot; }
   assert.ok(shot, 'struck first time at goal');
 });
+
+test('a through ball down the line that loses its legs: the runner checks back for it rather than running on (and never off the pitch)', () => {
+  for (const [factor, gap] of [[0.5, 10], [0.55, 14], [0.65, 18]]) {
+    const { m, passer, mate } = sandbox(); const at = m.teams[0].attackDir; const W = m.pitch.width;
+    place(passer, at * 15, W / 2 - 8, at, 0); place(mate, at * (15 + gap), W / 2 - 3, at, 0); mate.vel = { x: at * 7, z: 0 };
+    (m as any).setControlled(passer); m.ball.reset(at * 15.4, W / 2 - 8); m.ball.owner = passer;
+    m.startKick(passer, 'through', 0.8, v2.norm({ x: at * 12, z: 5 }), { targetAgent: mate });
+    let struck = false, got = -1, furthest = 0, maxZ = 0;
+    for (let i = 0; i < 60 * 7 && got < 0; i++) {
+      m.update(1 / 60, { ...neutral(), move: { x: at, y: 0 } }); // stick held forward all the way
+      if (!struck && m.ball.lastTouch === passer && !m.ball.owner) { struck = true; m.ball.vx *= factor; m.ball.vz *= factor; m.ball.setRolling(); }
+      furthest = Math.max(furthest, mate.pos.x * at - (15 + gap)); maxZ = Math.max(maxZ, Math.abs(mate.pos.z));
+      if (m.ball.owner === mate || m.ball.lastTouch === mate) got = i / 60; // (his first touch: a heavy one may still squirm away)
+      if (m.phase !== 'play') break;
+    }
+    console.log(`  ${factor * 100}% pace, ${gap} m ahead: got to it at ${got.toFixed(2)} s, ran on at most ${furthest.toFixed(1)} m`);
+    assert.ok(maxZ < W / 2, 'stays on the pitch');
+    assert.ok(got > 0 && got < 2.2, `got to it promptly (${got.toFixed(2)} s)`);
+    assert.ok(furthest < 4.5, `checked back instead of running on (${furthest.toFixed(1)} m)`);
+  }
+});

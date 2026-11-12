@@ -110,6 +110,11 @@ function setPieceDecision(m: Match, team: TeamState, a: Agent, skill: number): b
   const goal = { x: team.attackDir * L / 2, z: 0 };
   const dGoal = v2.dist(a.pos, goal);
   const corner = () => (rnd() < 0.5 ? -1 : 1) * goalWidth * (0.28 + rnd() * 0.14);
+  // a goal the other side is owed is overdue: a restart in our own half goes back to the keeper, who fumbles it
+  const k = team.agents.find((x) => x.isGK);
+  if (m.mods.ownGoal[team.index] > 0 && k && k !== a && sp.kind !== 'penalty' && sp.kind !== 'kickoff' && (a.pos.x - goal.x) * team.attackDir < 0 && v2.dist(a.pos, k.pos) < L * 0.45 && m.phase === 'play') {
+    k.ai.fumble = m.time + 4; m.startKick(a, 'pass', 0.5, v2.norm(v2.sub(k.pos, a.pos)), { targetAgent: k, botSkill: skill }); return true;
+  }
   switch (sp.kind) {
     case 'penalty': {
       // a moment over the ball first, then a corner
@@ -164,6 +169,12 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
 
   // Under pressure deep in our own half: get rid of it.
   const ownGoalDist = v2.dist(a.pos, { x: -goal.x, z: 0 });
+  // a goal the other side is owed is overdue: a nervous back-pass to the keeper, which he lets under his foot
+  const og = mods.ownGoal[team.index];
+  if (og > 0 && ownGoalDist < (futsal ? L * 0.6 : 34) && ownGoalDist > (futsal ? 5 : 8) && rnd() < og) {
+    const k = team.agents.find((x) => x.isGK);
+    if (k) { k.ai.fumble = m.time + 4; m.startKick(a, 'pass', 0.55, v2.norm(v2.sub(k.pos, a.pos)), { targetAgent: k, botSkill: skill }); return; }
+  }
   if (pressure.dist < 1.8 && ownGoalDist < (futsal ? 8 : 22) && rnd() < 0.55) {
     m.startKick(a, futsal ? 'pass' : 'lob', 0.9, v2.norm({ x: dir, z: Math.sign(a.pos.z || 1) * 0.5 }), { clear: true, botSkill: skill });
     return;
@@ -455,7 +466,7 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
     const lat = g.z - k.pos.z;
     if (Math.abs(lat) > 0.6) {
       const side = Math.sign(lat); const yawK = Math.atan2(k.heading.x, k.heading.z); const leftZ = -Math.sin(yawK);
-      k.ai.dive = { side: Math.sign(side * leftZ) || 1, worldSide: side, mode: 'normal', flight: 0.42, vel: { x: 0, z: side * Math.min(5.5, Math.abs(lat) / 0.42) }, hands: { x: gx + dir * 0.3, y: g.y, z: g.z }, high: g.y, lat: Math.abs(lat) };
+      k.ai.dive = { side: Math.sign(side * leftZ) || 1, worldSide: side, mode: 'normal', flight: 0.42, vel: { x: 0, z: side * Math.min(5.5, Math.max(0, Math.abs(lat) - 0.85) / 0.42) }, hands: { x: gx + dir * 0.3, y: g.y, z: g.z }, high: g.y, lat: Math.abs(lat) }; // (the body goes to an arm's length short of it: the hands do the rest)
       k.ai.diveAt = m.time + 0.02; k.ai.shotKey = ball.lastTouchTime;
     } else { k.ai.shotKey = ball.lastTouchTime; k.intent.move = { x: 0, z: 0 }; return; } // stays big in the middle
   }

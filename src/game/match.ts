@@ -50,7 +50,7 @@ export interface FreeKick {
   aiAt: number;
 }
 export type MatchEvent =
-  | { type: 'goal'; team: number; scorer: Agent | null; forced?: boolean }
+  | { type: 'goal'; team: number; scorer: Agent | null; forced?: boolean; ownGoal?: Agent }
   | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' } | { type: 'overtime'; size: number }
   | { type: 'out'; kind: 'throw' | 'corner' | 'goalkick' } | { type: 'kick'; kind: KickKind; power: number; agent: Agent }
   | { type: 'tackle'; success: boolean; agent: Agent } | { type: 'switch'; agent: Agent } | { type: 'touch'; agent: Agent; heavy: boolean }
@@ -88,7 +88,7 @@ export class Match {
   possessionTeam = -1;
   controlled: Agent | null = null;
   director: Director | null = null;
-  mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1] };
+  mods: Modifiers = { ...FREE_PLAY, speedMul: [1, 1], keeper: ['normal', 'normal'], goalAllowed: [true, true], shotAppetite: [1, 1], ownGoal: [0, 0] };
   teamSpeedBonus: [number, number] = [1, 1];
   charge: { kind: 'shoot' | 'pass' | 'lob' | 'fk' | 'through' | 'pen'; t: number; low?: boolean } | null = null;
   /** A penalty (FIFA style): aim cursor on the goal (springs back to the middle), power, the timed second press, and
@@ -712,7 +712,8 @@ export class Match {
         let spot = pa?.spot ?? null;
         if (toSpot && spot) { let bd = Infinity; for (const q of this.predicted()) { if (q.y > 1.2) continue; const d = Math.hypot(q.x - spot.x, q.z - spot.z); if (d < bd) { bd = d; spot = { x: q.x, z: q.z }; } } }
         const atSpot = toSpot && v2.dist(me.pos, spot!) < 2 && !this.passFallsShort(me);
-        const meet = dying ? interceptPoint(this, me, pa?.lofted ? 2.3 : 1.5) : toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : spot!) : rp.p;
+        let meet = dying ? interceptPoint(this, me, pa?.lofted ? 2.3 : 1.5) : toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : spot!) : rp.p;
+        { const lx = this.pitch.length / 2 - 1, lz = this.pitch.width / 2 - 1; meet = { x: Math.max(-lx, Math.min(lx, meet.x)), z: Math.max(-lz, Math.min(lz, meet.z)) }; } // (never runs off the pitch for it)
         const to = v2.sub(meet, me.pos); const tl = v2.len(to);
         const attack = !!pa?.lofted; // a cross is attacked, not waited for
         const ease = dying ? 1 : toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
@@ -1144,6 +1145,18 @@ export class Match {
     // ...or it's a slow ball he's already ahead of: waiting for it to creep up to him looks wrong, so he meets it
     const b = this.ball; const sp = Math.hypot(b.vx, b.vz);
     if (sp > 0.2) { const ahead = ((r.pos.x - b.x) * b.vx + (r.pos.z - b.z) * b.vz) / sp; if (ahead > 2.5 && (sp < 4 || ahead / sp > 1.5)) return true; }
+    // ...or he's running on and it will never catch him: at the pace he's going, the ball stays behind him for its
+    // whole predicted roll and ends up slower than him (a through ball that's lost its legs). He sees it and checks back.
+    const rs = v2.len(r.vel);
+    if (rs > 2 && b.y < 1.2) {
+      const u = v2.scale(r.vel, 1 / rs); let catches = false;
+      for (const q of this.predicted()) { const lead = (q.x - r.pos.x - r.vel.x * q.t) * u.x + (q.z - r.pos.z - r.vel.z * q.t) * u.z; if (lead > -0.8) { catches = true; break; } }
+      const last = this.predicted().at(-1);
+      if (!catches && last && last.vx * u.x + last.vz * u.z < rs + 0.3) return true;
+    }
+    // ...or his run is taking him off the pitch before it gets there
+    const { length: L, width: W } = this.pitch;
+    if (rs > 1.5 && ((Math.abs(r.pos.x) > L / 2 - 2 && r.vel.x * r.pos.x > 0) || (Math.abs(r.pos.z) > W / 2 - 2 && r.vel.z * r.pos.z > 0)) && v2.dist(r.pos, { x: b.x, z: b.z }) > 2.5) return true;
     return false;
   }
   private restCache: { step: number; rest: { x: number; z: number; t: number } } | null = null;
@@ -1546,6 +1559,31 @@ export class Match {
     this.deadBall(1.2, () => this.restart('freekick', 1 - who.team, pos));
   }
 
+  /* ------------------------------ own goals ------------------------------ */
+  /** A defender's touch in his own box that goes into his own net - only while the director has the other side owed an
+   *  overdue goal (`mods.ownGoal`), or a keeper fumbling a back-pass (`sure`). The touch itself is real (it leaves his
+   *  boot, head or shin toward the far side of the goal from his keeper, who is wrong-footed); nothing is done in flight. */
+  private ownGoalTouch(a: Agent, sure = false): boolean {
+    const p = this.mods.ownGoal[a.team]; if (!sure && !(p > 0)) return false;
+    if (a === this.controlled && !this.autopilot) return false; // (the player you control never puts it in his own net for you)
+    if (this.phase !== 'play') return false;
+    const { length: L, goalWidth, boxDepth, boxWidth } = this.pitch; const b = this.ball;
+    const dir = this.teams[a.team].attackDir; const gx = -dir * L / 2;
+    if (Math.abs(b.x - gx) > boxDepth + 2 || Math.abs(b.z) > boxWidth / 2 + 2 || Math.abs(b.x - gx) < 0.6) return false;
+    if (!sure && Math.random() >= p) return false;
+    const k = this.teams[a.team].agents.find((x) => x.isGK);
+    const kz = k ? k.pos.z : 0; const side = Math.abs(kz) > 0.4 ? -Math.sign(kz) : (Math.random() < 0.5 ? -1 : 1);
+    const target = { x: gx - dir * 0.4, y: 0.25 + Math.random() * 0.8, z: side * (goalWidth / 2 - 0.55 - Math.random() * 0.6) };
+    const d = Math.hypot(target.x - b.x, target.z - b.z);
+    const sol = solveKick({ x: b.x, y: b.y, z: b.z }, target, Math.min(19, 8 + d * 0.5), 0, 0, this.surface);
+    b.strike(sol.v, { x: 0, y: 0, z: 0 }, a, this.time); if (b.y < 0.3 && sol.v.y < 1) b.setRolling();
+    b.inFlightShot = { team: 1 - a.team, target: { x: gx, y: target.y, z: target.z } };
+    a.cooldown = Math.max(a.cooldown, 0.4); a.stunned = Math.max(a.stunned, 0.4); a.pendingKick = null; a.ai.fumble = 0;
+    if (k) { k.ai.dive = null; k.ai.shotKey = b.lastTouchTime; k.stunned = Math.max(k.stunned, 0.6 + d / 14); if (k !== a && k.action?.type !== 'fallen') k.action = null; }
+    this.emit({ type: 'touch', agent: a, heavy: true });
+    return true;
+  }
+
   /** Sent off: he walks off to the touchline and his side plays on a man down. */
   private sendOff(a: Agent) {
     const t = this.teams[a.team]; t.reds++;
@@ -1582,6 +1620,7 @@ export class Match {
   /** A keeper's hands meet a ball he went to collect. */
   private keeperHands(k: Agent) {
     const b = this.ball;
+    if (b.lastTouchTeam !== k.team && this.ownGoalTouch(k)) return; // (it squirms through his hands)
     if (b.speed3() > 7 && b.lastTouchTeam !== k.team) { this.keeperContact(k, this.mods.keeper[k.team] === 'wall'); return; }
     b.vx = b.vy = b.vz = 0; b.wx = b.wy = b.wz = 0; b.held = true; b.owner = k; k.keeperHold = 0;
     b.lastTouch = k; b.lastTouchTeam = k.team; b.lastTouchTime = this.time; b.inFlightShot = null;
@@ -1591,6 +1630,7 @@ export class Match {
   /** Catch or parry depending on pace and handling. */
   keeperContact(k: Agent, wall: boolean, blocked = false) {
     const b = this.ball; const sp = b.speed3();
+    if (!wall && this.ownGoalTouch(k)) { this.emit({ type: 'save', keeper: k, caught: false }); return; } // (spilled in)
     const handling = (k.card.attrs.reflexes + k.card.attrs.diving) / 198;
     // body/leg blocks are parried; hands hold what they can: slower shots, and better keepers hold harder ones
     const catchP = blocked ? 0 : sp < 13 ? 0.95 : Math.max(0.05, 0.95 - (sp - 13) / (14 + handling * 10)) + (wall ? 0.25 : 0);
@@ -1838,7 +1878,7 @@ export class Match {
           b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; b.vz -= (1 + e) * vn * nz;
           b.vx = a.vel.x + (b.vx - a.vel.x) * 0.9; b.vz = a.vel.z + (b.vz - a.vel.z) * 0.9;
           b.wx *= 0.4; b.wy *= 0.4; b.wz *= 0.4;
-          if (!dribbling) { b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; if (b.owner && b.owner !== a) b.owner = null; }
+          if (!dribbling) { b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; if (b.owner && b.owner !== a) b.owner = null; if (-vn > 2) this.ownGoalTouch(a); }
           if (-vn > 3) this.emit({ type: 'touch', agent: a, heavy: true });
         }
         break;
@@ -1862,6 +1902,7 @@ export class Match {
   private firstTouch(a: Agent) {
     const b = this.ball;
     if (b.held && b.owner !== a) return;
+    if (this.ownGoalTouch(a, a.isGK && (a.ai.fumble ?? 0) > this.time)) return;
     const rel = Math.hypot(b.vx - a.vel.x, b.vy * 0.5, b.vz - a.vel.z);
     const teamSkill = a.team === 0 ? this.mods.homeAiSkill : this.mods.botSkill;
     const skill = a.isHuman && !this.autopilot ? a.skill.control : a.skill.control * (0.7 + 0.6 * teamSkill);
@@ -1913,6 +1954,7 @@ export class Match {
   /** The head meets the ball: attackers in range go for goal, everyone else clears it. */
   private doHeader(a: Agent) {
     const b = this.ball; const team = this.teams[a.team];
+    if (this.ownGoalTouch(a)) { this.emit({ type: 'header', agent: a }); return; }
     const { length: L, goalWidth, goalHeight, boxDepth } = this.pitch;
     const gx = team.attackDir * L / 2;
     const attacking = Math.abs(a.pos.x - gx) < boxDepth + 4;
@@ -2011,12 +2053,13 @@ export class Match {
     t.score++;
     this.director?.onGoal(teamIdx);
     const scorer = this.ball.lastTouch && this.ball.lastTouch.team === teamIdx ? this.ball.lastTouch : null;
+    const og = this.ball.lastTouch && this.ball.lastTouch.team !== teamIdx && this.time - this.ball.lastTouchTime < 4 ? this.ball.lastTouch : undefined;
     this.phase = 'goal'; this.phaseTimer = 4.6; this.lastConceded = teamIdx === 0 ? 1 : 0; this.setPiece = null;
     this.ball.owner = null; this.ball.inFlightShot = null;
     for (const a of this.agents) { a.hasBall = false; a.pendingKick = null; if (a.action?.type === 'kick') a.action = null; }
     this.startCelebration(teamIdx, scorer);
     this.lastScorer = scorer; this.lastScorerTeam = teamIdx; this.lastGoalAt = this.time;
-    this.emit({ type: 'goal', team: teamIdx, scorer });
+    this.emit({ type: 'goal', team: teamIdx, scorer, ownGoal: og });
   }
 
   /** The goal celebration: the scorer wheels away toward the corner and finishes with a knee slide, a fist pump, a

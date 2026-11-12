@@ -55,7 +55,7 @@ export class Agent {
   lastTouchFoot = 1;
   yellow = 0;
   sentOff = false;
-  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; shotKey: number; lapseKey: number; lapse: boolean; penDone?: boolean } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, shotKey: -1, lapseKey: -1, lapse: false };
+  ai: { nextDecision: number; target: V2; mode: string; marking: Agent | null; expectBall: number; diveAt: number; dive: any; shotKey: number; lapseKey: number; lapse: boolean; penDone?: boolean; fumble?: number } = { nextDecision: 0, target: { x: 0, z: 0 }, mode: 'shape', marking: null, expectBall: 0, diveAt: 0, dive: null, shotKey: -1, lapseKey: -1, lapse: false };
   keeperHold = 0;
   /** Skeleton and procedural animation (assigned by the match). */
   motion?: Motion;

@@ -27,7 +27,7 @@ test('empirical RTP from tier sampling converges', () => {
 });
 
 test('match scripts always end with the tier result', () => {
-  const tiers: MatchTier[] = ['loss', 'draw', 'win', 'bigwin', 'otwin'];
+  const tiers: MatchTier[] = ['loss', 'draw', 'win', 'otwin'];
   let ot = 0;
   for (let i = 0; i < 500; i++) for (const tier of tiers) for (const mode of ['kickoff', 'futsal'] as const) {
     if (tier === 'otwin' && mode !== 'futsal') continue;
@@ -36,7 +36,6 @@ test('match scripts always end with the tier result', () => {
     if (tier === 'loss') assert.ok(away > home);
     if (tier === 'draw') assert.equal(home, away);
     if (tier === 'win') assert.ok(home > away && home - away < 3);
-    if (tier === 'bigwin') assert.ok(home - away >= 3);
     if (tier === 'otwin') assert.ok(s.overtime?.side === 'home' && home === away + 1, 'a sudden-death win is by the golden goal');
     if (s.overtime) {
       // level in regulation; the golden goal is extra, scheduled in overtime rather than as a timed event

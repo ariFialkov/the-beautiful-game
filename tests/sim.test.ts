@@ -34,7 +34,7 @@ function runMatch(mode: 'kickoff' | 'futsal', tier: MatchTier, seed: string, hum
   return { m, script, events };
 }
 
-/** The result the script drew (win / draw / loss, and the margin band for "win" and "win by 3+") is what was played. */
+/** The result the script drew (win / draw / loss) is what was played. */
 function assertResult(m: Match, label: string) {
   const d = m.director!; const D = m.teams[0].score - m.teams[1].score;
   assert.ok(m.ended, `${label}: match ended`);
@@ -42,12 +42,12 @@ function assertResult(m: Match, label: string) {
 }
 
 test('AI-vs-AI matches end with the drawn result, whatever scenario is played (kickoff)', () => {
-  const tiers: MatchTier[] = ['loss', 'draw', 'win', 'bigwin']; let awarded = 0;
-  for (let i = 0; i < 2; i++) for (const tier of tiers) {
+  const tiers: MatchTier[] = ['loss', 'draw', 'win']; let awarded = 0;
+  for (let i = 0; i < 3; i++) for (const tier of tiers) {
     const { m, events } = runMatch('kickoff', tier, `k${i}${tier}`, false);
     assertResult(m, tier);
     // winning results: the player's side always scores first
-    if (tier === 'win' || tier === 'bigwin') assert.ok(events[0]?.startsWith('0@'), `${tier}: first goal ${events[0]}`);
+    if (tier === 'win') assert.ok(events[0]?.startsWith('0@'), `${tier}: first goal ${events[0]}`);
     awarded += events.filter((e) => e.endsWith('!')).length;
     assert.ok(awarded <= 1, `goals had to be awarded by the failsafe (${awarded})`); // (very rare: about one match in 30)
     console.log(`  ${tier} (${m.director!.scenario}): ${m.teams[0].score}-${m.teams[1].score}  goals ${events.join(' ')} frac=${m.frac.toFixed(2)}`);
@@ -71,13 +71,13 @@ test('an idle human still gets the drawn result', () => {
 test('scoring scenarios: many shapes per result, losing ones often letting the player score first, winning ones always', () => {
   const names = new Map<string, Set<string>>(); let playerFirstLoss = 0, losses = 0;
   const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
-  for (const tier of ['loss', 'draw', 'win', 'bigwin'] as MatchTier[]) for (let i = 0; i < 40; i++) {
+  for (const tier of ['loss', 'draw', 'win'] as MatchTier[]) for (let i = 0; i < 40; i++) {
     const script = generateMatchScript(new Rng(`scen-${tier}-${i}`), 'kickoff', tier, 2, 0.6);
     const m = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: 0, script, durationSec: script.durationSec, clockMinutes: 90,
       teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
     const d = m.director!; (names.get(tier) ?? names.set(tier, new Set()).get(tier)!).add(d.scenario);
     const firstGoal = d.beats.find((b) => b.do === 'goal' || b.do === 'wait');
-    if (tier === 'win' || tier === 'bigwin') assert.ok(firstGoal && (firstGoal.do === 'wait' || firstGoal.side === 0), `${tier} ${d.scenario}: the player's goal comes first`);
+    if (tier === 'win') assert.ok(firstGoal && (firstGoal.do === 'wait' || firstGoal.side === 0), `${tier} ${d.scenario}: the player's goal comes first`);
     if (tier === 'loss') { losses++; if (firstGoal && (firstGoal.do === 'wait' || firstGoal.side === 0)) playerFirstLoss++; }
   }
   for (const [tier, set] of names) console.log(`  ${tier}: ${[...set].join(', ')}`);
@@ -189,4 +189,24 @@ test("the player's chances count: clean finishes from inside the box go in, even
   console.log(`  ${goals}/${n} chances scored, ${forcedMisses} made to miss`);
   assert.equal(forcedMisses, 0, 'no shot of the player is turned into a miss');
   assert.ok(goals >= n * 0.6, 'most clean chances go in');
+});
+
+test('a player who never shoots still gets a drawn win through play: the goal it needs comes from the defence cracking (an own goal), never awarded', () => {
+  const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+  const script = generateMatchScript(new Rng('never-shoots'), 'kickoff', 'win', 2, 0.6);
+  const m = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: 0, script, durationSec: script.durationSec, clockMinutes: 90,
+    teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+  const goals: string[] = []; let awarded = 0;
+  m.on((e) => { if (e.type === 'goal') { goals.push(`${e.team}${e.ownGoal ? 'og' : ''}@${m.frac.toFixed(2)}`); if (e.forced) awarded++; } });
+  const btn = { down: false, justPressed: false, justReleased: false }; let t = 0;
+  while (!m.ended && m.frac < 1.5) {
+    // carries it forward and lays it off now and then, but never shoots (and never touches shoot for a header)
+    t += 1 / 60; const me = m.controlled; const dir = m.teams[0].attackDir; const pass = Math.floor(t * 2) % 7 === 0;
+    m.controlBasis = { right: { x: 0, z: -dir }, forward: { x: dir, z: 0 } };
+    m.update(1 / 60, { move: { x: me?.hasBall ? 0.3 : 0, y: me?.hasBall ? 1 : 0 }, sprint: btn, pass: { down: pass, justPressed: false, justReleased: !pass && Math.floor((t - 1 / 60) * 2) % 7 === 0 }, shoot: btn, through: btn, lob: btn, switch: btn, slide: btn, finesse: btn, shield: btn, touchCurl: 0 } as any);
+  }
+  const D = m.teams[0].score - m.teams[1].score;
+  console.log(`  ${m.director!.scenario}: ${m.teams[0].score}-${m.teams[1].score}  goals ${goals.join(' ')}  ended at ${m.frac.toFixed(2)}`);
+  assert.ok(m.ended && D >= 1, 'the win came');
+  assert.equal(awarded, 0, 'no goal had to be awarded');
 });

@@ -25,7 +25,7 @@ class Foot {
   stanceT = 0;               // seconds since landing
 }
 interface FootTarget { pos: THREE.Vector3; yaw: number; pitch: number; roll: number; toe: number; }
-interface ArmTarget { x: number; y: number; z: number; elbow: number; ik: THREE.Vector3 | null; ikW: number; }
+interface ArmTarget { x: number; y: number; z: number; elbow: number; ik: THREE.Vector3 | null; ikW: number; /** where the elbow points under IK (default: down, back and out) */ pole?: THREE.Vector3 | null; /** reach toward the target at full stretch, never folding short of it */ stretch?: boolean; }
 interface Targets {
   pelvis: THREE.Vector3; pPitch: number; pRoll: number; pYaw: number;
   sPitch: number; sRoll: number; sYaw: number; headYaw: number; headPitch: number;
@@ -51,7 +51,7 @@ export class Motion {
   private T = newTargets();
   // scratch
   private q1 = new THREE.Quaternion(); private q2 = new THREE.Quaternion(); private q3 = new THREE.Quaternion(); private qw = new THREE.Quaternion();
-  private e = new THREE.Euler(); private v1 = V(); private v2 = V(); private v3 = V(); private v4 = V(); private v5 = V(); private v6 = V();
+  private e = new THREE.Euler(); private v1 = V(); private v2 = V(); private v3 = V(); private v4 = V(); private v5 = V(); private v6 = V(); private v7 = V();
   private mid = V(); private end = V(); private pole = V();
   private sc = new THREE.Vector3(); private pp = V();
 
@@ -191,7 +191,7 @@ export class Motion {
       ar.x = amp * (s === 'L' ? fL : fR) - (carrying ? 0.15 : 0);
       ar.z = sg * ((0.1 + 0.08 * sf) * st.armWidth + (carrying || jockey ? 0.3 : 0) + (a.isGK && sp < 2 ? 0.5 : 0));
       ar.y = -sg * 0.15 * sf; ar.elbow = (0.25 + 1.25 * sf) * st.elbow + (a.isGK && sp < 2 ? 0.7 : 0) + (jockey ? 0.4 : 0);
-      ar.ik = null; ar.ikW = 0;
+      ar.ik = null; ar.ikW = 0; ar.pole = null; ar.stretch = false;
       if (!this.gaitOn && st.swagger > 0.7 && !a.isGK && atype !== 'celebrate') { ar.x = 0.25; ar.z = sg * 0.75; ar.elbow = 1.7; } // hands on hips
     }
     // a throw-in: holding the ball up behind the head in both hands
@@ -373,13 +373,25 @@ export class Motion {
         const flightY = clamp(ballY - lerp(0.75, 0.32, lat), 0.22 * h, 1.35 * h);
         T.pelvis.y = lerp(T.pelvis.y, lerp(flightY, 0.2 * h, land), kk);
         T.pelvis.x += sideW * 0.5 * h * kk * lat;
-        T.pRoll = lerp(T.pRoll, -sideW * lerp(1.45, 0.85, high) * lat, kk); // flat along the ground, more upright for a high ball T.sRoll = lerp(T.sRoll, -sideW * 0.2, kk); T.sPitch = lerp(T.sPitch, 0.05, kk);
+        T.pRoll = lerp(T.pRoll, -sideW * lerp(1.45, 0.85, high) * lat, kk); // flat along the ground, more upright for a high ball
+        T.sRoll = lerp(T.sRoll, -sideW * 0.2, kk); T.sPitch = lerp(T.sPitch, -0.08 * (1 - land), kk); // the chest opens to the ball
         T.headPitch = lerp(T.headPitch, -0.15, kk);
+        // Arms: a counter-swing down and back on the load, then both whip up to full stretch at the ball (the top arm over
+        // the head, the bottom one along the line of the dive), elbows soft and pointing away from the shot; on landing
+        // they gather in to the chest (the ball, if he's held it), then push him back up.
         const tgt = d.hands as { x: number; y: number; z: number } | undefined;
+        const swing = Math.sin(Math.PI * clamp(t / 0.14, 0, 1)) * (1 - go);
+        const reach = ease(clamp((t - 0.04) / Math.max(0.12, fl * 0.55), 0, 1)) * (1 - land);
+        const gather = land * (1 - up);
         for (const s2 of ['L', 'R'] as Side[]) {
-          const ar = T.arm[s2];
-          if (tgt) { ar.ik = V().set(tgt.x + lw.x * sideSign(s2) * 0.08, tgt.y, tgt.z + lw.z * sideSign(s2) * 0.08); ar.ikW = kk * (1 - land * 0.6); }
-          else { ar.z = lerp(ar.z, sideSign(s2) * 2.6, kk); }
+          const ar = T.arm[s2]; const lead = sideSign(s2) === sideW;
+          ar.x = lerp(ar.x, 0.55, swing); ar.elbow = lerp(ar.elbow, 0.45, swing); ar.z = lerp(ar.z, sideSign(s2) * 0.35, swing);
+          ar.x = lerp(ar.x, lead ? -2.95 : -2.7, reach); ar.z = lerp(ar.z, sideSign(s2) * (lead ? 0.3 : 0.12), reach); ar.y = lerp(ar.y, 0, reach); ar.elbow = lerp(ar.elbow, 0.15, reach);
+          ar.x = lerp(ar.x, -1.2, gather); ar.z = lerp(ar.z, sideSign(s2) * 0.25, gather); ar.elbow = lerp(ar.elbow, 1.75, gather);
+          if (tgt) {
+            ar.ik = V().set(tgt.x + lw.x * sideSign(s2) * 0.09, tgt.y + (lead ? -0.03 : 0.03), tgt.z + lw.z * sideSign(s2) * 0.09); ar.ikW = reach;
+            ar.pole = V().set(-fw.x, -0.25, -fw.z); ar.stretch = true; // (elbows back, away from the shot: no arms folding into the body)
+          }
         }
         // the far leg drives off, the near leg trails
         for (const s2 of ['L', 'R'] as Side[]) {
@@ -514,8 +526,10 @@ export class Motion {
       const sh = rig.pos(arm, this.v1);
       // elbows point down, back and out
       fwdOf(yaw, this.v2); leftOf(yaw, this.v3);
-      this.pole.set(0, -0.6, 0).addScaledVector(this.v2, -0.5).addScaledVector(this.v3, sideSign(s) * 0.6);
-      twoBone(sh, ar.ik, body.upperArm, body.foreArm, this.pole, this.mid, this.end);
+      if (ar.pole) this.pole.copy(ar.pole); else this.pole.set(0, -0.6, 0).addScaledVector(this.v2, -0.5).addScaledVector(this.v3, sideSign(s) * 0.6);
+      let ikT = ar.ik;
+      if (ar.stretch) { const len = (body.upperArm + body.foreArm) * 0.97; const d = this.v7.subVectors(ar.ik, sh); const l = d.length(); if (l < len) ikT = d.multiplyScalar(len / Math.max(1e-3, l)).add(sh); }
+      twoBone(sh, ikT, body.upperArm, body.foreArm, this.pole, this.mid, this.end);
       const fkElbow = rig.pos(fore, this.v4);
       this.mid.lerpVectors(fkElbow, this.mid, ar.ikW);
       const fkHand = rig.pos(L ? B.handL : B.handR, this.v5); this.end.lerpVectors(fkHand, this.end, ar.ikW);

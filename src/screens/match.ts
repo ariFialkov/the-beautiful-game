@@ -78,7 +78,7 @@ export class MatchScreen implements Screen {
 
     match.on((e) => {
       switch (e.type) {
-        case 'goal': { this.replayDue = true; const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
+        case 'goal': { this.replayDue = true; const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : e.ownGoal ? ' · own goal, ' + e.ownGoal.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
         case 'post': this.showToast(e.bar ? 'Off the crossbar!' : 'Off the post!'); audio.post(); break;
         case 'save': this.showToast(e.caught ? `Held by ${e.keeper.card.shortName}` : `Parried by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
         case 'offside': this.showToast(`Offside · ${e.agent.card.shortName}`); audio.whistle(); this.showBanner('OFFSIDE', 1.4); break;

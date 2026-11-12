@@ -15,7 +15,6 @@ function pickScore(rng: Rng, mode: 'kickoff' | 'futsal' | 'fut', tier: MatchTier
     }
     case 'loss': { const d = rng.weighted([[1, 0.55], [2, 0.32], [3, 0.13]] as const); return { home: loserGoals, away: loserGoals + d }; }
     case 'win': { const d = rng.weighted([[1, 0.62], [2, 0.38]] as const); return { home: loserGoals + d, away: loserGoals }; }
-    case 'bigwin': { const d = rng.weighted([[3, 0.6], [4, 0.3], [5, 0.1]] as const); return { home: Math.min(loserGoals, 2) + d, away: Math.min(loserGoals, 2) }; }
     case 'otwin': return pickScore(rng, mode, 'draw'); // level after regulation; decided in sudden death
   }
 }

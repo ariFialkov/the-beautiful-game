@@ -55,6 +55,26 @@ function cardTexture(kind: 'yellow' | 'red') {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return (cardTex[kind] = t);
 }
 
+/** A player's name tag ("F. Lastname"), drawn crisp with a dark outline; yellow, with a small yellow card in front
+ *  of it, when he's booked. */
+const tagTex = new Map<string, THREE.CanvasTexture>();
+export function nameTagText(full: string) { const i = full.indexOf(' '); return i > 0 ? `${full[0]}. ${full.slice(i + 1)}` : full; }
+function nameTagTexture(text: string, booked: boolean) {
+  const key = `${text}|${booked}`; const hit = tagTex.get(key); if (hit) return hit;
+  const c = document.createElement('canvas'); c.width = 512; c.height = 64; const g = c.getContext('2d')!;
+  g.font = '700 38px system-ui, -apple-system, "Segoe UI", sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
+  const tw = g.measureText(text).width; const cw = booked ? 20 : 0, gap = booked ? 9 : 0; const x0 = (512 - (tw + cw + gap)) / 2;
+  if (booked) {
+    // the card: the height of the capitals, tilted a touch
+    g.save(); g.translate(x0 + cw / 2, 32); g.rotate(-0.12);
+    g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(-cw / 2 - 1.5, -14.5, cw + 3, 29);
+    g.fillStyle = '#ffd21f'; g.fillRect(-cw / 2, -13, cw, 26); g.restore();
+  }
+  g.lineJoin = 'round'; g.lineWidth = 7; g.strokeStyle = 'rgba(6, 10, 20, 0.85)'; g.strokeText(text, x0 + cw + gap, 33);
+  g.fillStyle = booked ? '#ffd21f' : '#ffffff'; g.fillText(text, x0 + cw + gap, 33);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; tagTex.set(key, t); return t;
+}
+
 /** Free-kick aim marker: a bold gold ring and dot with a soft shadow, readable against the white net at 30 m. */
 let aimTex: THREE.CanvasTexture | null = null;
 function aimTexture(): THREE.CanvasTexture {
@@ -107,7 +127,8 @@ export class MatchView {
   private aimMark: THREE.Mesh; private fkCam: object | null = null; private fkSide = 0; private penFk: { src: object; fk: any } | null = null;
 
   /** Booked players carry a small yellow card over their head; a card being shown pops up over the offender. */
-  private bookings = new Map<Agent, THREE.Sprite>();
+  /** Name tags: over the player you control, and over an opponent on the ball. */
+  private tags: Array<{ sprite: THREE.Sprite; key: string }> = [];
   private shown: { sprite: THREE.Sprite; agent: Agent; t: number } | null = null;
   constructor(private stage: Stage, public match: Match, night: boolean) {
     const [h, a] = match.opts.teams;
@@ -164,19 +185,40 @@ export class MatchView {
     if (this.shown) this.scene.remove(this.shown.sprite);
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: cardTexture(kind), transparent: true, depthTest: false, sizeAttenuation: false }));
     sp.renderOrder = 5; this.scene.add(sp); this.shown = { sprite: sp, agent: a, t: 0 };
-    if (kind === 'yellow' && !this.bookings.has(a)) {
-      // a fixed size on screen (a small badge), however near or far the camera is
-      const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: cardTexture('yellow'), transparent: true, depthTest: false, sizeAttenuation: false }));
-      tag.scale.set(0.017, 0.024, 1); tag.renderOrder = 4; tag.visible = false; this.scene.add(tag); this.bookings.set(a, tag);
-    }
-    if (kind === 'red') { const tag = this.bookings.get(a); if (tag) { this.scene.remove(tag); this.bookings.delete(a); } }
   }
-  /** The card animation (flips up out of the referee's pocket, holds, fades) and the booking tags. */
+  /** Name tags over the player you control and the opponent on the ball (nobody's, when they don't have it). */
+  private updateTags() {
+    const m = this.match; const al = m.alpha; const cam = this.stage.camera.position;
+    const who: Agent[] = [];
+    if (m.humanTeam !== null && m.phase !== 'goal' && !this.cinematic) {
+      if (m.controlled && !m.controlled.sentOff) who.push(m.controlled);
+      const o = m.ball.owner; if (o && o.team !== m.humanTeam && !o.sentOff) who.push(o);
+    }
+    while (this.tags.length < who.length) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, sizeAttenuation: false }));
+      sp.center.set(0.5, 0); sp.renderOrder = 4; sp.scale.set(0.3, 0.0375, 1); this.scene.add(sp); this.tags.push({ sprite: sp, key: '' });
+    }
+    this.tags.forEach((tg, i) => {
+      const a = who[i]; if (!a) { tg.sprite.visible = false; return; }
+      const key = `${a.card.name}|${a.yellow > 0}`;
+      if (tg.key !== key) { tg.key = key; tg.sprite.material.map = nameTagTexture(nameTagText(a.card.name), a.yellow > 0); tg.sprite.material.needsUpdate = true; }
+      tg.sprite.position.set(a.prevPos.x + (a.pos.x - a.prevPos.x) * al, 1.98, a.prevPos.z + (a.pos.z - a.prevPos.z) * al);
+      tg.sprite.visible = tg.sprite.position.distanceTo(cam) > 3.2 && !(this.shown && this.shown.agent === a);
+      tg.sprite.center.set(0.5, 0);
+    });
+    // two tags side by side on screen (you pressing the man on the ball): the one further up the screen goes on top
+    if (who.length === 2 && this.tags[0].sprite.visible && this.tags[1].sprite.visible) {
+      const camera = this.stage.camera; const p0 = this.tags[0].sprite.position.clone().project(camera), p1 = this.tags[1].sprite.position.clone().project(camera);
+      const aspect = camera instanceof THREE.PerspectiveCamera ? camera.aspect : 1; const fov = camera instanceof THREE.PerspectiveCamera ? camera.fov : 50;
+      const toNdc = 2 / (2 * Math.tan((fov * Math.PI) / 360)); // sprite scale (at unit depth) to NDC height
+      const h = 0.0375 * toNdc * 0.62, w = 0.3 * toNdc / aspect * 0.55; // (the text's own extent, not the canvas)
+      if (Math.abs(p0.x - p1.x) < w && Math.abs(p0.y - p1.y) < h * 1.15) (p0.y > p1.y ? this.tags[0] : this.tags[1]).sprite.center.set(0.5, -0.75);
+    }
+  }
+  /** The card animation (flips up out of the referee's pocket, holds, fades). */
   private updateCards(dt: number) {
     const al = this.match.alpha;
     const at = (a: Agent) => new THREE.Vector3(a.prevPos.x + (a.pos.x - a.prevPos.x) * al, 0, a.prevPos.z + (a.pos.z - a.prevPos.z) * al);
-    const cam = this.stage.camera.position;
-    for (const [a, tag] of this.bookings) { tag.position.copy(at(a)).setY(2.25); tag.visible = (!this.shown || this.shown.agent !== a) && tag.position.distanceTo(cam) > 5; }
     const c = this.shown; if (!c) return;
     c.t += dt; const t = c.t; c.sprite.visible = true;
     const pop = Math.min(1, t / 0.35); const s = (1 - Math.pow(1 - pop, 3)) * (1 + 0.25 * Math.sin(pop * Math.PI));
@@ -219,6 +261,7 @@ export class MatchView {
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.35 * sh;
     this.updateReticle(dt);
     this.updateCards(dt);
+    this.updateTags();
 
     // Camera: ball-driven broadcast framing, biased toward the direction of play of the team in possession.
     const target = new THREE.Vector3(bx, by, bz);
@@ -254,7 +297,7 @@ export class MatchView {
     const gf = frames.reduce((a, f) => (Math.abs(f.t - goalT) < Math.abs(a.t - goalT) ? f : a));
     this.replay = { frames, tau: t0, t1: frames[frames.length - 1].t, goalT, side: Math.sign(gf.ball[0]) || 1, shot: -1, onEnd };
     this.reticle.visible = false; this.aimMark.visible = false;
-    for (const tag of this.bookings.values()) tag.visible = false; if (this.shown) this.shown.sprite.visible = false;
+    for (const tg of this.tags) tg.sprite.visible = false; if (this.shown) this.shown.sprite.visible = false;
     return true;
   }
   /** End the replay now (skipped) and cut back to the match camera. */

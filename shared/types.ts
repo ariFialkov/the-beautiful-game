@@ -1,7 +1,7 @@
 /** Shared API contracts between the outcome server and the game client. */
 
 export type GameMode = 'kickoff' | 'futsal' | 'fut' | 'freekick';
-export type MatchTier = 'loss' | 'draw' | 'win' | 'bigwin' | 'otwin';
+export type MatchTier = 'loss' | 'draw' | 'win' | 'otwin';
 export type FreeKickTier = 'loss' | 'win';
 export type Side = 'home' | 'away'; // home is always the human player's team
 
