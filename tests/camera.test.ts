@@ -6,10 +6,14 @@ import { PITCH_11, PITCH_FUTSAL } from '../src/game/pitch';
 import { CameraRig } from '../src/render/camera';
 import { TEAM_BY_ID, rosterOf, startingXI } from '../shared/teams';
 
+// The camera is measured over a match played by the AI; seed its dice so every run plays (and measures) the same match.
+function seedRandom(seed: number) { let x = seed >>> 0; Math.random = () => { x = (x + 0x6d2b79f5) >>> 0; let t = x; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
 const q = (a: number[], p: number) => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(p * (s.length - 1))]; };
 
 for (const [label, aspect, futsal] of [['landscape 11-a-side', 16 / 9, false], ['portrait phone 11-a-side', 9 / 19.5, false], ['landscape futsal', 16 / 9, true]] as const) {
   test(`broadcast camera is smooth and keeps the ball in shot (${label})`, () => {
+    seedRandom(20261112);
     const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
     const five = (x: any[]) => [x[0], x[2], x[8], x[10], x[9]];
     const pitch = futsal ? PITCH_FUTSAL : PITCH_11;
@@ -43,6 +47,7 @@ for (const [label, aspect, futsal] of [['landscape 11-a-side', 16 / 9, false], [
 }
 
 test('the camera moves in and zooms for play on the far side, and widens for the near side', () => {
+  seedRandom(7);
   const cam = new THREE.PerspectiveCamera(46, 16 / 9, 0.5, 600);
   const rig = new CameraRig(cam, PITCH_11.length, PITCH_11.width);
   const settle = (z: number) => { for (let i = 0; i < 60 * 5; i++) rig.update(1 / 60, new THREE.Vector3(5, 0.1, z), new THREE.Vector3(1, 0, 0), i / 60); return { fov: cam.fov, dist: cam.position.distanceTo(new THREE.Vector3(5, 0, z)) }; };
@@ -58,6 +63,7 @@ test('the camera moves in and zooms for play on the far side, and widens for the
 
 for (const style of ['high', 'ball', 'end'] as const) for (const futsal of [false, true]) {
   test(`the ${style} camera follows play smoothly and keeps the ball in shot (${futsal ? 'futsal' : '11-a-side'})`, () => {
+    seedRandom(31337);
     const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
     const five = (x: any[]) => [x[0], x[2], x[8], x[10], x[9]];
     const pitch = futsal ? PITCH_FUTSAL : PITCH_11;

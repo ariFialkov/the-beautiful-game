@@ -3,7 +3,7 @@ import { v2, type V2 } from './pitch';
 import type { Agent } from './player';
 import type { Match, TeamState } from './match';
 
-const rnd = Math.random;
+const rnd = () => Math.random(); // (looked up each call, so tests can seed it)
 
 /** Team block: the defensive line and the block's length and width follow the ball. Compact and narrow without
  *  the ball, long and wide with it. Each player keeps his line (defence, midfield, attack) and his lane. */
@@ -462,7 +462,10 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
   if (pen && pen.team !== team.index && pen.stage === 'struck' && !k.ai.penDone && m.time - pen.strikeAt < 0.5) {
     k.ai.penDone = true;
     const human = m.humanTeam === team.index;
-    const g = human && pen.guess ? pen.guess : rnd() < 0.2 ? { z: 0, y: 1.0 } : { z: (rnd() < 0.5 ? -1 : 1) * (goalWidth / 2 - 0.6), y: 0.4 + rnd() * 1.3 };
+    // (a guess is a side and a height, not the exact spot: he dives into the area a penalty usually goes, so one placed
+    // right into the corner beats him even when he picks the right side, and one closer in on his side is saved)
+    const g0 = human && pen.guess ? pen.guess : rnd() < 0.2 ? { z: 0, y: 1.0 } : { z: (rnd() < 0.5 ? -1 : 1) * (goalWidth / 2 - 1.4), y: 0.4 + rnd() * 1.3 };
+    const g = { z: Math.max(-(goalWidth / 2 - 1.3), Math.min(goalWidth / 2 - 1.3, g0.z)), y: g0.y };
     const lat = g.z - k.pos.z;
     if (Math.abs(lat) > 0.6) {
       const side = Math.sign(lat); const yawK = Math.atan2(k.heading.x, k.heading.z); const leftZ = -Math.sin(yawK);

@@ -29,7 +29,7 @@ function flight(m: Match, s: any, input?: () => any) {
       if (!start) start = { x: b.x, z: b.z, vx: b.vx, vz: b.vz };
       else { const l = Math.hypot(start.vx, start.vz); bend = Math.max(bend, Math.abs(((b.x - start.x) * start.vz - (b.z - start.z) * start.vx) / l)); }
     }
-    if (Math.abs(b.x) > 52.5) { y = b.y; z = b.z; break; }
+    if (Math.abs(b.x) > 52.0) { y = b.y; z = b.z; break; } // (half a metre out: a shot that clips the post still counts as reaching goal)
   }
   return { apex, y, z, bend, started: !!start };
 }

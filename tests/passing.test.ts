@@ -48,7 +48,9 @@ test('a full-power pass into space carries across the pitch; a light one stays s
     const { m, passer } = sandbox(); place(passer, -20, -30, 0, 1);
     givePass(m, passer, { x: 0, z: 1 }, power); runUntil(m, 0.4, () => false);
     place(passer, 46, 0); m.agents.forEach((a) => { a.isHuman = true; }); // nobody chases it down: measure the roll alone
-    const z0 = m.ball.z; runUntil(m, 10, () => m.ball.speed() < 0.5 || m.phase !== 'play');
+    const z0 = m.ball.z; const touch0 = m.ball.lastTouchTime;
+    // (until it stops - or until anyone touches it: an idle stick hands a player to auto-pilot, who'd go and fetch it)
+    runUntil(m, 10, () => m.ball.speed() < 0.5 || m.phase !== 'play' || m.ball.lastTouchTime !== touch0);
     return { dist: m.ball.z - z0 + 0.4, z: m.ball.z };
   };
   const hard = travel(1), soft = travel(0.1);
