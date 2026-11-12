@@ -210,3 +210,21 @@ test('a player who never shoots still gets a drawn win through play: the goal it
   assert.ok(m.ended && D >= 1, 'the win came');
   assert.equal(awarded, 0, 'no goal had to be awarded');
 });
+
+test('scripted goals come from play at human pace: nobody runs more than a step faster than his top speed', () => {
+  const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+  let worst = 0, who = '';
+  for (const tier of ['win', 'loss'] as MatchTier[]) {
+    const script = generateMatchScript(new Rng(`pace-${tier}`), 'kickoff', tier, 2, 0.6);
+    const m = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: null, script, durationSec: script.durationSec, clockMinutes: 90,
+      teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+    while (!m.ended && m.frac < 1.5) {
+      m.update(1 / 60);
+      if (m.phase !== 'play') continue;
+      for (const a of m.agents) { if (a.action && a.action.type !== 'kick' && a.action.type !== 'touch') continue; const r = a.speed() / a.maxSpeed; if (r > worst) { worst = r; who = `${a.card.shortName} (${tier}, pushing ${m.mods.pushTeam === a.team})`; } }
+    }
+    const D = m.teams[0].score - m.teams[1].score; assert.ok(D >= m.director!.lo && D <= m.director!.hi, `${tier}: result`);
+  }
+  console.log(`  fastest relative to his own top speed: ${(worst * 100).toFixed(0)}% (${who})`);
+  assert.ok(worst < 1.08, `no superhuman pace (${(worst * 100).toFixed(0)}%)`);
+});

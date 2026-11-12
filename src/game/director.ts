@@ -35,7 +35,7 @@ export const FREE_PLAY: Modifiers = {
 };
 
 /** Window timing per pitch: futsal packs more goals into a shorter match, so its windows open earlier and escalate faster. */
-const WINDOWS = { full: { before: 0.06, after: 0.02, esc: 0.05 }, futsal: { before: 0.08, after: 0.015, esc: 0.03 },
+const WINDOWS = { full: { before: 0.1, after: 0.03, esc: 0.06 }, futsal: { before: 0.11, after: 0.02, esc: 0.04 },
   // futsal sudden death: the golden goal is meant for a particular stage (3v3, 2v2 or 1v1), so its window is tight
   overtime: { before: 0.024, after: 0.004, esc: 0.02 } };
 
@@ -220,25 +220,28 @@ export class Director {
       if (!m.goalAllowed[other]) m.keeper[team] = 'wall';
       m.shotAppetite[team] = 1.2 + level * 1.5; m.shotAppetite[other] = 0.3;
       m.tackleBias = (team === 0 ? 1 : -1) * (0.35 + level * 0.6);
-      // the pushing side plays a quick, clean game; the defending side is a step slow and misreads balls
-      if (team === 1) { m.botSkill = Math.min(1, 0.7 + level * 0.3); m.homeAiSkill = 0.55 - level * 0.2; m.speedMul[1] = 1.04 + level * 0.1; m.speedMul[0] = 1 - level * 0.06; }
-      else { m.homeAiSkill = 0.75 + level * 0.25; m.botSkill = Math.max(0.1, 0.35 - level * 0.25); m.speedMul[1] = 0.96 - level * 0.1; }
-      m.defenseLapse = level > 0.4 ? (level - 0.4) * 0.5 : 0;
+      // the pushing side plays a quick, clean passing game (and finishes well); the defending side is a step slow to
+      // react and loses runners. Pace is barely touched - nobody outruns the laws of the game.
+      if (team === 1) { m.botSkill = Math.min(1, 0.75 + level * 0.25); m.homeAiSkill = 0.55 - level * 0.15; m.speedMul[1] = 1 + level * 0.02; m.speedMul[0] = 1 - level * 0.02; }
+      else { m.homeAiSkill = 0.8 + level * 0.2; m.botSkill = Math.max(0.15, 0.35 - level * 0.2); m.speedMul[0] = 1 + level * 0.02; m.speedMul[1] = 1 - level * 0.02; }
+      m.defenseLapse = level > 0.3 ? (level - 0.3) * 0.45 : 0;
       if (!p.soft && frac >= p.at + W.after) {
         m.forced = true; m.pushLevel = 1; m.keeper[other] = 'soft';
-        // escalate the longer a forced goal takes: the pushing side gets quicker, the other side wilts
+        // the longer a forced goal takes, the sharper the pushing side's passing and the looser the marking - never
+        // more than a step of pace either way
         const esc = Math.min(1, (frac - (p.at + W.after)) / W.esc);
-        m.speedMul[team] = 1.06 + esc * 0.18; m.speedMul[other] = 0.94 - esc * 0.2;
-        m.shotAppetite[team] = 3 + esc * 3; m.tackleBias = (team === 0 ? 1 : -1) * (0.8 + esc * 0.2);
-        if (team === 1) { m.botSkill = 1; m.homeAiSkill = 0.15; } else { m.homeAiSkill = 1; m.botSkill = 0.1; }
-        m.defenseLapse = 0.45 + esc * 0.5;
+        m.speedMul[team] = 1.03 + esc * 0.03; m.speedMul[other] = 0.97 - esc * 0.03;
+        m.shotAppetite[team] = 2.2 + esc * 1.5; m.tackleBias = (team === 0 ? 1 : -1) * (0.7 + esc * 0.3);
+        if (team === 1) { m.botSkill = 1; m.homeAiSkill = 0.25; } else { m.homeAiSkill = 1; m.botSkill = 0.15; }
+        m.defenseLapse = 0.35 + esc * 0.4;
         // the player's side is owed a goal and it isn't coming: the defence starts to crack under the pressure -
         // a clearance sliced in, a block that loops over the keeper, a back-pass the keeper lets under his foot - so
         // the result never rests on the player scoring it himself
         // (only for a goal the result can't do without - never to pad a margin)
-        if (team === 0 && (mt.overtime || this.D < this.lo)) m.ownGoal[1] = 0.3 + esc * 0.6;
+        const og = esc < 0.35 ? 0 : 0.25 + (esc - 0.35) * 0.9; // (a last resort: the build-up gets its chance first)
+        if (team === 0 && (mt.overtime || this.D < this.lo)) m.ownGoal[1] = og;
         // (and the same for the player's AI team-mates when the bots are owed one - never the player you control)
-        if (team === 1 && (mt.overtime || this.D > this.hi)) m.ownGoal[0] = 0.3 + esc * 0.6;
+        if (team === 1 && (mt.overtime || this.D > this.hi)) m.ownGoal[0] = og;
       }
     }
     m.botSkill = Math.max(0.1, Math.min(1, m.botSkill));

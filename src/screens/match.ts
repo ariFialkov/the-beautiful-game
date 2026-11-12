@@ -16,6 +16,7 @@ import { TEAM_BY_ID, rosterOf, startingXI, type Team, type Kit } from '@shared/t
 import { CLOCK_MINUTES } from '@shared/script';
 import { pickKits, type MatchParams } from './setup';
 import { focus } from '../ui/focus';
+import { Minimap } from '../ui/minimap';
 
 export function futsalFive(xi: PlayerCard[]): PlayerCard[] { return [xi[0], xi[2], xi[8], xi[10], xi[9]]; }
 
@@ -29,6 +30,7 @@ export class MatchScreen implements Screen {
   private params!: MatchParams;
   private banner!: HTMLElement; private toast!: HTMLElement; private power!: HTMLElement;
   private bannerTimer = 0; private toastTimer = 0;
+  private minimap!: Minimap; private mapH = -1;
   private paused = false;
   private settled: SettleRoundResponse | null = null;
   private ended = false;
@@ -69,6 +71,7 @@ export class MatchScreen implements Screen {
       <div class="replay-tag"><b>REPLAY</b><span class="skip"></span></div>
       <div class="pausebtn"></div>`;
     hud.querySelector('.pausebtn')!.appendChild(button('II', 'small', () => this.togglePause()));
+    this.minimap = new Minimap(match, [hk.primary, ak.primary]); hud.appendChild(this.minimap.el);
     hud.querySelector('.replay-tag')!.addEventListener('pointerdown', (e) => { e.preventDefault(); this.view.endReplay(); });
     this.banner = hud.querySelector('.banner')!; this.toast = hud.querySelector('.toast')!; this.power = hud.querySelector('.power')!;
     root.appendChild(hud);
@@ -124,6 +127,10 @@ export class MatchScreen implements Screen {
     const sb = this.hud.querySelector('.scoreboard')!;
     sb.querySelector('.h')!.textContent = String(m.teams[0].score); sb.querySelector('.a')!.textContent = String(m.teams[1].score);
     const reds = sb.querySelectorAll('.reds'); for (let i = 0; i < 2; i++) { const n = m.teams[i].reds; const h = '<i></i>'.repeat(n); if (reds[i].innerHTML !== h) reds[i].innerHTML = h; }
+    // the radar: bottom centre (FIFA style), or tucked top-left on a narrow phone screen where the buttons fill the bottom
+    { const narrow = window.innerWidth < 640; const P = m.pitch; const long = Math.min(P.futsal ? 150 : 176, (window.innerHeight * 0.22 * P.length) / P.width); const H = this.minimap.draw(this.view.mapBasis, narrow ? Math.min(112, long) : long, window.innerHeight * (narrow ? 0.3 : 0.34));
+      this.minimap.el.classList.toggle('top', narrow); const lift = narrow ? 0 : H + 6;
+      if (lift !== this.mapH) { this.mapH = lift; this.hud.style.setProperty('--map-h', `${lift}px`); } }
     if (this.cardTimer > 0) { this.cardTimer -= dt; if (this.cardTimer <= 0) this.hud.querySelector('.card-pop')!.classList.remove('show'); }
     const c = m.clockText(); const clock = sb.querySelector('.clock')!; clock.textContent = c.text; clock.classList.toggle('stoppage', c.stoppage);
     if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'fk' || m.charge.kind === 'pen' ? 1.0 : m.charge.kind === 'through' ? 0.6 : m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');

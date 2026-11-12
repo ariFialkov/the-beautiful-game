@@ -63,6 +63,9 @@ export class Agent {
   readonly accel: number;
   readonly agility: number;
   readonly skill: { dribble: number; pass: number; shoot: number; defend: number; control: number };
+  /** Stamina (0..1, from the card) and the energy left in this match (1 = fresh; it resets every game). */
+  readonly staminaStat: number;
+  energy = 1;
 
   constructor(public card: PlayerCard, public team: number, public index: number) {
     const a = card.attrs;
@@ -70,10 +73,22 @@ export class Agent {
     this.accel = 8 + (a.physical / 99) * 2.5 + (a.pace / 99) * 2.5; // (sharp off the mark)
     this.agility = 0.5 + (a.dribbling / 99) * 0.5;
     this.isGK = card.position === 'GK';
+    this.staminaStat = (a.stamina ?? 70) / 99;
     this.skill = { dribble: a.dribbling / 99, pass: a.passing / 99, shoot: a.shooting / 99, defend: a.defending / 99, control: (a.dribbling * 0.6 + a.passing * 0.4) / 99 };
   }
 
   speed() { return v2.len(this.vel); }
+  /** How much a tired body takes off his top speed and acceleration (none until his energy drops below 60%). */
+  fatigue() { return Math.max(0, Math.min(1, (0.6 - this.energy) / 0.6)); }
+  /** Energy runs down with the work he does - sprints most, then running, tackles and leaps - faster for a low stamina
+   *  stat, and comes back slowly while he walks or stands. `scale` stretches it to the match's length. */
+  tire(dt: number, scale: number) {
+    const sp = this.speed(); const at = this.action?.type;
+    let d = this.intent.sprint && sp > this.maxSpeed * 0.72 ? 0.0072 : sp > 4 ? 0.0038 : sp > 1.8 ? 0.0016 : -0.0013 * (0.7 + 0.6 * this.staminaStat);
+    if (at === 'slide' || at === 'tackle' || at === 'header' || at === 'dive') d += 0.02;
+    if (d > 0) d *= (1.6 - this.staminaStat) * (this.isGK ? 0.4 : 1);
+    this.energy = Math.max(0, Math.min(1, this.energy - d * dt * scale));
+  }
   startAction(type: ActionType, duration: number, dir = 1, data?: any): Action {
     this.action = { type, t: 0, duration, fired: false, dir, data };
     return this.action;
@@ -129,7 +144,8 @@ export class Agent {
       // Free running: accelerate toward the intended velocity with separate limits for speeding up,
       // braking and cornering, so sharp turns at pace need a plant and a slow-down.
       const m = this.intent.steer ?? this.intent.move; const ml = Math.min(1, v2.len(m));
-      let top = this.maxSpeed * speedMul * (this.intent.sprint || this.intent.boost ? 1 : 0.7);
+      const tired = this.fatigue();
+      let top = this.maxSpeed * speedMul * (this.intent.sprint || this.intent.boost ? 1 - 0.14 * tired : 0.7 * (1 - 0.06 * tired));
       if (this.hasBall) top *= 0.93;
       if (this.intent.jockey) top = Math.min(top, 3.4);
       if (act?.type === 'kick') top *= 0.45;
@@ -140,7 +156,7 @@ export class Agent {
         const t = v2.scale(this.vel, 1 / sp);
         const dvt = v2.dot(dv, t); const dvn = v2.sub(dv, v2.scale(t, dvt));
         const cut = this.agileT > 0 ? 1 : 0; // planting to cut: a burst of grip
-        const maxUp = grip * this.accel * (1 - 0.5 * Math.min(1, sp / this.maxSpeed)) * (1 + 0.4 * cut);
+        const maxUp = grip * this.accel * (1 - 0.5 * Math.min(1, sp / this.maxSpeed)) * (1 + 0.4 * cut) * (1 - 0.18 * tired);
         const maxBrake = grip * (15 + 9 * cut);
         const maxLat = grip * (12 + this.agility * 7) * (this.intent.jockey ? 1.4 : 1) * (1 + 0.9 * cut);
         const at = Math.max(-maxBrake * dt, Math.min(maxUp * dt, dvt));

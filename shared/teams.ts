@@ -172,7 +172,7 @@ function attrsFor(pos: Position, rating: number, rng: Rng): PlayerAttributes {
   const isGK = pos === 'GK';
   const def = ['CB', 'LB', 'RB', 'CDM'].includes(pos);
   const att = ['ST', 'LW', 'RW', 'CAM'].includes(pos);
-  return {
+  const out: PlayerAttributes = {
     pace: n(['LW', 'RW', 'LB', 'RB', 'ST'].includes(pos) ? 6 : def ? -4 : 0),
     shooting: n(att ? 6 : def ? -18 : -6),
     passing: n(['CM', 'CAM', 'CDM'].includes(pos) ? 6 : def ? -8 : -2),
@@ -182,6 +182,11 @@ function attrsFor(pos: Position, rating: number, rng: Rng): PlayerAttributes {
     diving: isGK ? n(4) : 20 + rng.int(0, 20),
     reflexes: isGK ? n(4) : 20 + rng.int(0, 20),
   };
+  // stamina: the engine-room positions run all day; derived from the rest (no extra dice, so every existing player keeps
+  // the attributes he had)
+  const engine = ['CM', 'CDM', 'LB', 'RB', 'LM', 'RM'].includes(pos) ? 6 : isGK ? -10 : att ? -2 : 0;
+  out.stamina = Math.round(Math.max(35, Math.min(99, rating + engine + ((out.physical * 7 + out.pace * 3 + out.passing) % 13) - 6 + (out.physical - rating) * 0.3)));
+  return out;
 }
 
 function rarityFor(rating: number): PlayerCard['rarity'] { return rating >= 86 ? 'elite' : rating >= 75 ? 'gold' : rating >= 65 ? 'silver' : 'bronze'; }

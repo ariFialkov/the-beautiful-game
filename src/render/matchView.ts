@@ -62,15 +62,15 @@ export function nameTagText(full: string) { const i = full.indexOf(' '); return 
 function nameTagTexture(text: string, booked: boolean) {
   const key = `${text}|${booked}`; const hit = tagTex.get(key); if (hit) return hit;
   const c = document.createElement('canvas'); c.width = 512; c.height = 64; const g = c.getContext('2d')!;
-  g.font = '700 38px system-ui, -apple-system, "Segoe UI", sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
-  const tw = g.measureText(text).width; const cw = booked ? 20 : 0, gap = booked ? 9 : 0; const x0 = (512 - (tw + cw + gap)) / 2;
+  // sleek: medium weight, a touch of tracking, no outline - just a soft shadow to lift it off the grass
+  g.font = '500 32px Inter, "Segoe UI", system-ui, -apple-system, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'left';
+  (g as any).letterSpacing = '0.5px';
+  const tw = g.measureText(text).width; const cw = booked ? 13 : 0, gap = booked ? 8 : 0; const x0 = (512 - (tw + cw + gap)) / 2;
+  g.shadowColor = 'rgba(0, 0, 0, 0.55)'; g.shadowBlur = 6; g.shadowOffsetY = 1;
   if (booked) {
     // the card: the height of the capitals, tilted a touch
-    g.save(); g.translate(x0 + cw / 2, 32); g.rotate(-0.12);
-    g.fillStyle = 'rgba(0,0,0,0.55)'; g.fillRect(-cw / 2 - 1.5, -14.5, cw + 3, 29);
-    g.fillStyle = '#ffd21f'; g.fillRect(-cw / 2, -13, cw, 26); g.restore();
+    g.save(); g.translate(x0 + cw / 2, 32); g.rotate(-0.12); g.fillStyle = '#ffd21f'; g.fillRect(-cw / 2, -9.5, cw, 19); g.restore();
   }
-  g.lineJoin = 'round'; g.lineWidth = 7; g.strokeStyle = 'rgba(6, 10, 20, 0.85)'; g.strokeText(text, x0 + cw + gap, 33);
   g.fillStyle = booked ? '#ffd21f' : '#ffffff'; g.fillText(text, x0 + cw + gap, 33);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; tagTex.set(key, t); return t;
 }
@@ -129,6 +129,8 @@ export class MatchView {
   /** Booked players carry a small yellow card over their head; a card being shown pops up over the offender. */
   /** Name tags: over the player you control, and over an opponent on the ball. */
   private tags: Array<{ sprite: THREE.Sprite; key: string }> = [];
+  /** The stamina bar under your player's name: a dark track and a fill coloured by how much he has left. */
+  private bar: { bg: THREE.Sprite; fill: THREE.Sprite } | null = null;
   private shown: { sprite: THREE.Sprite; agent: Agent; t: number } | null = null;
   constructor(private stage: Stage, public match: Match, night: boolean) {
     const [h, a] = match.opts.teams;
@@ -179,6 +181,8 @@ export class MatchView {
     });
   }
 
+  /** The match camera's ground basis (not the free-kick or celebration close-ups): what the minimap turns with. */
+  mapBasis: { right: { x: number; z: number }; forward: { x: number; z: number } } = { right: { x: 1, z: 0 }, forward: { x: 0, z: 1 } };
   get replaying() { return !!this.replay; }
 
   private showCard(a: Agent, kind: 'yellow' | 'red') {
@@ -196,7 +200,7 @@ export class MatchView {
     }
     while (this.tags.length < who.length) {
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthTest: false, sizeAttenuation: false }));
-      sp.center.set(0.5, 0); sp.renderOrder = 4; sp.scale.set(0.3, 0.0375, 1); this.scene.add(sp); this.tags.push({ sprite: sp, key: '' });
+      sp.center.set(0.5, 0); sp.renderOrder = 4; sp.scale.set(0.24, 0.03, 1); this.scene.add(sp); this.tags.push({ sprite: sp, key: '' });
     }
     this.tags.forEach((tg, i) => {
       const a = who[i]; if (!a) { tg.sprite.visible = false; return; }
@@ -206,13 +210,29 @@ export class MatchView {
       tg.sprite.visible = tg.sprite.position.distanceTo(cam) > 3.2 && !(this.shown && this.shown.agent === a);
       tg.sprite.center.set(0.5, 0);
     });
+    if (!this.bar) {
+      const mk = (c: number, o: number) => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ color: c, transparent: true, opacity: o, depthTest: false, sizeAttenuation: false })); sp.renderOrder = 4; this.scene.add(sp); return sp; };
+      this.bar = { bg: mk(0x0a0f1c, 0.55), fill: mk(0x3ddc84, 0.95) };
+    }
     // two tags side by side on screen (you pressing the man on the ball): the one further up the screen goes on top
     if (who.length === 2 && this.tags[0].sprite.visible && this.tags[1].sprite.visible) {
       const camera = this.stage.camera; const p0 = this.tags[0].sprite.position.clone().project(camera), p1 = this.tags[1].sprite.position.clone().project(camera);
       const aspect = camera instanceof THREE.PerspectiveCamera ? camera.aspect : 1; const fov = camera instanceof THREE.PerspectiveCamera ? camera.fov : 50;
       const toNdc = 2 / (2 * Math.tan((fov * Math.PI) / 360)); // sprite scale (at unit depth) to NDC height
-      const h = 0.0375 * toNdc * 0.62, w = 0.3 * toNdc / aspect * 0.55; // (the text's own extent, not the canvas)
+      const h = 0.03 * toNdc * 0.62, w = 0.24 * toNdc / aspect * 0.5; // (the text's own extent, not the canvas)
       if (Math.abs(p0.x - p1.x) < w && Math.abs(p0.y - p1.y) < h * 1.15) (p0.y > p1.y ? this.tags[0] : this.tags[1]).sprite.center.set(0.5, -0.75);
+    }
+    // stamina: a thin bar just under your player's name (FIFA style)
+    const me = who[0] && who[0] === m.controlled ? who[0] : null; const tg0 = this.tags[0];
+    const show = !!me && !!tg0 && tg0.sprite.visible;
+    this.bar.bg.visible = this.bar.fill.visible = show;
+    if (show && me) {
+      const W = 0.055, H = 0.0032; const e = Math.max(0.02, me.energy);
+      const lift = 0.0045 - tg0.sprite.center.y * 0.03; // (just under the text; follows the tag up when it's stacked)
+      for (const sp of [this.bar.bg, this.bar.fill]) sp.position.copy(tg0.sprite.position);
+      this.bar.bg.scale.set(W, H, 1); this.bar.bg.center.set(0.5, -lift / H);
+      this.bar.fill.scale.set(W * e, H, 1); this.bar.fill.center.set(1 / (2 * e), -lift / H);
+      this.bar.fill.material.color.setHex(e > 0.6 ? 0x3ddc84 : e > 0.3 ? 0xffd21f : 0xff5a4d);
     }
   }
   /** The card animation (flips up out of the referee's pocket, holds, fades). */
@@ -279,7 +299,7 @@ export class MatchView {
       this.rig.moveTo(dt, cam, sp.setY(0.95), 0.6, 0.9);
     } else if (this.cinematic) this.rig.cinematic(dt, target, new THREE.Vector3(b.vx, 0, b.vz).normalize(), time);
     else if (this.freeKickCamera(dt, target)) { /* third person behind the free-kick taker */ }
-    else { this.rig.endDir = m.teams[m.humanTeam ?? 0].attackDir; this.rig.update(dt, target, lead, time); }
+    else { this.rig.endDir = m.teams[m.humanTeam ?? 0].attackDir; this.rig.update(dt, target, lead, time); this.mapBasis = groundBasis(this.stage.camera); }
     // controls follow the camera so left/right/up/down always match the screen
     m.controlBasis = groundBasis(this.stage.camera);
     this.sun.position.set(target.x - 40, 70, target.z - 50); this.sun.target.position.set(target.x, 0, target.z); this.sun.target.updateMatrixWorld();
@@ -297,7 +317,7 @@ export class MatchView {
     const gf = frames.reduce((a, f) => (Math.abs(f.t - goalT) < Math.abs(a.t - goalT) ? f : a));
     this.replay = { frames, tau: t0, t1: frames[frames.length - 1].t, goalT, side: Math.sign(gf.ball[0]) || 1, shot: -1, onEnd };
     this.reticle.visible = false; this.aimMark.visible = false;
-    for (const tg of this.tags) tg.sprite.visible = false; if (this.shown) this.shown.sprite.visible = false;
+    for (const tg of this.tags) tg.sprite.visible = false; if (this.bar) this.bar.bg.visible = this.bar.fill.visible = false; if (this.shown) this.shown.sprite.visible = false;
     return true;
   }
   /** End the replay now (skipped) and cut back to the match camera. */

@@ -108,6 +108,8 @@ export type Position = 'GK' | 'CB' | 'LB' | 'RB' | 'CDM' | 'CM' | 'CAM' | 'LM' |
 export interface PlayerAttributes {
   pace: number; shooting: number; passing: number; dribbling: number; defending: number; physical: number;
   diving: number; reflexes: number;
+  /** How long he keeps going: how fast his energy runs down in a match (older saved cards may not have it). */
+  stamina?: number;
 }
 
 export interface PlayerCard {

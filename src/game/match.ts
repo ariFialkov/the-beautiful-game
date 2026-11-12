@@ -454,6 +454,7 @@ export class Match {
     this.updateActionTargets();
     const ballPos = { x: this.ball.x, y: this.ball.y, z: this.ball.z };
     for (const a of this.agents) a.motion!.update(h, ballPos);
+    if (this.phase === 'play' || this.phase === 'restart') { const sc = 330 / Math.max(60, this.opts.durationSec); for (const a of this.agents) a.tire(h, sc); } // (stamina: a full match's worth whatever its real length)
     for (const a of this.benched) { // sent off for sudden death: walk to the touchline and stand watching
       const d = v2.sub(a.ai.target, a.pos); const l = v2.len(d);
       a.intent.move = l > 0.4 ? v2.scale(v2.norm(d), Math.min(1, l / 2) * 0.8) : { x: 0, z: 0 }; a.intent.sprint = false; a.intent.steer = null;
@@ -573,7 +574,7 @@ export class Match {
       if (!this.director?.pushing || f >= 0.6) {
         this.phase = 'halftime'; this.phaseTimer = 3; this.setPiece = null;
         for (const t of this.teams) t.attackDir = (t.attackDir === 1 ? -1 : 1);
-        this.ball.owner = null; this.ball.held = false; this.emit({ type: 'halftime' }); this.stoppage = false; return;
+        this.ball.owner = null; this.ball.held = false; for (const a of this.agents) a.energy = Math.min(1, a.energy + 0.15); this.emit({ type: 'halftime' }); this.stoppage = false; return; // (a breather at the break)
       }
       this.stoppage = true;
     }
@@ -1575,7 +1576,8 @@ export class Match {
     const kz = k ? k.pos.z : 0; const side = Math.abs(kz) > 0.4 ? -Math.sign(kz) : (Math.random() < 0.5 ? -1 : 1);
     const target = { x: gx - dir * 0.4, y: 0.25 + Math.random() * 0.8, z: side * (goalWidth / 2 - 0.55 - Math.random() * 0.6) };
     const d = Math.hypot(target.x - b.x, target.z - b.z);
-    const sol = solveKick({ x: b.x, y: b.y, z: b.z }, target, Math.min(19, 8 + d * 0.5), 0, 0, this.surface);
+    const vin = b.speed3(); // (a deflection keeps the ball's own pace, more or less: it isn't struck)
+    const sol = solveKick({ x: b.x, y: b.y, z: b.z }, target, Math.max(7, Math.min(16, vin * 0.55 + 3 + d * 0.3)), 0, 0, this.surface);
     b.strike(sol.v, { x: 0, y: 0, z: 0 }, a, this.time); if (b.y < 0.3 && sol.v.y < 1) b.setRolling();
     b.inFlightShot = { team: 1 - a.team, target: { x: gx, y: target.y, z: target.z } };
     a.cooldown = Math.max(a.cooldown, 0.4); a.stunned = Math.max(a.stunned, 0.4); a.pendingKick = null; a.ai.fumble = 0;
@@ -1806,8 +1808,11 @@ export class Match {
       const meant = (this.passAssist?.receiver === a) || (a.ai.expectBall > this.time && b.lastTouchTeam === a.team);
       // ...while an opponent needs a moment to react, and a fast ball is harder to cut out
       const opponent = b.lastTouchTeam !== a.team && !a.isGK;
-      if (opponent && this.time - b.lastTouchTime < 0.16 && v2.dist(a.pos, bp) > 2) continue;
-      const rf = meant ? 1.5 : opponent ? Math.max(0.7, Math.min(1, 1.25 - b.speed() / 40)) : 1;
+      // (against a side being pushed for a goal, defenders read its passes a beat late and reach less for them: the
+      // ball zips through the lines - the passing is what makes the goal)
+      const outplayed = opponent && this.mods.pushTeam === b.lastTouchTeam ? this.mods.pushLevel : 0;
+      if (opponent && this.time - b.lastTouchTime < 0.16 + 0.3 * outplayed && v2.dist(a.pos, bp) > 2) continue;
+      const rf = meant ? 1.5 : opponent ? Math.max(0.7, Math.min(1, 1.25 - b.speed() / 40)) * (1 - 0.4 * outplayed) : 1;
       // scan the next 0.35 s of flight (with sub-samples) for the first point inside the reach envelope
       let plan: { t: number; x: number; y: number; z: number; part: string } | null = null;
       for (let i = 1; i < path.length && !plan; i++) {
@@ -1878,7 +1883,7 @@ export class Match {
           b.vx -= (1 + e) * vn * nx; b.vy -= (1 + e) * vn * ny; b.vz -= (1 + e) * vn * nz;
           b.vx = a.vel.x + (b.vx - a.vel.x) * 0.9; b.vz = a.vel.z + (b.vz - a.vel.z) * 0.9;
           b.wx *= 0.4; b.wy *= 0.4; b.wz *= 0.4;
-          if (!dribbling) { b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; if (b.owner && b.owner !== a) b.owner = null; if (-vn > 2) this.ownGoalTouch(a); }
+          if (!dribbling) { b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null; if (b.owner && b.owner !== a) b.owner = null; }
           if (-vn > 3) this.emit({ type: 'touch', agent: a, heavy: true });
         }
         break;
@@ -1921,6 +1926,8 @@ export class Match {
     b.vx = dir.x * s; b.vz = dir.z * s; b.vy = Math.min(0, b.vy * 0.2); if (b.y < 0.3) b.setRolling(); else { b.wx = b.wy = b.wz = 0; }
     b.owner = heavy ? null : a; b.lastTouch = a; b.lastTouchTeam = a.team; b.lastTouchTime = this.time; b.inFlightShot = null;
     a.touchCooldown = heavy ? 0.3 : 0.18; a.ai.nextDecision = this.time + 0.25 + Math.random() * 0.25;
+    // a side pushing for a goal plays at tempo: a touch to set it, then straight on with it (the shot, or the next pass)
+    if (this.mods.pushTeam === a.team && this.mods.pushLevel > 0.3 && !heavy) a.ai.nextDecision = this.time + 0.1 + Math.random() * 0.1;
     // carry on the way the touch went (the next decision comes shortly)
     a.ai.mode = 'dribble'; a.ai.target = v2.add(a.pos, v2.scale(dir, 6)); a.ai.expectBall = 0;
     if (this.aiDriven(a)) { a.intent.move = dir; a.intent.face = null; }

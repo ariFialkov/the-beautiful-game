@@ -181,16 +181,19 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
   }
   // Pushing for a goal, the attack is built quickly and cleanly (forward passes, runners, players going at the
   // defence) and finished from a good position, not hit hopefully from distance.
-  const range = mods.forced && push > 0 ? (futsal ? 18 : 30) : futsal ? 15 : 27;
-  let shoot = 0;
-  if (dGoal < range) {
+  // (a side pushing for a goal works it into a good position rather than hitting it from range)
+  const range = push > 0 ? (mods.forced ? (futsal ? 15 : 25) : futsal ? 13 : 21) : futsal ? 15 : 27; // (overdue: a strike from the edge of the box too)
+  let shoot = 0; let takeItOn = false;
+  if (dGoal < range && (m.mods.goalAllowed[team.index] || dGoal > (futsal ? 7 : 11))) { // (no close-range shots that couldn't count)
     const angle = Math.abs(Math.atan2(a.pos.z, Math.abs(goal.x - a.pos.x) + 0.1));
-    const lane = laneOpen(a.pos, goal, opp, 2.2);
+    const lane = laneOpen(a.pos, goal, opp.filter((o) => !o.isGK), 2.2); // (the keeper is there to be beaten, not a blocker)
     shoot = (1 - dGoal / range) * (1 - angle / 1.4) * (0.35 + lane * 0.65) * (0.5 + skill * 0.6) * appetite;
     if (dGoal < range * 0.65 && lane > 0.3) shoot += 0.3;
     if (push > 0.5 && dGoal < (futsal ? 14 : 22) && lane > (futsal ? 0.15 : 0.25)) shoot = Math.max(shoot, 0.8 + (1 - dGoal / range));
     if (mods.forced && push > 0 && dGoal < range * (futsal ? 1 : 0.8)) shoot = Math.max(shoot, 0.7 + (1 - dGoal / range));
     if (pressure.dist < 1.6) shoot *= 1.3;
+    // pushing for a goal and in a real shooting position (in or around the box, a sight of goal): he takes it on
+    if (push > 0.3 && dGoal < (futsal ? 11 : 17) && angle < 0.9 && lane > 0.3) { shoot = Math.max(shoot, 1.3 + push); takeItOn = true; }
   }
   let bestPass: { agent: Agent; score: number; kind: 'pass' | 'through' | 'lob' } | null = null;
   for (const t of team.agents) {
@@ -206,6 +209,11 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
     let kind: 'pass' | 'through' | 'lob' = 'pass';
     const tGoal = v2.dist(t.pos, goal);
     if (forward > 0.6 && tOpp > 3 && tGoal < dGoal - 6) { kind = rnd() < 0.5 ? 'through' : 'pass'; score += 0.15 + push * 0.4; }
+    // pushing for a goal: the ball is moved quickly into a team-mate in a shooting position (a cut-back, a ball into
+    // the box, a through ball in behind) rather than carried there
+    if (push > 0 && tGoal < (futsal ? 10 : 18) && tGoal < dGoal - 4 && tOpp > 2.2 && lane > 0.5) score += 0.35 + push * 0.5;
+    // ...and only into a clear lane, to a man with a yard of space: the passing is clean, nothing is forced through
+    if (push > 0) score -= push * ((1 - lane) * 0.9 + (tOpp < 2.5 ? 0.6 : 0));
     if (lane < 0.3 && d > 14 && !futsal) { kind = 'lob'; score += 0.15; }
     // crosses from wide areas into the box (futsal is played on the floor)
     if (!futsal && Math.abs(a.pos.z) > m.pitch.width * 0.25 && Math.abs(a.pos.x - goal.x) < (futsal ? 10 : 25) && Math.abs(t.pos.x - goal.x) < m.pitch.boxDepth + 2 && Math.abs(t.pos.z) < m.pitch.boxWidth / 2) { kind = 'lob'; score += 0.25 + push * 0.3; }
@@ -221,8 +229,10 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
   }
   const ahead = { x: a.pos.x + dir * 6, z: a.pos.z };
   let spaceAhead = 8; for (const o of opp) spaceAhead = Math.min(spaceAhead, v2.dist(o.pos, ahead));
-  const dribble = 0.5 + a.skill.dribble * 0.3 - (pressure.dist < 2.2 ? 0.4 : 0) + (spaceAhead > 5 ? 0.25 : spaceAhead < 2.5 ? -0.2 : 0) + (dGoal > 45 ? 0.05 : 0) + push * (spaceAhead > 3 ? 0.35 : 0.1);
-  const options: Array<[string, number]> = [['shoot', shoot], ['pass', (bestPass?.score ?? 0) * (pressure.dist < 3 ? 1.2 : 0.9)], ['dribble', dribble]];
+  const dribble = 0.5 + a.skill.dribble * 0.3 - (pressure.dist < 2.2 ? 0.4 : 0) + (spaceAhead > 5 ? 0.25 : spaceAhead < 2.5 ? -0.2 : 0) + (dGoal > 45 ? 0.05 : 0) + push * (spaceAhead > 7 ? 0.12 : -0.25);
+  // (in a shooting spot while pushing, only a team-mate clearly better placed gets the ball instead)
+  const better = bestPass && v2.dist(bestPass.agent.pos, goal) < dGoal - 5;
+  const options: Array<[string, number]> = [['shoot', shoot], ['pass', (bestPass?.score ?? 0) * (pressure.dist < 3 ? 1.2 : 0.9) * (takeItOn && !better ? 0.35 : 1)], ['dribble', dribble]];
   options.sort((x, y) => y[1] - x[1]);
   const pick = options[0][0];
   if (pick === 'shoot' && shoot > 0.25) {
@@ -388,7 +398,14 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
       const pressed = nearestOpponent(m, a).dist < 1.6;
       // on the goal line in front of goal: a player puts it in (shoots) rather than walking it over the line
       const gxl = team.attackDir * m.pitch.length / 2;
-      if (Math.abs(gxl - a.pos.x) < 3 && Math.abs(a.pos.z) < m.pitch.goalWidth / 2 + 1.5 && !a.pendingKick) {
+      // (a side that mustn't score just now doesn't take it that close: it lays it back off instead - a goal that
+      // can't count can't be made to miss from a yard out without it looking wrong)
+      const allowed = m.mods.goalAllowed[team.index];
+      if (!allowed && Math.abs(gxl - a.pos.x) < 9 && Math.abs(a.pos.z) < m.pitch.boxWidth / 2 && !a.pendingKick) {
+        const mate = team.agents.filter((t) => t !== a && !t.isGK).sort((p, q) => Math.abs(gxl - q.pos.x) - Math.abs(gxl - p.pos.x))[0];
+        if (mate) { m.startKick(a, 'pass', 0.5, v2.norm(v2.sub(mate.pos, a.pos)), { targetAgent: mate, botSkill: skill }); continue; }
+      }
+      if (allowed && Math.abs(gxl - a.pos.x) < 3 && Math.abs(a.pos.z) < m.pitch.goalWidth / 2 + 1.5 && !a.pendingKick) {
         const z = (rnd() - 0.5) * m.pitch.goalWidth * 0.6; m.startKick(a, 'shoot', 0.6, v2.norm(v2.sub({ x: gxl, z }, a.pos)), { botSkill: skill, target: { x: gxl, z, y: 0.5 } }); continue;
       }
       if (now >= a.ai.nextDecision || (pressed && now >= a.ai.nextDecision - 0.35)) { a.ai.nextDecision = now + 0.3 + (1 - skill) * 0.3 + rnd() * 0.25; onBall(m, team, a, skill); }
