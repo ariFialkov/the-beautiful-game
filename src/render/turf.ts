@@ -38,11 +38,71 @@ function noiseTexture(size: number, blades: boolean): THREE.DataTexture {
   return t;
 }
 
+/** A tile of grass relief seen from above: a few thousand blades (short strokes, leaning roughly along the mow, rising
+ *  from root to tip), as height (B) and the surface normal it gives (R, G = its x and z tilt). Lit per pixel, it makes the
+ *  sun catch the tops and leave the gaps in shade - depth without a single extra triangle. */
+function reliefTexture(size: number): THREE.DataTexture {
+  const h = new Float32Array(size * size);
+  let seed = 11; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const put = (x: number, y: number, v: number) => { const i = (((y | 0) % size + size) % size) * size + (((x | 0) % size + size) % size); if (v > h[i]) h[i] = v; };
+  for (let k = 0; k < size * size / 60; k++) {
+    const x0 = rnd() * size, y0 = rnd() * size; const len = 7 + rnd() * 18;
+    const ang = Math.PI / 2 + (rnd() - 0.5) * 1.9; const dx = Math.cos(ang), dy = Math.sin(ang); // (leaning roughly along the pitch's width, as mown)
+    const top = 0.55 + rnd() * 0.45;
+    for (let s = 0; s < len; s += 0.5) {
+      const v = top * (0.3 + 0.7 * (s / len)); const x = x0 + dx * s, y = y0 + dy * s;
+      put(x, y, v); put(x + 1, y, v * 0.75); put(x - 1, y, v * 0.6);
+    }
+  }
+  // soften a touch, then the normal from the slope (wrapping, so it tiles)
+  const at = (x: number, y: number) => h[((y + size) % size) * size + ((x + size) % size)];
+  const sm = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) sm[y * size + x] = at(x, y) * 0.5 + (at(x + 1, y) + at(x - 1, y) + at(x, y + 1) + at(x, y - 1)) * 0.125;
+  const sat = (x: number, y: number) => sm[((y + size) % size) * size + ((x + size) % size)];
+  const data = new Uint8Array(size * size * 4); const k = 2.6;
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    let nx = -(sat(x + 1, y) - sat(x - 1, y)) * k, nz = -(sat(x, y + 1) - sat(x, y - 1)) * k; const l = Math.hypot(nx, nz, 1); nx /= l; nz /= l;
+    const i = (y * size + x) * 4; data[i] = Math.round(127.5 + 127.5 * nx); data[i + 1] = Math.round(127.5 + 127.5 * nz); data[i + 2] = Math.round(sat(x, y) * 255); data[i + 3] = 255;
+  }
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.anisotropy = 8; t.needsUpdate = true;
+  return t;
+}
+
 // Shared shader pieces: where we are on the pitch, the detail, the stripes' sheen, the trail.
+/** The relief: blades at two scales (fine, and tufts that still read from the high cameras), seen with a short parallax
+ *  step on high quality so they stand up off the ground as the view moves; the light normal, tilted with the wind waves. */
+const RELIEF = /* glsl */ `
+uniform sampler2D uRelief;
+vec3 turfN;
+float turfRelief(float brush) {
+  vec3 V = normalize(cameraPosition - vTW);
+  vec2 uvF = vTW.xz / 0.85, uvC = vTW.xz / 3.7 + vec2(0.31, 0.57);
+  #if TURF_PARALLAX > 0
+    // steep parallax: march down the blades until we hit one (taller blades hide what's behind them)
+    vec2 stepUv = -V.xz / max(V.y, 0.3) * (0.03 / 0.85) / float(TURF_PARALLAX);
+    float layer = 1.0; float hh = texture2D(uRelief, uvF).b;
+    for (int i = 0; i < TURF_PARALLAX; i++) { if (hh >= layer) break; layer -= 1.0 / float(TURF_PARALLAX); uvF += stepUv; hh = texture2D(uRelief, uvF).b; }
+  #endif
+  vec4 f = texture2D(uRelief, uvF), c = texture2D(uRelief, uvC);
+  float flatK = 1.0 - 0.65 * brush; // (trodden grass lies flatter)
+  vec2 tilt = ((f.rg - 0.5) * 2.0 * 0.85 + (c.rg - 0.5) * 2.0 * 1.35) * flatK + uWindDir * turfWave() * 0.55;
+  turfN = normalize(vec3(tilt.x, 1.0, tilt.y));
+  return mix(0.5, f.b * 0.55 + c.b * 0.45, flatK);
+}
+`;
+
 const COMMON = /* glsl */ `
 uniform sampler2D uDetail; uniform sampler2D uTrail; uniform vec2 uHalf; uniform float uStripeW;
 uniform float uSheen; uniform float uWet; uniform float uSnow;
+uniform vec2 uWindDir; uniform float uWindAmp; uniform float uTime;
 varying vec3 vTW;
+// gust fronts rolling across the pitch with the wind: where one passes, the grass bends over
+float turfWave() {
+  vec2 p = vTW.xz; float a = dot(p, uWindDir), b = dot(p, vec2(-uWindDir.y, uWindDir.x));
+  float w = sin(a * 0.42 - uTime * 2.3 + sin(b * 0.13) * 1.7) * 0.6 + sin(a * 0.9 - uTime * 3.9 + b * 0.21) * 0.25 + sin(a * 0.17 - uTime * 1.1) * 0.15;
+  return w * uWindAmp;
+}
 float turfBrush(out vec2 bdir) {
   vec4 tr = texture2D(uTrail, vec2(vTW.x / (uHalf.x * 2.0) + 0.5, 0.5 - vTW.z / (uHalf.y * 2.0)));
   bdir = tr.gb * 2.0 - 1.0;
@@ -56,7 +116,7 @@ vec3 turfShade(vec3 col, float brush, vec2 bdir) {
   col *= (0.9 + 0.2 * d) * (0.93 + 0.14 * d2) * (0.95 + 0.1 * d3);
   // mowing: stripes across the pitch, each mown along it the other way - the blades lean with the mower
   float band = floor((vTW.x + uHalf.x) / uStripeW); float mow = mod(band, 2.0) < 0.5 ? 1.0 : -1.0;
-  vec2 lean = mix(vec2(0.0, mow), bdir, clamp(brush * 2.0, 0.0, 1.0));
+  vec2 lean = mix(vec2(0.0, mow), bdir, clamp(brush * 2.0, 0.0, 1.0)) + uWindDir * turfWave() * 1.1; // (and with the wind)
   lean /= max(0.001, length(lean));
   vec3 V = normalize(cameraPosition - vTW); vec2 vxz = V.xz / max(0.001, length(V.xz));
   float grazing = 1.0 - 0.55 * V.y; // (seen low across the pitch, the stripes stand out most)
@@ -103,6 +163,7 @@ export class Turf {
 
   constructor(private spec: PitchSpec, map: THREE.Texture, weather: Weather, shellCount: number) {
     const { length: L, width: W } = spec;
+    const parallax = shellCount > 0 ? 5 : 0; // (the parallax steps: high quality only)
     // the trail map: one texel per 10 cm or so
     const TRAIL_W = shellCount > 0 ? 1024 : 512; this.uploadEvery = shellCount > 0 ? 8 : 12; // (a lighter map, sent less often, on low-end devices)
     this.trail = document.createElement('canvas'); this.trail.width = TRAIL_W; this.trail.height = Math.round(TRAIL_W * W / L);
@@ -120,16 +181,19 @@ export class Turf {
       uStripeW: { value: L / 14 }, uSheen: { value: rain ? 0.15 : 0.11 }, uWet: { value: this.wetness }, uSnow: { value: snow ? 1 : 0 },
       uBlade: { value: noiseTexture(256, true) }, uShellH: { value: this.shellH }, uWind: { value: new THREE.Vector2() }, uTime: { value: 0 },
       uFade: { value: new THREE.Vector2(9, 22) }, uPatch: { value: new THREE.Vector3(0, 0, 22) },
+      uRelief: { value: reliefTexture(512) }, uWindDir: { value: new THREE.Vector2(1, 0) }, uWindAmp: { value: 0 },
     };
     const u = this.uniforms;
     // the surface
     this.base = new THREE.MeshLambertMaterial({ map });
     this.base.onBeforeCompile = (shader) => {
       Object.assign(shader.uniforms, u); injectVertex(shader, false);
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${COMMON}`)
-        .replace('#include <map_fragment>', `#include <map_fragment>\n{ vec2 bd; float br = turfBrush(bd); diffuseColor.rgb = turfShade(diffuseColor.rgb, br, bd) * 0.93; }`);
+      shader.defines = { ...(shader.defines ?? {}), TURF_PARALLAX: parallax };
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${COMMON}\n${RELIEF}`)
+        .replace('#include <map_fragment>', `#include <map_fragment>\n{ vec2 bd; float br = turfBrush(bd); float rh = turfRelief(br); diffuseColor.rgb = turfShade(diffuseColor.rgb, br, bd) * mix(0.68, 1.14, rh); }`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\nnormal = normalize((viewMatrix * vec4(turfN, 0.0)).xyz);`);
     };
-    this.base.customProgramCacheKey = () => 'turf-base';
+    this.base.customProgramCacheKey = () => `turf-base-${parallax}`;
     const geo = new THREE.PlaneGeometry(L, W, 1, 1); geo.rotateX(-Math.PI / 2);
     const surf = new THREE.Mesh(geo, this.base); surf.receiveShadow = true; this.group.add(surf);
     // the blades
@@ -179,6 +243,7 @@ export class Turf {
     const u = this.uniforms; u.uTime.value = time;
     const gust = this.windStrength * (0.75 + 0.25 * Math.sin(time * 0.23));
     (u.uWind.value as THREE.Vector2).copy(this.wind).multiplyScalar(this.shellH * 0.9 * gust);
+    (u.uWindDir.value as THREE.Vector2).copy(this.wind); u.uWindAmp.value = gust;
     if (this.shells) {
       // the blade patch sits where the camera is looking (snapped, so nothing swims); only when the camera is near enough
       const dir = new THREE.Vector3(); camera.getWorldDirection(dir); const p = camera.position;

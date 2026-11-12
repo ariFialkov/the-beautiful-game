@@ -634,7 +634,8 @@ export class Match {
         // level and the result needs a winner: extra time. Anything else (a goal still owed either way) plays on a little
         // longer, as referees do, and goes to extra time if that makes it level - the failsafe only as a last resort
         if (this.level() && this.needsWinner()) { this.unresolved(); return; }
-        if (f >= OVERRUN_LIMIT) this.awardRemaining();
+        // (still a goal short after a few more minutes: extra time to find it, rather than one out of nowhere)
+        if (f >= 1 + (this.added[1] + 6) * perMin || f >= OVERRUN_LIMIT) this.unresolved();
       }
     }
   }
