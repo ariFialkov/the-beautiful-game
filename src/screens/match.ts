@@ -63,7 +63,7 @@ export class MatchScreen implements Screen {
     const hud = el('div', 'hud'); this.hud = hud;
     hud.innerHTML = `
       <div class="stake-tag">STAKE <b>${fmt(p.stake)}</b> · ${script.mode.toUpperCase()}</div>
-      <div class="scoreboard"><div class="team home" style="background:${hk.primary};color:${contrast(hk.primary)}">${crestSvg(home, 22)} <span>${match.teams[0].setup.short}</span><em class="reds"></em></div><div class="score"><span class="h">0</span><span>–</span><span class="a">0</span></div><div class="team away" style="background:${ak.primary};color:${contrast(ak.primary)}"><em class="reds"></em><span>${match.teams[1].setup.short}</span> ${crestSvg(away, 22)}</div><div class="clock">00:00</div></div>
+      <div class="scoreboard"><div class="team home" style="background:${hk.primary};color:${contrast(hk.primary)}">${crestSvg(home, 22)} <span>${match.teams[0].setup.short}</span><em class="reds"></em></div><div class="score"><span class="h">0</span><span>–</span><span class="a">0</span></div><div class="team away" style="background:${ak.primary};color:${contrast(ak.primary)}"><em class="reds"></em><span>${match.teams[1].setup.short}</span> ${crestSvg(away, 22)}</div><div class="clock">00:00</div><div class="added"></div></div><div class="shootout-tally"><div class="row h"><span>${match.teams[0].setup.short}</span><i></i></div><div class="row a"><span>${match.teams[1].setup.short}</span><i></i></div></div>
       <div class="banner"></div><div class="card-pop"><i></i><div><b></b><small></small></div></div><div class="toast"></div><div class="power"><i></i></div>
       <div class="pen-panel"><b>PENALTY</b><div class="pen-timing"><span class="green"></span><i></i></div><div class="fk-curl-label">Hold shoot for power · press again as he strikes it</div></div>
       <div class="fk-panel"><b>FREE KICK</b><div class="fk-curl"><i></i></div><div class="fk-curl-label">Curl</div></div>
@@ -84,6 +84,11 @@ export class MatchScreen implements Screen {
         case 'goal': { this.replayDue = true; const t = match.teams[e.team]; this.showBanner(`GOAL!<small>${t.setup.name}${e.scorer ? ' · ' + e.scorer.card.name : e.ownGoal ? ' · own goal, ' + e.ownGoal.card.name : ''}</small>`, 3.2); audio.goal(); if (state.settings.vibration && navigator.vibrate) navigator.vibrate([60, 40, 120]); break; }
         case 'post': this.showToast(e.bar ? 'Off the crossbar!' : 'Off the post!'); audio.post(); break;
         case 'save': this.showToast(e.caught ? `Held by ${e.keeper.card.shortName}` : `Parried by ${e.keeper.card.shortName}!`); audio.crowdLevel(0.4); setTimeout(() => audio.crowdLevel(0.15), 1500); break;
+        case 'addedTime': this.showToast(`${e.minutes} minute${e.minutes === 1 ? '' : 's'} added`); break;
+        case 'extratime': this.showBanner('EXTRA TIME<small>30 minutes to settle it</small>', 2.6); audio.whistle(true); break;
+        case 'shootout': this.showBanner(`PENALTIES<small>${match.teams[e.first].setup.short} to kick first</small>`, 2.6); audio.whistle(true); break;
+        case 'shootoutKick': this.showToast(e.scored ? `Scored · ${e.taker.card.shortName}` : `Missed · ${e.taker.card.shortName}`); if (e.scored) audio.goal(); else audio.crowdLevel(0.4); break;
+        case 'shootoutEnd': this.showBanner(`${match.teams[e.winner].setup.short} WIN ON PENALTIES<small>${e.home} – ${e.away}</small>`, 3); break;
         case 'offside': this.showToast(`Offside · ${e.agent.card.shortName}`); audio.whistle(); this.showBanner('OFFSIDE', 1.4); break;
         case 'foul':
           if (e.card) this.showCard(e.card, e.by.card.name, e.secondYellow);
@@ -133,6 +138,16 @@ export class MatchScreen implements Screen {
       if (lift !== this.mapH) { this.mapH = lift; this.hud.style.setProperty('--map-h', `${lift}px`); } }
     if (this.cardTimer > 0) { this.cardTimer -= dt; if (this.cardTimer <= 0) this.hud.querySelector('.card-pop')!.classList.remove('show'); }
     const c = m.clockText(); const clock = sb.querySelector('.clock')!; clock.textContent = c.text; clock.classList.toggle('stoppage', c.stoppage);
+    { const ad = sb.querySelector('.added') as HTMLElement; const t = c.board !== undefined ? `+${c.board}` : ''; if (ad.textContent !== t) { ad.textContent = t; ad.classList.toggle('show', !!t); } }
+    if (m.shootout) {
+      // the shootout so far: a ring per kick to come (five each, then sudden death), filled green in, red out
+      const tally = this.hud.querySelector('.shootout-tally') as HTMLElement; tally.classList.add('show');
+      for (const [i, cls] of [[0, 'h'], [1, 'a']] as const) {
+        const ks = m.shootout.kicks.filter((k) => k.team === i); const n = Math.max(5, ks.length + (m.shootout.done ? 0 : 1), m.shootout.kicks.filter((k) => k.team !== i).length);
+        let html = ''; for (let j = 0; j < n; j++) html += `<b class="${j < ks.length ? (ks[j].scored ? 'in' : 'out') : ''}"></b>`;
+        const row = tally.querySelector(`.row.${cls} i`)!; if (row.innerHTML !== html) row.innerHTML = html;
+      }
+    }
     if (m.charge) { this.power.classList.add('show'); (this.power.firstElementChild as HTMLElement).style.width = `${Math.min(100, (m.charge.t / (m.charge.kind === 'fk' || m.charge.kind === 'pen' ? 1.0 : m.charge.kind === 'through' ? 0.6 : m.charge.kind === 'shoot' ? 0.9 : m.charge.kind === 'lob' ? 0.7 : 0.5)) * 100)}%`; } else this.power.classList.remove('show');
     // free kick: the taker's panel (curl meter) and hints
     const fk = m.freeKick && m.freeKick.taker === m.controlled && !m.autopilot ? m.freeKick : null;
@@ -196,11 +211,12 @@ export class MatchScreen implements Screen {
     this.settled = settle;
     const script = p.round.script as MatchScript;
     const final = early ? script.finalScore : { home: m.teams[0].score, away: m.teams[1].score };
+    const pens = !early && m.shootout?.done ? (() => { const t = m.shootoutTally(); return ` <small>(${t[0].scored}–${t[1].scored} pens)</small>`; })() : !early && m.extraTime ? ' <small>(a.e.t.)</small>' : '';
     const won = settle ? settle.multiplier > 1 : script.multiplier > 1;
     const draw = settle ? settle.multiplier === 1 : script.multiplier === 1;
     const modal = el('div', 'modal'); const card = el('div', 'panel card col');
     const payout = settle?.payout ?? p.stake * script.multiplier;
-    card.innerHTML = `<div class="result-hero"><h2>${won ? 'Victory' : draw ? 'Draw' : 'Defeat'}</h2><div class="score">${m.teams[0].setup.short} ${final.home} – ${final.away} ${m.teams[1].setup.short}</div>
+    card.innerHTML = `<div class="result-hero"><h2>${won ? 'Victory' : draw ? 'Draw' : 'Defeat'}</h2><div class="score">${m.teams[0].setup.short} ${final.home} – ${final.away} ${m.teams[1].setup.short}${pens}</div>
       <div class="big ${payout > 0 ? '' : 'lose'}">${payout > 0 ? `+${fmt(payout)}` : 'No return'}</div><div class="muted small">${(settle?.multiplier ?? script.multiplier).toFixed(2)}× on a ${fmt(p.stake)} stake${early ? ' · settled early at the scheduled result' : ''}</div>${error ? `<div class="error">${error}</div>` : ''}</div>`;
     const fair = el('details', ''); fair.innerHTML = `<summary class="label" style="cursor:pointer">Provably fair</summary>`;
     const kv = el('div', 'kv');

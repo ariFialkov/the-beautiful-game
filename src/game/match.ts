@@ -54,7 +54,9 @@ export type MatchEvent =
   | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' } | { type: 'overtime'; size: number }
   | { type: 'out'; kind: 'throw' | 'corner' | 'goalkick' } | { type: 'kick'; kind: KickKind; power: number; agent: Agent }
   | { type: 'tackle'; success: boolean; agent: Agent } | { type: 'switch'; agent: Agent } | { type: 'touch'; agent: Agent; heavy: boolean }
-  | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: 'yellow' | 'red' | null; secondYellow?: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent } | { type: 'skill'; agent: Agent; move: SkillMove } | { type: 'penaltyTiming'; result: 'green' | 'good' | 'poor' } | { type: 'offside'; agent: Agent };
+  | { type: 'foul'; by: Agent; on: Agent; penalty: boolean; card: 'yellow' | 'red' | null; secondYellow?: boolean } | { type: 'setpiece'; kind: SetPieceKind; team: number } | { type: 'header'; agent: Agent } | { type: 'skill'; agent: Agent; move: SkillMove } | { type: 'penaltyTiming'; result: 'green' | 'good' | 'poor' } | { type: 'offside'; agent: Agent }
+  | { type: 'addedTime'; half: number; minutes: number } | { type: 'extratime' } | { type: 'shootout'; first: number }
+  | { type: 'shootoutKick'; team: number; scored: boolean; taker: Agent } | { type: 'shootoutEnd'; winner: number; home: number; away: number };
 
 export class TeamState {
   score = 0; agents: Agent[] = []; kickoffs = 0;
@@ -109,6 +111,13 @@ export class Match {
   private shotTap: { at: number; power: number; finesse: boolean } | null = null;
   ended = false;
   stoppage = false;
+  /** Added time announced for each half (in match minutes; -1 until the board goes up). */
+  added: [number, number] = [-1, -1];
+  /** Extra time (when the result is still open at the end of the 90): from/to, as fractions of regulation. */
+  extraTime: { start: number; end: number } | null = null;
+  /** A penalty shootout: the scripted winner, who kicks first, every kick so far, the order of takers, and the kick
+   *  being taken (its result is recorded once: in, saved, wide, or the time for it is up). */
+  shootout: { winner: number; first: number; kicks: Array<{ team: number; scored: boolean }>; order: [Agent[], Agent[]]; live: { team: number; taker: Agent; struck: number } | null; done: boolean } | null = null;
   lastSwitch = 0;
   idleTime = 0;
   autopilot = false;
@@ -157,7 +166,13 @@ export class Match {
   get isPaused() { return this.paused; }
   opponentsOf(team: number) { return this.teams[team === 0 ? 1 : 0]; }
 
-  clockText(): { text: string; stoppage: boolean } {
+  clockText(): { text: string; stoppage: boolean; board?: number } {
+    if (this.shootout) return { text: 'PENS', stoppage: true };
+    if (this.extraTime) {
+      const mins = this.opts.clockMinutes; const shown = Math.min(this.frac * mins, mins + 30 * (mins / 90) * 1);
+      const m = Math.floor(shown), s = Math.floor((shown - m) * 60);
+      return { text: `${m}:${String(s).padStart(2, '0')}`, stoppage: true };
+    }
     if (this.overtime) { const el = Math.max(0, this.clock - this.overtime.start); return { text: `SD ${this.overtime.size}v${this.overtime.size} ${Math.floor(el / 60)}:${String(Math.floor(el % 60)).padStart(2, '0')}`, stoppage: true }; }
     const mins = this.opts.clockMinutes; const f = this.frac;
     const halfLen = mins / 2;
@@ -165,7 +180,8 @@ export class Match {
     const m = Math.floor(shown), s = Math.floor((shown - Math.floor(shown)) * 60);
     const over = this.half === 1 ? f * mins - halfLen : f * mins - mins;
     const text = over > 0.02 ? `${this.half === 1 ? halfLen : mins}'+${Math.max(1, Math.ceil(over))}` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return { text, stoppage: over > 0.02 };
+    const board = this.added[this.half - 1]; // (the fourth official's board, once it's gone up)
+    return { text, stoppage: over > 0.02, board: board >= 0 && over > -0.02 ? board : undefined };
   }
 
   /** Where a ball in the air will first come down (cached per step): for the landing marker. */
@@ -219,7 +235,7 @@ export class Match {
     this.ball.reset(pos.x, pos.z);
     let taker: Agent;
     if (kind === 'goalkick') taker = t.agents[0];
-    else if (kind === 'penalty') taker = t.agents.filter((a) => !a.isGK).sort((p, q) => q.skill.shoot - p.skill.shoot)[0];
+    else if (kind === 'penalty') taker = preferred && this.shootout ? preferred : t.agents.filter((a) => !a.isGK).sort((p, q) => q.skill.shoot - p.skill.shoot)[0];
     else if (kind === 'freekick' && this.freeKickDanger(teamIdx, pos).direct) taker = t.agents.filter((a) => !a.isGK).sort((p, q) => q.skill.shoot - p.skill.shoot)[0]; // the dead-ball specialist
     else taker = preferred && !preferred.isGK ? preferred : t.agents.filter((a) => !a.isGK).sort((p, q) => v2.dist(p.pos, pos) - v2.dist(q.pos, pos))[0];
     for (const a of this.agents) { a.hasBall = false; a.action = null; a.pendingKick = null; a.stunned = 0; }
@@ -434,11 +450,12 @@ export class Match {
         else if (this.phase === 'kickoff' || this.phase === 'restart') { this.phase = 'play'; if (this.setPiece) this.giveControl(this.setPiece.taker); }
         else if (this.phase === 'dead') { const r = this.pendingRestart; this.pendingRestart = null; r?.(); }
         else if (this.phase === 'goal') { if (this.overtime) this.fullTime(); else this.kickoff(this.lastConceded); } // golden goal
-        else if (this.phase === 'halftime') { this.half = 2; this.kickoff(this.firstKickoff === 0 ? 1 : 0); }
+        else if (this.phase === 'halftime') { if (this.extraTime) this.kickoff(this.firstKickoff); else { this.half = 2; this.kickoff(this.firstKickoff === 0 ? 1 : 0); } }
       }
     }
     for (const a of this.agents) { a.intent.steer = null; a.intent.boost = false; }
     for (const t of this.teams) updateTeamAI(this, t, h);
+    if (this.shootout) this.shootoutPositions();
     this.applyPhaseConstraints();
     if (this.phase === 'goal') this.applyCelebration();
     if (this.phase === 'play') { this.updatePendingKicks(); this.dribbleAssist(); this.scheduleTouch(); this.anticipate(); }
@@ -468,6 +485,7 @@ export class Match {
     this.expirePassAssist();
     const ev = this.ball.update(h, this.goals);
     if (ev === 'post' || ev === 'bar') { this.emit({ type: 'post', bar: ev === 'bar' }); if (this.ball.inFlightShot) this.ball.inFlightShot = null; }
+    if (this.shootout) this.watchShootout();
     if (this.phase === 'play') this.checkOffside();
     if (this.phase === 'play') this.checkBounds();
     this.separateAgents();
@@ -568,10 +586,16 @@ export class Match {
 
   private updateClockPhases() {
     if (this.phase !== 'play' && this.phase !== 'restart' && this.phase !== 'dead') return;
+    if (this.shootout) return;
     const f = this.frac;
     const pending = this.director ? !this.director.done : false;
+    const perMin = 1 / this.opts.clockMinutes;
     if (this.half === 1 && f >= 0.5 && this.phase === 'play') {
-      if (!this.director?.pushing || f >= 0.6) {
+      // the board goes up: a minute or three (one more if an attack is building), and the half ends once they're played -
+      // or a moment later if a move is still on
+      if (this.added[0] < 0) { this.added[0] = 1 + Math.floor(Math.random() * (this.pitch.futsal ? 2 : 3)) + (this.director?.pushing ? 1 : 0); this.emit({ type: 'addedTime', half: 1, minutes: this.added[0] }); }
+      const end = 0.5 + this.added[0] * perMin;
+      if (f >= end && (!this.director?.pushing || f >= end + 1.5 * perMin)) {
         this.phase = 'halftime'; this.phaseTimer = 3; this.setPiece = null;
         for (const t of this.teams) t.attackDir = (t.attackDir === 1 ? -1 : 1);
         this.ball.owner = null; this.ball.held = false; for (const a of this.agents) a.energy = Math.min(1, a.energy + 0.15); this.emit({ type: 'halftime' }); this.stoppage = false; return; // (a breather at the break)
@@ -582,18 +606,123 @@ export class Match {
       // sudden death: shrink the teams as it goes on; the scripted golden goal ends it (failsafe if it stalls)
       const el = this.clock - this.overtime.start; const size = el < 15 ? 3 : el < 30 ? 2 : 1;
       if (size < this.overtime.size && this.phase === 'play') this.shrinkTo(size);
-      if (pending && el > this.overtime.at + 30) this.awardRemaining();
+      // a golden goal that won't come: level, it goes to penalties (anything else, the failsafe)
+      if (pending && el > this.overtime.at + 30 && this.phase === 'play') { if (this.level()) this.startShootout(); else this.awardRemaining(); }
+      return;
+    }
+    if (this.extraTime) {
+      // extra time: still open and level late on, both defences shut up shop (no late goals) and it goes to penalties
+      const et = this.extraTime; const lock = this.level() && this.needsWinner() && f >= et.end - 6 * perMin;
+      if (this.director) this.director.locked = lock;
+      if (f >= et.end && this.phase === 'play') {
+        if (this.director) this.director.locked = false;
+        if (!this.director || this.director.inRange()) this.fullTime();
+        else if (this.level() && this.needsWinner()) this.startShootout();
+        else this.awardRemaining();
+      }
       return;
     }
     if (this.half === 2 && f >= 1) {
-      if (!pending && this.phase === 'play') {
-        const ot = this.opts.script?.overtime;
-        if (ot && this.pitch.futsal && this.teams[0].score === this.teams[1].score) { this.startOvertime(ot); return; }
-        this.fullTime(); return;
-      }
+      // the board: two to five minutes (one more if the result is still open), played in full; then it's over - or, if
+      // the result is still open, extra time (sudden death in futsal)
+      if (this.added[1] < 0) { this.added[1] = this.pitch.futsal ? 1 + Math.floor(Math.random() * 2) + (pending ? 1 : 0) : Math.min(6, 2 + Math.floor(Math.random() * 4) + (pending ? 1 : 0)); this.emit({ type: 'addedTime', half: 2, minutes: this.added[1] }); }
       this.stoppage = true;
-      if (f >= OVERRUN_LIMIT) this.awardRemaining();
+      if (f >= 1 + this.added[1] * perMin && this.phase === 'play') {
+        const ot = this.opts.script?.overtime;
+        if (ot && this.pitch.futsal && this.level()) { this.startOvertime(ot); return; }
+        if (!this.director || this.director.inRange()) { this.fullTime(); return; }
+        // level and the result needs a winner: extra time. Anything else (a goal still owed either way) plays on a little
+        // longer, as referees do, and goes to extra time if that makes it level - the failsafe only as a last resort
+        if (this.level() && this.needsWinner()) { this.unresolved(); return; }
+        if (f >= OVERRUN_LIMIT) this.awardRemaining();
+      }
     }
+  }
+  private level() { return this.teams[0].score === this.teams[1].score; }
+  /** The drawn result needs a winner (it's a win or a defeat, not a draw). */
+  private needsWinner() { const d = this.director; return !!d && (d.lo >= 1 || d.hi <= -1); }
+  /** Full time and the result isn't there yet: extra time (sudden death in futsal), never a goal out of nowhere. */
+  private unresolved() {
+    const d = this.director!;
+    if (this.pitch.futsal) {
+      if (this.level() && this.needsWinner()) { this.startOvertime({ side: d.lo >= 1 ? 'home' : 'away', at: 6 + Math.random() * 22 }); return; }
+      this.awardRemaining(); return; // (rare: futsal has no extra time)
+    }
+    const perMin = 1 / this.opts.clockMinutes;
+    this.extraTime = { start: this.frac, end: this.frac + 30 * perMin }; this.stoppage = false;
+    this.phase = 'halftime'; this.phaseTimer = 3; this.setPiece = null; this.ball.owner = null; this.ball.held = false;
+    for (const a of this.agents) a.energy = Math.min(1, a.energy + 0.08);
+    this.emit({ type: 'extratime' });
+  }
+
+  /* ------------------------------ penalty shootout ------------------------------ */
+  private startShootout() {
+    const d = this.director; const need = d?.neededGoals() ?? [];
+    const winner = need.length ? need[0] : d && d.hi <= -1 ? 1 : d && d.lo >= 1 ? 0 : Math.random() < 0.5 ? 0 : 1;
+    const order = this.teams.map((t) => [...t.agents.filter((a) => !a.isGK).sort((p, q) => q.skill.shoot - p.skill.shoot), ...t.agents.filter((a) => a.isGK)]) as [Agent[], Agent[]];
+    const first = Math.random() < 0.5 ? 0 : 1;
+    this.shootout = { winner, first, kicks: [], order, live: null, done: false };
+    if (this.director) this.director.locked = false;
+    this.stoppage = false; this.setPiece = null; this.penalty = null; this.ball.owner = null; this.ball.held = false;
+    this.emit({ type: 'shootout', first });
+    this.deadBall(2.6, () => this.nextShootoutKick());
+  }
+  /** Goals and kicks taken so far, per team. */
+  shootoutTally() {
+    const so = this.shootout!; const t = [{ taken: 0, scored: 0 }, { taken: 0, scored: 0 }];
+    for (const k of so.kicks) { t[k.team].taken++; if (k.scored) t[k.team].scored++; }
+    return t;
+  }
+  /** Is the shootout decided? (Five each, then sudden death round by round.) */
+  private shootoutWinner(): number | null {
+    const t = this.shootoutTally();
+    for (const a of [0, 1]) { const b = 1 - a; if (t[a].taken <= 5 && t[b].taken <= 5 && t[a].scored > t[b].scored + (5 - t[b].taken)) return a; }
+    if (t[0].taken === t[1].taken && t[0].taken >= 5 && t[0].scored !== t[1].scored) return t[0].scored > t[1].scored ? 0 : 1;
+    return null;
+  }
+  /** The rig: the side meant to lose only scores if that still leaves the scripted winner able to win it. */
+  shootoutAllows(team: number): boolean {
+    const so = this.shootout; if (!so || team === so.winner) return true;
+    const t = this.shootoutTally(); const W = t[so.winner], L = t[team]; const ls = L.scored + 1, lt = L.taken + 1;
+    if (lt <= 5 && W.taken <= 5) return !(ls > W.scored + (5 - W.taken)) && !(W.taken === 5 && lt === 5 && ls > W.scored);
+    return W.taken >= lt ? ls <= W.scored : ls <= W.scored + 1; // (sudden death)
+  }
+  private nextShootoutKick() {
+    const so = this.shootout!; const w = this.shootoutWinner();
+    if (w !== null) { const t = this.shootoutTally(); so.done = true; this.emit({ type: 'shootoutEnd', winner: w, home: t[0].scored, away: t[1].scored }); this.fullTime(); return; }
+    const team = so.kicks.length % 2 === 0 ? so.first : 1 - so.first;
+    const n = so.kicks.filter((k) => k.team === team).length; const list = so.order[team]; const taker = list[n % list.length];
+    // every kick at the same end: the kicking side attacks it
+    this.teams[team].attackDir = 1; this.teams[1 - team].attackDir = -1;
+    const L = this.pitch.length; this.restart('penalty', team, { x: L / 2 - (this.pitch.futsal ? 6 : 11), z: 0 }, taker);
+    so.live = { team, taker, struck: -1 };
+  }
+  /** Everyone not in this kick waits: outfield players arm in arm on the halfway line, the other keeper by the box. */
+  private shootoutPositions() {
+    const so = this.shootout!; const live = so.live; const pen = this.penalty; const { length: L, boxDepth, boxWidth } = this.pitch;
+    const kickTeam = live?.team ?? -1; let i = [0, 0];
+    for (const a of this.agents) {
+      if (live && a === live.taker && !(pen && pen.stage === 'struck')) continue;
+      if (a.isGK && kickTeam >= 0 && a.team !== kickTeam) continue; // (the keeper facing the kick)
+      const spot = a.isGK ? { x: L / 2 - boxDepth - 2, z: (boxWidth / 2 + 3) * (a.team === 0 ? 1 : -1) } : { x: (a.team === 0 ? -1.2 : 1.2), z: (i[a.team]++ - 4.5) * 1.1 };
+      const d = v2.sub(spot, a.pos); const l = v2.len(d);
+      a.intent.move = l > 0.4 ? v2.scale(v2.norm(d), Math.min(1, l / 3) * 0.7) : { x: 0, z: 0 }; a.intent.sprint = false; a.intent.steer = null; a.intent.jockey = false;
+      a.intent.face = l <= 0.4 ? { x: 1, z: 0 } : null;
+    }
+  }
+  private recordShootoutKick(scored: boolean) {
+    const so = this.shootout!; const live = so.live; if (!live) return;
+    so.live = null; so.kicks.push({ team: live.team, scored });
+    this.emit({ type: 'shootoutKick', team: live.team, scored, taker: live.taker });
+    this.deadBall(1.8, () => this.nextShootoutKick());
+  }
+  /** Watching the kick: in, or saved/missed (held, out, or its moment has passed - no rebounds in a shootout). */
+  private watchShootout() {
+    const so = this.shootout; if (!so?.live || this.phase !== 'play') return;
+    const pen = this.penalty;
+    if (so.live.struck < 0) { if (pen && pen.stage === 'struck' && pen.taker === so.live.taker) so.live.struck = this.time; else return; }
+    const b = this.ball; const keeper = this.opponentsOf(so.live.team).agents.find((a) => a.isGK);
+    if ((b.held && b.owner === keeper) || this.time - so.live.struck > 1.7 || (b.speed() < 0.4 && this.time - so.live.struck > 0.6)) this.recordShootoutKick(false);
   }
 
   /** Level after regulation (futsal): sudden death, starting 3v3; the golden goal is now the director's next event. */
@@ -679,6 +808,7 @@ export class Match {
     if (this.phase !== 'play' && this.phase !== 'restart') return;
     if (this.freeKick?.taker === me) { this.freeKickInput(input, dt); return; }
     if (this.penalty) { if (this.penaltyInput(input, dt, me)) return; }
+    if (this.shootout) { me.intent.move = { x: 0, z: 0 }; return; } // (in a shootout you take your kicks and pick your keeper's dive; nothing else)
     const b = this.ball; const bp = { x: b.x, z: b.z };
     // Receive assist: a pass is on its way to you. With the stick neutral, or still held the way the pass was aimed,
     // you come to meet it; a new direction on the stick takes over.
@@ -2035,9 +2165,11 @@ export class Match {
           b.inFlightShot = null; b.lastTouchTeam = defending.index; this.emit({ type: 'post', bar: false });
           return;
         }
+        if (this.shootout) { if (this.shootout.live) this.recordShootoutKick(true); else { this.ball.vx = this.ball.vz = 0; } return; } // (a shootout goal counts in the shootout)
         this.scoreGoal(scoring.index);
         return;
       }
+      if (this.shootout) { if (this.shootout.live) this.recordShootoutKick(false); else { this.ball.vx = this.ball.vz = 0; } return; }
       if (b.held) return;
       const lastAttack = b.lastTouchTeam === scoring.index;
       const zSide = Math.sign(b.z || 1);
@@ -2047,6 +2179,7 @@ export class Match {
         : this.restart('corner', scoring.index, { x: side * (L / 2 - 0.4), z: zSide * (W / 2 - 0.4) }));
       return;
     }
+    if (this.shootout && Math.abs(b.z) > W / 2 + r) { if (this.shootout.live) this.recordShootoutKick(false); return; }
     if (Math.abs(b.z) > W / 2 + r && !b.held) {
       const team = b.lastTouchTeam === 0 ? 1 : 0;
       const pos = { x: Math.max(-L / 2 + 1, Math.min(L / 2 - 1, b.x)), z: Math.sign(b.z) * (W / 2 - 0.15) };

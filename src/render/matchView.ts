@@ -228,7 +228,7 @@ export class MatchView {
     this.bar.bg.visible = this.bar.fill.visible = show;
     if (show && me) {
       const W = 0.055, H = 0.0032; const e = Math.max(0.02, me.energy);
-      const lift = 0.0045 - tg0.sprite.center.y * 0.03; // (just under the text; follows the tag up when it's stacked)
+      const lift = 0.0028 - tg0.sprite.center.y * 0.03; // (just under the text; follows the tag up when it's stacked)
       for (const sp of [this.bar.bg, this.bar.fill]) sp.position.copy(tg0.sprite.position);
       this.bar.bg.scale.set(W, H, 1); this.bar.bg.center.set(0.5, -lift / H);
       this.bar.fill.scale.set(W * e, H, 1); this.bar.fill.center.set(1 / (2 * e), -lift / H);

@@ -482,7 +482,12 @@ export function updateKeeper(m: Match, team: TeamState, k: Agent, dt: number) {
     // (a guess is a side and a height, not the exact spot: he dives into the area a penalty usually goes, so one placed
     // right into the corner beats him even when he picks the right side, and one closer in on his side is saved)
     const g0 = human && pen.guess ? pen.guess : rnd() < 0.2 ? { z: 0, y: 1.0 } : { z: (rnd() < 0.5 ? -1 : 1) * (goalWidth / 2 - 1.4), y: 0.4 + rnd() * 1.3 };
-    const g = { z: Math.max(-(goalWidth / 2 - 1.3), Math.min(goalWidth / 2 - 1.3, g0.z)), y: g0.y };
+    let g = { z: Math.max(-(goalWidth / 2 - 1.3), Math.min(goalWidth / 2 - 1.3, g0.z)), y: g0.y };
+    // a kick that mustn't go in (a shootout the other side must win): he reads it and goes the right way
+    if (!human && !m.mods.goalAllowed[pen.team] || (!human && m.shootout && !m.shootoutAllows(pen.team))) {
+      const path = m.predicted(); const planeX = k.pos.x;
+      for (let i = 1; i < path.length; i++) { const a0 = path[i - 1], b0 = path[i]; if ((b0.x - planeX) * -dir >= 0 && (a0.x - planeX) * -dir < 0) { const f = (planeX - a0.x) / (b0.x - a0.x || 1e-6); g = { z: a0.z + (b0.z - a0.z) * f, y: Math.max(0.3, a0.y + (b0.y - a0.y) * f) }; break; } }
+    }
     const lat = g.z - k.pos.z;
     if (Math.abs(lat) > 0.6) {
       const side = Math.sign(lat); const yawK = Math.atan2(k.heading.x, k.heading.z); const leftZ = -Math.sin(yawK);

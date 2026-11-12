@@ -134,6 +134,16 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.02em; margin: 0
 .hud .scoreboard .score { display: flex; align-items: center; padding: 0 14px; background: #0b1a33; color: #fff; font-size: 20px; gap: 10px; }
 .hud .scoreboard .clock { display: flex; align-items: center; padding: 0 12px; background: var(--accent); color: #06202a; font-size: 15px; min-width: 64px; justify-content: center; }
 .hud .scoreboard .clock.stoppage { background: var(--gold); }
+.hud .scoreboard .added { display: none; align-items: center; padding: 0 8px; background: #0b1424; color: #7dffb8; font-family: var(--font-display); font-size: 14px; letter-spacing: 0.04em; }
+.hud .scoreboard .added.show { display: flex; }
+.hud .shootout-tally { position: absolute; top: calc(52px + var(--safe-t)); left: 50%; transform: translateX(-50%); display: none; flex-direction: column; gap: 4px; padding: 6px 10px; border-radius: 8px; background: rgba(8, 14, 28, 0.78); pointer-events: none; }
+.hud .shootout-tally.show { display: flex; }
+.hud .shootout-tally .row { display: flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: 12px; letter-spacing: 0.08em; color: #fff; }
+.hud .shootout-tally .row span { width: 34px; }
+.hud .shootout-tally .row i { display: flex; gap: 5px; }
+.hud .shootout-tally .row b { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.45); box-sizing: border-box; }
+.hud .shootout-tally .row b.in { background: #3ddc84; border-color: #3ddc84; }
+.hud .shootout-tally .row b.out { background: #ff5a4d; border-color: #ff5a4d; }
 .hud .banner { position: absolute; left: 50%; top: 32%; transform: translate(-50%, -50%) scale(0.8); font-family: var(--font-display); font-size: clamp(36px, 9vw, 96px); letter-spacing: 0.1em; color: #fff; text-shadow: 0 0 30px rgba(25, 245, 164, 0.8), 0 6px 30px rgba(0,0,0,0.8); opacity: 0; transition: opacity 0.2s ease, transform 0.3s cubic-bezier(.2,1.5,.5,1); }
 .hud .banner.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 .hud .banner small { display: block; font-size: 0.3em; letter-spacing: 0.3em; color: var(--accent); }

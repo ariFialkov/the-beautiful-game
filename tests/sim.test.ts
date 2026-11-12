@@ -38,6 +38,7 @@ function runMatch(mode: 'kickoff' | 'futsal', tier: MatchTier, seed: string, hum
 function assertResult(m: Match, label: string) {
   const d = m.director!; const D = m.teams[0].score - m.teams[1].score;
   assert.ok(m.ended, `${label}: match ended`);
+  if (m.shootout) { const t = m.shootoutTally(); assert.equal(t[0].scored > t[1].scored ? 0 : 1, d.lo >= 1 ? 0 : 1, `${label}: the shootout went the drawn way`); return; }
   assert.ok(D >= d.lo && D <= d.hi, `${label}: ${m.teams[0].score}-${m.teams[1].score} is outside the drawn result (${d.lo}..${d.hi}, scenario ${d.scenario})`);
 }
 
@@ -227,4 +228,62 @@ test('scripted goals come from play at human pace: nobody runs more than a step 
   }
   console.log(`  fastest relative to his own top speed: ${(worst * 100).toFixed(0)}% (${who})`);
   assert.ok(worst < 1.08, `no superhuman pace (${(worst * 100).toFixed(0)}%)`);
+});
+
+function levelLate(tier: MatchTier, seed: string, mode: 'kickoff' | 'futsal' = 'kickoff') {
+  const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+  const script = generateMatchScript(new Rng(seed), mode, tier, 2, 0.6); const futsal = mode === 'futsal';
+  const hx = startingXI(rosterOf(home.id)), ax = startingXI(rosterOf(away.id));
+  const m = new Match({ pitch: futsal ? PITCH_FUTSAL : PITCH_11, mode, humanTeam: null, script, durationSec: script.durationSec, clockMinutes: futsal ? 40 : 90,
+    teams: [{ team: home, players: futsal ? futsalFive(hx) : hx, kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: futsal ? futsalFive(ax) : ax, kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+  const ev: any[] = []; m.on((e) => ev.push({ ...e, at: m.frac }));
+  for (let i = 0; i < 60; i++) m.update(1 / 60);
+  (m as any).half = 2; m.clock = script.durationSec * 0.97; m.teams[0].score = 1; m.teams[1].score = 1;
+  return { m, ev, script };
+}
+
+test('stoppage time: a board goes up at the end of each half and the half lasts that long', () => {
+  const { m, ev } = runMatchWithEvents();
+  const boards = ev.filter((e) => e.type === 'addedTime');
+  assert.equal(boards.length, 2, 'one board per half');
+  assert.ok(boards[0].minutes >= 1 && boards[0].minutes <= 4 && boards[1].minutes >= 2 && boards[1].minutes <= 6, `+${boards[0].minutes} / +${boards[1].minutes}`);
+  const ht = ev.find((e) => e.type === 'halftime');
+  assert.ok(ht.at >= 0.5 + boards[0].minutes / 90 - 1e-6, 'the first half runs its added time');
+  console.log(`  added: +${boards[0].minutes} (half time at ${(ht.at * 90).toFixed(1)}'), +${boards[1].minutes} (ended ${(m.frac * 90).toFixed(1)}')`);
+});
+function runMatchWithEvents() {
+  const home = TEAM_BY_ID['lon-royals'], away = TEAM_BY_ID['mad-blancos'];
+  const script = generateMatchScript(new Rng('board'), 'kickoff', 'draw', 2, 0.6);
+  const m = new Match({ pitch: PITCH_11, mode: 'kickoff', humanTeam: null, script, durationSec: script.durationSec, clockMinutes: 90,
+    teams: [{ team: home, players: startingXI(rosterOf(home.id)), kit: home.home, kitKey: 'h', name: home.name, short: home.short }, { team: away, players: startingXI(rosterOf(away.id)), kit: away.home, kitKey: 'a', name: away.name, short: away.short }] });
+  const ev: any[] = []; m.on((e) => ev.push({ ...e, at: m.frac }));
+  while (!m.ended && m.frac < 2) m.update(1 / 60);
+  return { m, ev };
+}
+
+test('level at full time in a defeat: extra time, never a goal out of nowhere; it ends the drawn way (or on penalties)', () => {
+  for (const tier of ['loss', 'win'] as MatchTier[]) {
+    const { m, ev } = levelLate(tier, `et-${tier}`);
+    while (!m.ended && m.frac < 2.5) { if (!m.extraTime) m.director!.locked = true; else if (m.frac < m.extraTime.end - 0.1) m.director!.locked = false; m.update(1 / 60); }
+    assert.ok(ev.some((e) => e.type === 'extratime'), 'extra time was played');
+    assert.ok(!ev.some((e) => e.type === 'goal' && e.forced), 'no goal was awarded');
+    assertResult(m, `${tier} after extra time`);
+    console.log(`  ${tier}: ${m.teams[0].score}-${m.teams[1].score}${m.shootout ? ' (pens)' : ''}, ended ${(m.frac * 90).toFixed(0)}'`);
+  }
+});
+
+test('still level late in extra time: both defences shut up shop and the shootout goes the drawn way', () => {
+  for (const [tier, k] of [['loss', 0], ['win', 1], ['loss', 2], ['win', 3]] as Array<[MatchTier, number]>) {
+    const { m, ev, script } = levelLate(tier, `pens-${tier}-${k}`);
+    while (!m.ended && m.frac < 3) {
+      if (!m.extraTime) m.director!.locked = true; // (no goal before extra time: this is about what happens late in it)
+      m.update(1 / 60);
+      if (m.extraTime && !m.shootout) { m.clock = Math.max(m.clock, (m.extraTime.end - 4 / 90) * script.durationSec); if (m.director!.locked) assert.ok(!m.director!.allowGoal(0) && !m.director!.allowGoal(1), 'locked: no goals'); }
+    }
+    assert.ok(m.shootout?.done, 'decided on penalties');
+    const t = m.shootoutTally(); const w = t[0].scored > t[1].scored ? 0 : 1;
+    assert.equal(w, tier === 'win' ? 0 : 1, `${tier}: ${t[0].scored}-${t[1].scored}`);
+    assert.ok(!ev.some((e) => e.type === 'goal' && e.forced));
+    console.log(`  ${tier}: pens ${t[0].scored}-${t[1].scored} after ${m.shootout!.kicks.length} kicks`);
+  }
 });

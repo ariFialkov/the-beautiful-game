@@ -154,8 +154,14 @@ export class Director {
   /** Is this the human player's side (whose goals are free)? */
   private human(team: number) { return team === 0 && this.match.humanTeam === 0; }
 
+  /** Late in extra time, still level: nobody scores (it's going to penalties). Set by the match. */
+  locked = false;
+  /** The goal difference is inside the drawn result. */
+  inRange() { const D = this.D; return D >= this.lo && D <= this.hi; }
   allowGoal(team: number): boolean {
     const mt = this.match;
+    if (mt.shootout) return mt.shootoutAllows(team);
+    if (this.locked) return false;
     if (mt.overtime) return !!this.ot && team === this.ot.side && mt.frac >= this.ot.t - this.win.before;
     if (this.human(team)) return this.playerMayScore();
     const b = this.beat; const p = this.push; const f = mt.frac;
@@ -276,7 +282,8 @@ export class Director {
     if (!hit || this.allowGoal(hit.team)) return;
     const { goalWidth: gw, goalHeight: gh } = mt.pitch;
     const keeper = mt.opponentsOf(hit.team).agents.find((a) => a.isGK);
-    if (keeper && !keeper.busy() && Math.abs(keeper.pos.x - hit.lineX) < 5 && Math.abs(hit.z) < gw / 2) {
+    // (a keeper you're diving yourself can't be relied on to make the save: then the strike itself goes wrong)
+    if (keeper && !keeper.busy() && !(mt.penalty && mt.humanTeam === keeper.team) && Math.abs(keeper.pos.x - hit.lineX) < 5 && Math.abs(hit.z) < gw / 2) {
       const kp = keeperSavePlan(mt, keeper, { t: hit.t, y: hit.y, z: hit.z });
       const avail = hit.t - kp.reaction - 0.06;
       if (kp.reachable && avail > 0.2 && kp.travel <= kp.speed * avail * 0.45 && hit.y > 0.25 && hit.y < 2) return; // a comfortable save: leave it to the keeper
