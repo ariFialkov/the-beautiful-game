@@ -1,8 +1,8 @@
 /* The Beautiful Game service worker: app-shell caching for offline PWA launch.
    Game outcomes always come from the server (network-only for /api). */
-const VERSION = 'tbg-v2';
+const VERSION = 'tbg-v3';
 const BASE = new URL(self.registration.scope).pathname; // '/' or '/<repo>/' on GitHub Pages
-const SHELL = ['', 'index.html', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'].map((p) => BASE + p);
+const SHELL = ['', 'index.html', 'manifest.json', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'].map((p) => BASE + p);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
