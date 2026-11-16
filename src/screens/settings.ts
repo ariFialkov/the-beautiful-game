@@ -4,7 +4,7 @@ import { app } from '../main';
 import { state } from '../app/state';
 import { api } from '../app/api';
 import { audio } from '../app/audio';
-import { el, button, topbar, cycleToggle, CONTROL_OPTIONS } from '../ui/components';
+import { el, button, topbar, cycleToggle, CONTROL_OPTIONS, keyboardDiagram } from '../ui/components';
 import { CAM_STYLES } from '../render/camera';
 import { Showcase } from '../render/showcase';
 import { TEAM_BY_ID, rosterOf, startingXI } from '@shared/teams';
@@ -43,20 +43,24 @@ export class SettingsScreen implements Screen {
 
     const ctl = el('div', 'panel col'); ctl.appendChild(el('div', 'label', `Controls · ${input.gamepadConnected ? (input.gamepadKind === 'playstation' ? 'PS5 controller connected' : 'Xbox controller connected') : 'no controller detected'}`));
     const ps = input.gamepadKind === 'playstation';
+    ctl.appendChild(el('p', 'small muted', 'Keyboard: your left hand moves, your right hand plays. The right-hand keys sit in the same diamond as a controller\'s buttons (I top, J left, L right, K bottom), with U and O as the bumpers above them.'));
+    ctl.appendChild(keyboardDiagram());
     const rows: Array<[string, string, string, string]> = [
-      ['Move', 'WASD / Arrows', 'Left stick / D-pad', 'Left joystick'],
+      ['Move', 'WASD', 'Left stick / D-pad', 'Left joystick'],
       ['Sprint', 'Shift', ps ? 'R2' : 'RT', 'Sprint'],
-      ['Pass · Contain & jockey (hold, defending)', 'Space', ps ? '✕' : 'A', 'Pass / Press'],
-      ['Power shot (hold for power) · Standing tackle', 'Z', ps ? '○' : 'B', 'Shoot / Tackle'],
-      ['Low driven shot (tap, then hold)', 'Z Z', ps ? '○ ○' : 'B B', 'Shoot ×2'],
-      ['Through ball', 'C', ps ? '△' : 'Y', 'Through'],
-      ['Cross / lofted pass (hold: lower and harder)', 'X', ps ? '□' : 'X', 'Cross'],
-      ['Finesse shot (hold with shoot)', 'R + Z', ps ? 'R1 + ○' : 'RB + B', 'Finesse, then Shoot'],
-      ['Shield (hold)', 'F', ps ? 'L2' : 'LT', '—'],
-      ['Switch player', 'Q', ps ? 'L1' : 'LB', 'Switch'],
-      ['Slide tackle (miss the ball, take the man: foul)', 'E or X', ps ? '□' : 'X', 'Slide (cross button)'],
-      ['Free kick curl', 'Q / E', ps ? 'L1 / R1' : 'LB / RB', 'Curl buttons'],
-      ['Pause', 'Esc', 'Options / Menu', 'II'],
+      ['Skill moves', 'Hold Space + WASD (or Arrows)', ps ? 'Right stick' : 'Right stick', 'Swipe right side'],
+      ['Pass · Contain & jockey (hold, defending)', 'K', ps ? '✕' : 'A', 'Pass / Press'],
+      ['Driven pass', 'O + K', ps ? 'R1 + ✕' : 'RB + A', 'Finesse, then Pass'],
+      ['Power shot (hold for power) · Standing tackle', 'L', ps ? '○' : 'B', 'Shoot / Tackle'],
+      ['Low driven shot (tap, then hold)', 'L L', ps ? '○ ○' : 'B B', 'Shoot ×2'],
+      ['Finesse shot', 'O + L', ps ? 'R1 + ○' : 'RB + B', 'Finesse, then Shoot'],
+      ['Chip shot', 'U + L', ps ? 'L1 + ○' : 'LB + B', 'Loft, then Shoot'],
+      ['Through ball (U + I: lofted)', 'I', ps ? '△' : 'Y', 'Through'],
+      ['Cross / lofted pass (hold: lower and harder) · Slide tackle', 'J', ps ? '□' : 'X', 'Cross'],
+      ['Switch player', 'U', ps ? 'L1' : 'LB', 'Switch'],
+      ['Shield (hold)', 'H', ps ? 'L2' : 'LT', '—'],
+      ['Free kick curl', 'U / O', ps ? 'L1 / R1' : 'LB / RB', 'Curl buttons'],
+      ['Pause', 'Esc / P', 'Options / Menu', 'II'],
       ['Menus', 'Arrows · Enter · Esc', 'D-pad · A/✕ · B/○', 'Tap'],
     ];
     const table = el('table', 'controls-table'); table.innerHTML = `<tr><td></td><td><b>Keyboard</b></td><td><b>Controller</b></td><td><b>Touch</b></td></tr>` + rows.map((r) => `<tr><td>${r[0]}</td><td><kbd>${r[1]}</kbd></td><td><kbd>${r[2]}</kbd></td><td>${r[3]}</td></tr>`).join('');

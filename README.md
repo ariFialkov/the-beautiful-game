@@ -134,18 +134,21 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **In his hands:** he can walk with it (inside the box). Pass rolls it out along the floor, cross throws it overarm, shoot drop-kicks it upfield (held for distance), and through ball drops it at his feet to play it like an outfield player.
   - **Goal kicks:** you take them, aimed with the stick. Pass plays it short, cross chips it out, shoot boots it long.
   - **After:** once he's released it, control goes back to an outfield player.
-- **Skill moves:** the right stick (the arrow keys on a keyboard; swipe on the right of the screen on touch), read relative to the way the player is facing, with the ball at his feet.
+- **Skill moves:** the right stick (on a keyboard, hold Space and flick WASD, or use the arrow keys; swipe on the right of the screen on touch), read relative to the way the player is facing, with the ball at his feet.
   - **Layer 1 (a flick or a hold):** flick left/right for a body feint (drop the shoulder one way, take it the other); hold left/right to roll the ball across with the sole; flick back to drag back and turn away; flick forward to knock it on into space.
   - **Layer 2 (two directions):** forward then a side for a stepover (the foot circles over the front of the ball, then he goes the other way); forward then back for a heel-to-heel; back then a side for a roulette (a full turn over the ball, dragged across with one sole then the other).
   - **Layer 3 (three directions):** a side, forward, then the other side for an elastico (out with the outside of the foot, snapped back in with the inside); back, round, then forward for a rainbow flick over his own head.
   - **How they move:** each move is keyframed in the player's frame: the body's path and turn, both feet, the lean and crouch, and the ball's path until the touch that releases it. The body and ball follow those paths with real velocities, so tackles and everything else see them move, and the animation blends in and out of the run so moves flow into each other and back into the dribble. Moves chain: hold the stick to keep rolling it.
   - **Bots:** skilful dribblers closed down now and then try a feint, stepover, roulette or drag back on the defender.
-- **Keyboard movement** is on WASD (the arrows are the skill stick).
+- **Keyboard (two-handed, like a controller):** your left hand moves and your right hand plays.
+  - **Left hand:** WASD move, Shift sprint, and hold Space to turn WASD into the skill stick; your player keeps running the way he was going while you flick, and the arrow keys work as a skill stick too.
+  - **Right hand:** the face buttons sit on I J K L in the same diamond as a pad: K pass (A), L shoot (B), I through ball (Y), J cross (X). U and O are the bumpers above them: U switch player, held as the loft modifier (LB); O finesse and driven (RB, `;` also works). H shields (LT).
+  - **Where to see it:** a diagram of the layout is in Settings and the pause menu, and it's shown at kick-off in your first match on a keyboard. Keys are read by physical position, so the layout is the same on any keyboard language.
 - **Finishing (assisted shooting):** the stick says which side of the keeper; the shot is drawn toward that corner (strongly in front of goal, less from range, less on Semi). In front of goal (inside about 20 m) a shot roughly toward goal is kept on target. With the stick centred it goes for the corner with the most room past the keeper from where it's struck.
 - **Chip shot:** LB/L1 + shoot (Q + Z; Loft + Shoot on touch) scoops it up over the keeper with backspin to drop under the bar; more power carries it further.
 - **Free kicks:** taken FIFA style, not automatically. The camera cuts to just behind the ball, over the taker's shoulder, and stays on the strike for a moment before blending back to the match camera.
   - **The wall:** sized by the danger. Close in and central (inside about 21 m) there's a full wall of five, then four, three and two further out, fewer at an angle, and a short wall of two in crossing positions. A free kick that can only be passed has no wall. The wall forms at the full distance (9.15 m; 5 m in futsal) with its end man covering the near post, holds its line, and jumps together when the ball is struck. The keeper sets on the line, shaded to the side the wall doesn't cover, and the attacking side's forwards gather in the box for the rebound.
-  - **Taking it:** in shooting range, the stick moves an aim marker on the goal; LB / RB (Q / E on keyboard, the Curl buttons on touch) set how much it bends, shown on the curl meter; hold shoot for power and release to strike. The ball is struck at the aim with that pace and curl through the real ball physics, so you bend it round the wall or dip it over. Overhit it and it rises over the bar, and errors grow with power and curl. Pass, through ball and cross play it short instead. Further out, the stick turns the direction you're facing to play it. There's no rush: auto-pilot doesn't step in for 20 seconds.
+  - **Taking it:** in shooting range, the stick moves an aim marker on the goal; LB / RB (U / O on keyboard, the Curl buttons on touch) set how much it bends, shown on the curl meter; hold shoot for power and release to strike. The ball is struck at the aim with that pace and curl through the real ball physics, so you bend it round the wall or dip it over. Overhit it and it rises over the bar, and errors grow with power and curl. Pass, through ball and cross play it short instead. Further out, the stick turns the direction you're facing to play it. There's no rush: auto-pilot doesn't step in for 20 seconds.
   - **Bots:** a bot taker stands over the ball for a couple of seconds, then picks a strike that the physics says clears the wall (over it, or bent round it) into a corner, or plays it short if there isn't one. When you're defending, you control a player outside the wall.
 - **Camera:** pick it in Settings or the pause menu. Every camera follows a critically damped focus point driven by the ball and blends without shake.
   - **Tele** (the default for 11-a-side): a tight broadcast view that leans toward the attacking direction of the team in possession. It dollies in and zooms when play is on the far side, widens slightly for the near side, and eases out for long, fast balls.
@@ -163,18 +166,21 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 
 | Action | Keyboard | PS5 / Xbox | Touch |
 | --- | --- | --- | --- |
-| Move | WASD / Arrows | Left stick / D-pad | Left joystick |
+| Move | WASD | Left stick / D-pad | Left joystick |
 | Sprint | Shift | R2 / RT | Sprint |
-| Pass · Contain (defending) | Space | ✕ / A | Pass |
-| Power shot (hold for power) · Standing tackle at the ball | Z | ○ / B | Shoot |
-| Low driven shot: tap, then hold | Z, Z | ○, ○ / B, B | Shoot, Shoot |
-| Through ball | C | △ / Y | Through |
-| Cross / lofted pass · Slide tackle (defending) | X (E also slides) | □ / X | Cross · Slide |
-| Finesse shot: hold with shoot (curls in, against your run) | R | R1 / RB | Finesse (tap to arm) |
-| Shield (hold) | F | L2 / LT | — |
-| Switch player | Q | L1 / LB | Switch |
-| Free-kick aim / curl | Arrows · Q/E | Left stick · L1/R1 | Drag · curl buttons |
-| Pause | Esc | Options / Menu | ⏸ |
+| Skill moves | Hold Space + WASD (or Arrows) | Right stick | Swipe right side |
+| Pass · Contain (defending) | K | ✕ / A | Pass |
+| Driven pass | O + K | R1 + ✕ / RB + A | Finesse, then Pass |
+| Power shot (hold for power) · Standing tackle at the ball | L | ○ / B | Shoot |
+| Low driven shot: tap, then hold | L, L | ○, ○ / B, B | Shoot, Shoot |
+| Finesse shot: hold with shoot (curls in, against your run) | O + L | R1 + ○ / RB + B | Finesse (tap to arm) |
+| Chip shot | U + L | L1 + ○ / LB + B | Loft, then Shoot |
+| Through ball (lofted: U + I) | I | △ / Y | Through |
+| Cross / lofted pass · Slide tackle (defending) | J | □ / X | Cross · Slide |
+| Shield (hold) | H | L2 / LT | — |
+| Switch player | U | L1 / LB | Switch |
+| Free-kick aim / curl | WASD · U / O | Left stick · L1 / R1 | Drag · curl buttons |
+| Pause | Esc / P | Options / Menu | ⏸ |
 | Menus | Arrows · Enter · Esc | D-pad · ✕/A · ○/B | Tap |
 
 Shots and passes are charge-and-release (hold for power). The longer you hold a cross, the lower and harder it's driven.

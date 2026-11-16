@@ -20,12 +20,18 @@ export class Button {
 export interface Vec2 { x: number; y: number; }
 export type NavEvent = 'up' | 'down' | 'left' | 'right' | 'accept' | 'back' | 'pause';
 
+/** The keyboard as a controller, two-handed: the left hand is the left stick and the triggers, the right hand the face
+ *  buttons and bumpers - laid out on I J K L in the same diamond as a pad (I = Y top, J = X left, L = B right,
+ *  K = A bottom), with U and O as LB and RB above them and H as LT.
+ *    Left:  WASD move · Shift sprint (RT) · hold Space: WASD becomes the skill stick (the arrows work too)
+ *    Right: K pass / contain · L shoot / tackle · I through · J cross / slide · U switch, hold to loft (LB)
+ *           · O finesse / driven (RB) · H shield (LT)
+ *  (Codes are physical key positions, so the layout is the same on any keyboard language.) */
 const KEYS = {
   up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
-  // the skill stick on a keyboard: the arrow keys
-  skillUp: ['ArrowUp'], skillDown: ['ArrowDown'], skillLeft: ['ArrowLeft'], skillRight: ['ArrowRight'],
-  sprint: ['ShiftLeft', 'ShiftRight'], pass: ['Space', 'KeyJ'], shoot: ['KeyZ', 'KeyK'], through: ['KeyC', 'KeyI'], lob: ['KeyX', 'KeyL'],
-  switch: ['KeyQ', 'Tab'], slide: ['KeyE', 'KeyU'], finesse: ['KeyR', 'KeyO'], shield: ['KeyF', 'KeyP'], pause: ['Escape', 'KeyP'], curlL: ['KeyQ'], curlR: ['KeyE'],
+  skillUp: ['ArrowUp'], skillDown: ['ArrowDown'], skillLeft: ['ArrowLeft'], skillRight: ['ArrowRight'], skillMod: ['Space'],
+  sprint: ['ShiftLeft', 'ShiftRight'], pass: ['KeyK'], shoot: ['KeyL'], through: ['KeyI'], lob: ['KeyJ'],
+  switch: ['KeyU'], slide: ['KeyJ'], finesse: ['KeyO', 'Semicolon'], shield: ['KeyH'], pause: ['Escape', 'KeyP'],
 };
 type KeyAction = keyof typeof KEYS;
 
@@ -34,6 +40,9 @@ export class InputManager {
   aim: Vec2 = { x: 0, y: 0 }; // right stick
   sprint = new Button(); pass = new Button(); shoot = new Button(); through = new Button(); lob = new Button();
   switch = new Button(); slide = new Button(); finesse = new Button(); shield = new Button(); pause = new Button();
+  /** Space held on a keyboard: WASD is the skill stick for as long as it's down. */
+  skillMod = new Button();
+  private heldMove: Vec2 = { x: 0, y: 0 };
   /** The LB / L1 modifier for lofted through balls and chip shots (held LB or Q, or the touch Loft toggle). */
   loft = new Button();
   /** Free-kick curl from touch buttons: -1, 0, 1. */
@@ -88,6 +97,10 @@ export class InputManager {
     let sprint = this.key('sprint'), pass = this.key('pass'), shoot = this.key('shoot'), through = this.key('through'), lob = this.key('lob');
     let sw = this.key('switch'), slide = this.key('slide'), finesse = this.key('finesse'), shield = this.key('shield'), pause = this.keys.has('Escape');
     let ax = (this.key('skillRight') ? 1 : 0) - (this.key('skillLeft') ? 1 : 0), ay = (this.key('skillUp') ? 1 : 0) - (this.key('skillDown') ? 1 : 0);
+    // Space held: WASD flicks the skill stick, and he keeps running the way he was going
+    const skillHeld = this.key('skillMod'); this.skillMod.update(skillHeld, dt);
+    if (skillHeld) { if (!ax && !ay) { ax = mx; ay = my; } mx = this.heldMove.x; my = this.heldMove.y; }
+    else this.heldMove = { x: mx, y: my };
 
     // Gamepad
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];

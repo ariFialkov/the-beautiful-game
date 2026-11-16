@@ -4,7 +4,7 @@ import { app } from '../main';
 import { state, fmt, isTouchDevice } from '../app/state';
 import { api } from '../app/api';
 import { audio } from '../app/audio';
-import { el, button, controllerHint, freeKickHint, cycleToggle, CONTROL_OPTIONS } from '../ui/components';
+import { el, button, controllerHint, freeKickHint, cycleToggle, CONTROL_OPTIONS, keyboardDiagram } from '../ui/components';
 import { CAM_STYLES } from '../render/camera';
 import { crestSvg } from '../ui/crest';
 import { Match } from '../game/match';
@@ -110,6 +110,16 @@ export class MatchScreen implements Screen {
         case 'out': this.showToast(e.kind === 'throw' ? (futsal ? 'Kick-in' : 'Throw-in') : e.kind === 'corner' ? 'Corner' : 'Goal kick'); break;
       }
     });
+    // first match on a keyboard: the layout, for a few seconds (any action key or a click puts it away)
+    let seen = true; try { seen = localStorage.getItem('tbg.kbLayout2') === '1'; } catch { /* (storage blocked) */ }
+    if (!seen && !isTouchDevice()) {
+      const intro = el('div', 'kb-intro'); intro.appendChild(el('div', 'label', 'Keyboard controls')); intro.appendChild(keyboardDiagram(true));
+      intro.appendChild(el('div', 'small muted', 'Also in Settings and the pause menu'));
+      hud.appendChild(intro); try { localStorage.setItem('tbg.kbLayout2', '1'); } catch { /* */ }
+      const close = () => { intro.classList.add('hide'); setTimeout(() => intro.remove(), 400); window.removeEventListener('keydown', onKey); };
+      const onKey = (e: KeyboardEvent) => { if (['KeyK', 'KeyL', 'KeyI', 'KeyJ', 'Escape', 'Enter'].includes(e.code)) close(); };
+      window.addEventListener('keydown', onKey); intro.addEventListener('pointerdown', close); setTimeout(close, 9000);
+    }
     this.showBanner(`${home.short} <small>vs</small> ${match.teams[1].setup.short}<small>${futsal ? 'Indoor court' : home.stadium.name + ' · ' + match.surface.label}</small>`, 2.4);
   }
 
@@ -121,7 +131,7 @@ export class MatchScreen implements Screen {
     const m = this.match;
     if (this.view.replaying) {
       // any button skips the replay (pause included, so it doesn't open the menu)
-      if (input.pass.justPressed || input.shoot.justPressed || input.through.justPressed || input.lob.justPressed || input.pause.justPressed) this.view.endReplay();
+      if (input.pass.justPressed || input.shoot.justPressed || input.through.justPressed || input.lob.justPressed || input.skillMod.justPressed || input.pause.justPressed) this.view.endReplay();
       this.view.frame(dt, time);
       return;
     }
@@ -196,6 +206,7 @@ export class MatchScreen implements Screen {
     opts.appendChild(cycleToggle('Player switching', CONTROL_OPTIONS.switching, () => state.settings.controls.switching, (v) => { state.saveSettings({ controls: { ...state.settings.controls, switching: v } }); this.match.controls = { ...state.settings.controls }; }));
     card.appendChild(opts);
     card.appendChild(button('Settle & leave', 'danger', () => { this.togglePause(); this.onFullTime(true); }));
+    if (!isTouchDevice()) card.appendChild(keyboardDiagram(true)); // (the keyboard layout, under the buttons)
     modal.appendChild(card); this.root.appendChild(modal);
     focus.setRoot(card); focus.onBack = () => this.togglePause();
   }

@@ -117,7 +117,7 @@ export class FreeKickScreen implements Screen {
       game.update(dt, input, t);
       const a = game.aimScreen(); reticle.style.left = `${a.x}px`; reticle.style.top = `${a.y}px`; reticle.style.display = game.phase === 'aim' ? 'block' : 'none';
       if (game.charging) { power.classList.add('show'); (power.firstElementChild as HTMLElement).style.width = `${game.power * 100}%`; } else power.classList.remove('show');
-      const hint = hud.querySelector('.controls-hint')!; const txt = game.phase === 'aim' ? (touch ? 'Drag to aim · hold Shoot · curl buttons' : 'Aim: arrows / stick · Curl: Q/E or L1/R1 · Hold Z / Space / ○ to shoot') : ''; if (hint.textContent !== txt) hint.textContent = txt;
+      const hint = hud.querySelector('.controls-hint')!; const txt = game.phase === 'aim' ? (touch ? 'Drag to aim · hold Shoot · curl buttons' : 'Aim: WASD / stick · Curl: U / O or L1 / R1 · Hold L / ○ to shoot') : ''; if (hint.textContent !== txt) hint.textContent = txt;
       const cur = hud.querySelector('.curl')!; cur.querySelectorAll('.tbtn').forEach((b, i) => (b as HTMLElement).style.opacity = (i === 0 ? game.curl < -0.2 : game.curl > 0.2) ? '1' : '0.6');
       if (bannerT > 0) { bannerT -= dt; if (bannerT <= 0) banner.classList.remove('show'); }
       if (toastT > 0) { toastT -= dt; if (toastT <= 0) toast.classList.remove('show'); }

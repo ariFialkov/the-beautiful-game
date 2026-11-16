@@ -283,3 +283,24 @@ input[type=text], input[type=number], input[type=password], select { font: inher
 @keyframes load { to { transform: translateX(150%); } }
 .rotate-hint { position: absolute; inset: 0; display: none; place-items: center; background: var(--bg); z-index: 20; text-align: center; padding: 24px; }
 @media (orientation: portrait) and (max-width: 600px) { .rotate-hint.in-game { display: grid; } }
+
+/* keyboard layout diagram: keycaps where they sit, each with what it does */
+.kb-diagram { display: flex; gap: 22px; flex-wrap: wrap; justify-content: center; margin: 6px 0 10px; }
+.kb-hand { display: flex; flex-direction: column; gap: 6px; }
+.kb-title { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.kb-grid { display: grid; gap: 5px 6px; }
+.kb-grid.left { grid-template-columns: repeat(3, 58px); grid-template-areas: ". w ." "a s d" "shift space space"; }
+.kb-grid.right { grid-template-columns: repeat(4, 64px); grid-template-areas: ". u i o" "h j k l"; }
+.kb-key { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
+.kb-key kbd { min-width: 28px; padding: 4px 6px; font-size: 12px; font-weight: 700; background: rgba(255,255,255,0.14); }
+.kb-key span { font-size: 10px; line-height: 1.15; color: var(--text); }
+.kb-key small { display: block; font-size: 9px; color: var(--muted); }
+.kb-key.w { grid-area: w; } .kb-key.a { grid-area: a; } .kb-key.s { grid-area: s; } .kb-key.d { grid-area: d; } .kb-key.shift { grid-area: shift; } .kb-key.space { grid-area: space; }
+.kb-key.space kbd { min-width: 90px; }
+.kb-key.u { grid-area: u; } .kb-key.i { grid-area: i; } .kb-key.o { grid-area: o; } .kb-key.h { grid-area: h; } .kb-key.j { grid-area: j; } .kb-key.k { grid-area: k; } .kb-key.l { grid-area: l; }
+.kb-key.k kbd, .kb-key.l kbd { background: rgba(25, 245, 164, 0.22); border-color: rgba(25, 245, 164, 0.5); }
+.kb-diagram.compact { gap: 16px; margin: 4px 0; }
+.kb-diagram.compact .kb-grid.left { grid-template-columns: repeat(3, 50px); } .kb-diagram.compact .kb-grid.right { grid-template-columns: repeat(4, 56px); }
+.hud .kb-intro { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 18px 12px; border-radius: 12px; background: rgba(8, 14, 28, 0.88); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: auto; transition: opacity 0.35s; z-index: 5; }
+.hud .kb-intro.hide { opacity: 0; }
+.modal.pause .card { max-height: 94vh; overflow-y: auto; }

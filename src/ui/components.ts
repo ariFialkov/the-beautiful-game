@@ -93,7 +93,26 @@ export function controllerHint(): string {
   const l = input.buttonLabels();
   return input.lastSource === 'gamepad' ? `${l.pass} Pass (${l.finesse}+ driven, ×2 bounce) · ${l.shoot} Shoot (${l.switch}+ chip) · ${l.through} Through (${l.switch}+ lofted, ×2 bounce) · ${l.lob} Cross (tap floated, hold driven) · ${l.sprint} Sprint · R-stick skills`
     : input.lastSource === 'touch' ? 'Drag to move · swipe right side for skills · Finesse+Pass driven · Loft+Shoot chip · Loft+Through lofted · double-tap Pass/Through bounce'
-    : 'WASD move · Space pass (R+ driven, ×2 bounce) · Z shoot (Q+ chip, R+ finesse, ZZ low) · C through (Q+ lofted, ×2 bounce) · X cross (tap floated, hold driven) · Shift sprint · Q switch · Arrows skill moves';
+    : 'WASD move · Shift sprint · Space+WASD skills · K pass (O+ driven) · L shoot (U+ chip, O+ finesse) · I through (U+ lofted) · J cross · U switch · H shield';
+}
+
+/** The keyboard layout at a glance: the left hand's keys and the right hand's diamond, each with what it does
+ *  (attacking / defending), drawn as keycaps where they sit on the keyboard. */
+export function keyboardDiagram(compact = false): HTMLElement {
+  const wrap = el('div', `kb-diagram${compact ? ' compact' : ''}`);
+  const key = (k: string, label: string, sub = '', cls = '') => `<div class="kb-key ${cls}"><kbd>${k}</kbd><span>${label}${sub ? `<small>${sub}</small>` : ''}</span></div>`;
+  wrap.innerHTML = `
+    <div class="kb-hand"><div class="kb-title">Left hand · move</div>
+      <div class="kb-grid left">
+        ${key('W', '', '', 'w')}${key('A', '', '', 'a')}${key('S', 'Move', '', 's')}${key('D', '', '', 'd')}
+        ${key('Shift', 'Sprint', '', 'shift')}${key('Space', 'Hold + WASD', 'skill moves', 'space')}
+      </div></div>
+    <div class="kb-hand"><div class="kb-title">Right hand · play</div>
+      <div class="kb-grid right">
+        ${key('U', 'Switch', 'hold: loft', 'u')}${key('I', 'Through', '', 'i')}${key('O', 'Finesse', 'driven pass', 'o')}
+        ${key('H', 'Shield', '', 'h')}${key('J', 'Cross', 'slide tackle', 'j')}${key('K', 'Pass', 'contain', 'k')}${key('L', 'Shoot', 'tackle', 'l')}
+      </div></div>`;
+  return wrap;
 }
 
 /** Controls while lining up a free kick (direct: aim on the goal; otherwise a direction to play it). */
@@ -101,7 +120,7 @@ export function freeKickHint(direct: boolean): string {
   const l = input.buttonLabels(); const aim = direct ? 'aim' : 'direction';
   return input.lastSource === 'gamepad' ? `Stick ${aim} · ${l.switch}/${l.finesse} curl · Hold ${l.shoot} power, release to strike · ${l.pass} Pass · ${l.lob} Cross`
     : input.lastSource === 'touch' ? `Drag to ${direct ? 'aim' : 'turn'} · Hold Curl to bend · Hold Shoot for power · Pass / Cross to play it short`
-    : `WASD ${aim} · Q / E curl · Hold Z for power, release to strike · Space pass · X cross · C through`;
+    : `WASD ${aim} · U / O curl · Hold L for power, release to strike · K pass · J cross · I through`;
 }
 
 /** A settings toggle that cycles through options on click (works with the focus/gamepad navigation). */
