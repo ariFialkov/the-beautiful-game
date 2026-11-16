@@ -126,6 +126,13 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.02em; margin: 0
 .paytable td:last-child { text-align: right; font-weight: 800; color: var(--gold); }
 .paytable tr.loss td:last-child { color: var(--muted); }
 .error { color: var(--danger); font-size: 13px; font-weight: 700; }
+.pays summary { cursor: pointer; list-style: none; }
+.pays summary::-webkit-details-marker { display: none; }
+.pays summary::after { content: ' ▾'; }
+.pays[open] summary::after { content: ' ▴'; }
+.pays .paytable { margin-top: 6px; }
+/* setup's side column: the matchup, then the stake and Play, then the conditions - Play in reach without scrolling */
+.setup-layout .side-pane > .versus { order: 1; } .setup-layout .side-pane > .panel:last-child { order: 2; } .setup-layout .side-pane > .panel:not(.versus):not(:last-child) { order: 3; }
 
 /* ---------- match HUD ---------- */
 .hud { position: absolute; inset: 0; pointer-events: none; }
@@ -159,21 +166,6 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.02em; margin: 0
 .hud .controls-hint { position: absolute; bottom: calc(10px + var(--safe-b)); left: 50%; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,0.6); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
 
 /* ---------- touch controls ---------- */
-.touch { position: absolute; inset: 0; pointer-events: none; display: none; }
-.touch.on { display: block; }
-.touch .joy-zone { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; pointer-events: auto; }
-.touch .joy { position: absolute; width: 120px; height: 120px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(255,255,255,0.06); transform: translate(-50%, -50%); display: none; }
-.touch .joy i { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; border-radius: 50%; background: rgba(255,255,255,0.7); transform: translate(-50%, -50%); }
-.touch .buttons { position: absolute; right: calc(16px + var(--safe-r)); bottom: calc(16px + var(--safe-b)); width: 210px; height: 210px; pointer-events: auto; }
-.touch .tbtn { position: absolute; width: 66px; height: 66px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.4); background: rgba(10, 22, 44, 0.6); color: #fff; font-family: var(--font-display); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; display: grid; place-items: center; text-align: center; line-height: 1; backdrop-filter: blur(4px); }
-.touch .tbtn.pressed { background: var(--accent); color: #06202a; border-color: var(--accent); }
-.touch .tbtn.pass { right: 72px; bottom: 0; } .touch .tbtn.shoot { right: 0; bottom: 72px; } .touch .tbtn.through { right: 144px; bottom: 72px; } .touch .tbtn.lob { right: 72px; bottom: 144px; }
-.touch .tfin { position: absolute; right: 2px; bottom: 150px; width: 54px; height: 30px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.35); background: rgba(10, 22, 44, 0.55); color: rgba(255,255,255,0.85); font-family: var(--font-display); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; pointer-events: auto; }
-.touch .skill-zone { position: absolute; right: 0; top: calc(130px + var(--safe-t)); width: 45%; bottom: calc(230px + var(--safe-b)); pointer-events: auto; touch-action: none; }
-.touch .tcurl { position: absolute; left: 50%; bottom: calc(84px + var(--safe-b)); transform: translateX(-50%); display: none; gap: 10px; pointer-events: auto; }
-.touch .tcurl.on { display: flex; }
-.touch .tcurl button { height: 40px; padding: 0 16px; border-radius: 20px; border: 2px solid rgba(255,255,255,0.4); background: rgba(10, 22, 44, 0.6); color: #fff; font-family: var(--font-display); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
-.touch .tcurl button.pressed { background: var(--accent); color: #06202a; border-color: var(--accent); }
 .hud .replay-tag { position: absolute; inset: 0; display: none; pointer-events: auto; }
 .hud.replaying .replay-tag { display: block; }
 .hud .replay-tag b { position: absolute; left: calc(18px + var(--safe-l)); top: calc(64px + var(--safe-t)); font-family: var(--font-display); font-size: 15px; letter-spacing: 0.3em; color: #fff; background: rgba(10, 22, 44, 0.7); border-left: 3px solid var(--accent); padding: 6px 12px; }
@@ -204,14 +196,9 @@ h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.02em; margin: 0
 .hud .fk-curl::before { content: ''; position: absolute; left: 50%; top: -3px; width: 1px; height: 12px; background: rgba(255,255,255,0.5); }
 .hud .fk-curl i { position: absolute; top: -3px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); left: 50%; }
 .hud .fk-curl-label { font-size: 10px; color: rgba(255,255,255,0.7); letter-spacing: 0.1em; text-transform: uppercase; }
-.touch .tloft { position: absolute; right: 60px; bottom: 150px; width: 48px; height: 30px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.35); background: rgba(10, 22, 44, 0.55); color: rgba(255,255,255,0.85); font-family: var(--font-display); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; pointer-events: auto; }
-.touch .tloft.on { background: var(--gold); color: #1b1300; border-color: var(--gold); }
-.touch .tfin.on { background: var(--accent); color: #06202a; border-color: var(--accent); }
-.touch .tbtn.sprint { left: calc(16px + var(--safe-l)); bottom: calc(16px + var(--safe-b)); position: absolute; pointer-events: auto; width: 74px; height: 74px; }
-.touch .tbtn.switch { right: calc(16px + var(--safe-r)); top: calc(64px + var(--safe-t)); position: absolute; pointer-events: auto; width: 56px; height: 56px; font-size: 10px; }
 
 /* ---------- pause / results ---------- */
-.modal { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(7, 16, 31, 0.8); backdrop-filter: blur(6px); }
+.modal { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(7, 16, 31, 0.8); backdrop-filter: blur(6px); }
 .modal .card { width: min(520px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; }
 .result-hero { text-align: center; padding: 10px 0 16px; }
 .result-hero h2 { font-size: 36px; }
@@ -304,3 +291,123 @@ input[type=text], input[type=number], input[type=password], select { font: inher
 .hud .kb-intro { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 14px 18px 12px; border-radius: 12px; background: rgba(8, 14, 28, 0.88); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: auto; transition: opacity 0.35s; z-index: 5; }
 .hud .kb-intro.hide { opacity: 0; }
 .modal.pause .card { max-height: 94vh; overflow-y: auto; }
+
+/* ---------- touch controls: a floating stick and four buttons ---------- */
+.touch { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 2; }
+.touch.on { display: block; }
+.touch .joy-zone { position: absolute; left: 0; top: calc(56px + var(--safe-t)); bottom: 0; width: 46%; pointer-events: auto; touch-action: none; }
+.touch .joy-rest { position: absolute; left: calc(26px + var(--safe-l)); bottom: calc(26px + var(--safe-b)); width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.16); background: radial-gradient(circle, rgba(255,255,255,0.1) 0 22%, transparent 23%); transition: opacity 0.2s; }
+.touch .joy-zone.active .joy-rest { opacity: 0; }
+.touch .joy { position: absolute; width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.32); background: rgba(255,255,255,0.05); transform: translate(-50%, -50%); display: none; }
+.touch .joy.on { display: block; }
+.touch .joy b { position: absolute; left: 50%; top: 50%; width: 132px; height: 132px; border-radius: 50%; border: 1px dashed rgba(255,255,255,0.18); transform: translate(-50%, -50%); transition: border-color 0.12s, background 0.12s; }
+.touch .joy.sprint b { border: 2px solid var(--accent); background: rgba(25, 245, 164, 0.08); }
+.touch .joy i { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.75); transform: translate(-50%, -50%); }
+.touch .joy.sprint i { background: var(--accent); }
+.touch .skill-zone { position: absolute; right: 0; top: calc(56px + var(--safe-t)); bottom: 0; width: 54%; pointer-events: auto; touch-action: none; }
+.touch .tpad { position: absolute; right: calc(10px + var(--safe-r)); bottom: calc(10px + var(--safe-b)); width: 170px; height: 160px; pointer-events: none; }
+.touch .tb { position: absolute; display: grid; place-items: center; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.32); background: rgba(8, 16, 32, 0.42); color: rgba(255,255,255,0.92); backdrop-filter: blur(3px); pointer-events: auto; touch-action: none; padding: 0; transition: transform 0.06s, background 0.1s; }
+.touch .tb span { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; line-height: 1; }
+.touch .tb em { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--gold); white-space: nowrap; text-shadow: 0 1px 4px rgba(0,0,0,0.7); }
+.touch .tb.pressed { background: rgba(25, 245, 164, 0.85); color: #06202a; border-color: var(--accent); transform: scale(0.94); }
+.touch .tb.mod { background: rgba(247, 201, 72, 0.9); border-color: var(--gold); }
+.touch .tb.shoot { right: 0; bottom: 14px; width: 66px; height: 66px; }
+.touch .tb.shoot span { font-size: 11px; }
+.touch .tb.pass { right: 76px; bottom: 0; width: 56px; height: 56px; }
+.touch .tb.through { right: 8px; bottom: 92px; width: 50px; height: 50px; }
+.touch .tb.lob { right: 80px; bottom: 70px; width: 46px; height: 46px; }
+.touch .tb.through span, .touch .tb.lob span { font-size: 9px; }
+.touch.defending .tb { border-color: rgba(255, 140, 140, 0.4); }
+.touch .tcurl { position: absolute; left: 50%; bottom: calc(12px + var(--safe-b)); transform: translateX(-50%); display: none; gap: 10px; pointer-events: auto; }
+.touch .tcurl.on { display: flex; }
+.touch .tcurl button { height: 38px; padding: 0 16px; border-radius: 19px; border: 1.5px solid rgba(255,255,255,0.35); background: rgba(8, 16, 32, 0.5); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; touch-action: none; }
+.touch .tcurl button.pressed { background: var(--accent); color: #06202a; border-color: var(--accent); }
+/* the match HUD around the touch controls: nothing the thumbs don't need */
+.touch-ui .hud .controls-hint, .touch-ui .hud .stake-tag { display: none; }
+.fk-on .hud .minimap { display: none; }
+.touch-ui .hud .power { width: 120px; }
+
+/* ---------- phones in landscape (and other short screens): compact, contained, scrollable ---------- */
+@media (max-height: 520px) {
+  .screen { padding: calc(6px + var(--safe-t)) calc(12px + var(--safe-r)) calc(6px + var(--safe-b)) calc(12px + var(--safe-l)); overflow-y: auto; touch-action: pan-y; }
+  .topbar { height: 40px; gap: 8px; }
+  .brand { font-size: 14px; }
+  .wallet { padding: 4px 10px; font-size: 12px; }
+  .btn { padding: 8px 14px; font-size: 13px; min-height: 38px; }
+  .btn.big { padding: 11px 18px; font-size: 15px; }
+  .panel { padding: 10px 12px; border-radius: 12px; }
+  .col { gap: 8px; }
+  h2 { font-size: 20px; }
+  /* home: everything on one screen, the four modes in a grid */
+  .home-hero { margin: 0 0 8px; }
+  .home-hero h1 { font-size: 22px; line-height: 1; }
+  .home-hero h1 br { display: none; }
+  .home-hero h1 span { margin: 0 0.25em; }
+  .home-hero p { display: none; }
+  .home-menu { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: min(620px, 100%); margin: 0; }
+  .mode-card { padding: 9px 10px; gap: 10px; border-radius: 12px; }
+  .mode-card .icon { width: 38px; height: 38px; font-size: 14px; border-radius: 10px; }
+  .mode-card .title { font-size: 14px; }
+  .mode-card .sub { font-size: 11px; line-height: 1.25; }
+  .mode-card:hover, .mode-card.focused { transform: none; }
+  .home-footer { display: none; }
+  .tape .decal, .tape .scoreline { display: none; }
+  .tape .ticker { height: 22px; font-size: 10px; }
+  .tape .letterbox { height: 22px; }
+  /* setup: two columns that scroll on their own; the stake and Play stay in reach */
+  .setup-layout { grid-template-columns: 1fr minmax(240px, 300px); gap: 10px; min-height: 0; overflow: hidden; }
+  .setup-layout .teams-pane, .setup-layout .side-pane { overflow-y: auto; touch-action: pan-y; gap: 8px; }
+  .setup-layout .side-pane { order: 0; }
+  .league-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; touch-action: pan-x; }
+  .league-tabs::-webkit-scrollbar { display: none; }
+  .chip { white-space: nowrap; padding: 5px 10px; font-size: 11px; }
+  .grid-teams { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+  .team-card { padding: 7px 4px; gap: 3px; }
+  .team-card .crest { width: 34px; height: 34px; }
+  .team-card .name { font-size: 11px; }
+  .versus { padding: 8px 10px; }
+  .versus .slot .crest, .versus svg { width: 38px; height: 38px; }
+  .versus .slot .name { font-size: 11px; }
+  .versus .vs { font-size: 14px; }
+  .stakes { gap: 4px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; } .stake { padding: 6px 9px; font-size: 12px; flex: 0 0 auto; }
+  .stakes::-webkit-scrollbar { display: none; }
+
+  .paytable { font-size: 11px; } .paytable td { padding: 3px 4px; }
+  .fut-layout { grid-template-columns: minmax(240px, 320px) 1fr; gap: 10px; }
+  .settings-grid { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 8px; }
+  .toggle { padding: 7px 10px; font-size: 12px; }
+  /* pause and results: compact cards that fit */
+  .modal .card { width: min(560px, calc(100% - 24px)); max-height: calc(100% - 16px); padding: 12px 14px; touch-action: pan-y; }
+  .modal.pause .card h2 { font-size: 18px; }
+  .modal.pause .pause-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .result-hero { padding: 2px 0 6px; }
+  .result-hero h2 { font-size: 22px; } .result-hero .score { font-size: 18px; } .result-hero .big { font-size: 30px; }
+  /* the match HUD: a slim scoreboard, smaller banners and pop-ups */
+  .hud .scoreboard { height: 30px; top: calc(6px + var(--safe-t)); border-radius: 6px; }
+  .hud .scoreboard .team { font-size: 12px; min-width: 64px; padding: 0 8px; gap: 5px; }
+  .hud .scoreboard .team svg { width: 16px; height: 16px; }
+  .hud .scoreboard .score { font-size: 15px; padding: 0 10px; gap: 6px; }
+  .hud .scoreboard .clock { font-size: 12px; min-width: 52px; padding: 0 8px; }
+  .hud .scoreboard .added { font-size: 11px; padding: 0 6px; }
+  .hud .stake-tag { display: none; }
+  .hud .pausebtn .btn { min-height: 30px; padding: 4px 10px; }
+  .hud .shootout-tally { top: calc(40px + var(--safe-t)); }
+  .hud .card-pop { padding: 8px 12px; gap: 10px; } .hud .card-pop i { width: 20px; height: 28px; } .hud .card-pop b { font-size: 12px; }
+  .hud .toast { font-size: 11px; padding: 6px 12px; }
+  .hud .controls-hint { font-size: 9px; }
+  .kb-diagram { transform: scale(0.85); transform-origin: top center; }
+  .hud .banner { font-size: clamp(24px, 6vw, 46px); top: 30%; }
+}
+/* the one-time touch guide */
+.hud .touch-intro { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); width: min(520px, calc(100% - 300px)); min-width: 280px; padding: 12px 16px; border-radius: 12px; background: rgba(8, 14, 28, 0.9); pointer-events: auto; z-index: 5; transition: opacity 0.35s; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12px; line-height: 1.3; }
+.hud .touch-intro.hide { opacity: 0; }
+.hud .touch-intro .label { grid-column: 1 / -1; }
+.hud .touch-intro b { color: var(--accent); white-space: nowrap; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+.hud .touch-intro .small { grid-column: 1 / -1; text-align: center; }
+
+/* the Free Kick duel's touch buttons, in the same style as the match's */
+.fk-hud .tbtn { display: grid; place-items: center; border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.32); background: rgba(8, 16, 32, 0.42); color: rgba(255,255,255,0.92); backdrop-filter: blur(3px); font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; touch-action: none; padding: 0; }
+.fk-hud .tbtn.pressed { background: rgba(25, 245, 164, 0.85); color: #06202a; border-color: var(--accent); }
+.fk-hud .shootbtn { width: 72px; height: 72px; right: calc(16px + var(--safe-r)); bottom: calc(16px + var(--safe-b)); }
+.fk-hud .curl { left: calc(16px + var(--safe-l)); bottom: calc(16px + var(--safe-b)); }
+.fk-hud .curl .tbtn { width: auto; height: 38px; padding: 0 14px; border-radius: 19px; font-size: 11px; }

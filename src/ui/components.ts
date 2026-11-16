@@ -70,7 +70,8 @@ export function betPanel(mode: GameMode, onStart: (stake: number) => void, start
   const renderStakes = () => { stakesEl.innerHTML = ''; for (const s of stakes) { const b = el('button', `stake${s === state.stake ? ' active' : ''}`, fmt(s)); b.setAttribute('data-focus', ''); b.addEventListener('click', () => { state.stake = s; state.saveTeams(); renderStakes(); }); stakesEl.appendChild(b); } };
   renderStakes();
   p.appendChild(stakesEl);
-  if (cfg) { p.appendChild(el('div', 'label', `Pays · RTP ${(cfg.modes[mode].rtp * 100).toFixed(1)}%`)); p.appendChild(paytableTable(cfg.modes[mode])); }
+  // what it pays: open on a roomy screen, folded away (a tap to open) on a short phone screen
+  if (cfg) { const d = el('details', 'pays'); d.open = window.innerHeight > 820; d.innerHTML = `<summary class="label">Pays · RTP ${(cfg.modes[mode].rtp * 100).toFixed(1)}%</summary>`; d.appendChild(paytableTable(cfg.modes[mode])); p.appendChild(d); }
   const err = el('div', 'error'); p.appendChild(err);
   const start = button(startLabel, 'primary big'); start.setAttribute('data-focus', 'default');
   start.addEventListener('click', () => onStart(state.stake));

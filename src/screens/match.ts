@@ -77,6 +77,20 @@ export class MatchScreen implements Screen {
     root.appendChild(hud);
     const showTouch = state.settings.showTouch === 'on' || (state.settings.showTouch === 'auto' && isTouchDevice());
     if (showTouch) { this.touch = new TouchControls(root); this.touch.show(true); }
+    // first match on touch: the gestures, for a few seconds (a tap puts it away)
+    let seenTouch = true; try { seenTouch = localStorage.getItem('tbg.touchIntro2') === '1'; } catch { /* (storage blocked) */ }
+    if (showTouch && !seenTouch) {
+      const g = el('div', 'touch-intro');
+      g.innerHTML = `<div class="label">Touch controls</div>
+        <b>Left thumb</b><span>Drag anywhere on the left to move · push into the outer ring to sprint</span>
+        <b>Right thumb</b><span>Shoot · Pass · Through · Cross (defending: Tackle · Press · Switch · Slide)</span>
+        <b>Slide on a button</b><span>Shoot up: chip · Shoot sideways: finesse · Through up: lofted · Pass: driven</span>
+        <b>Skills</b><span>Swipe on the open right side of the screen</span>
+        <div class="small muted">Tap to start</div>`;
+      hud.appendChild(g); try { localStorage.setItem('tbg.touchIntro2', '1'); } catch { /* */ }
+      const close = () => { g.classList.add('hide'); setTimeout(() => g.remove(), 400); };
+      g.addEventListener('pointerdown', close); setTimeout(close, 10000);
+    }
     const rot = el('div', 'rotate-hint in-game', `<div><h2>Rotate your device</h2><p class="muted">The Beautiful Game plays in landscape.</p></div>`); root.appendChild(rot);
 
     match.on((e) => {

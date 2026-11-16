@@ -69,7 +69,7 @@ async function boot() {
   }
   loading.remove();
   // Opt-in debug handle for automated browser checks: open the game with ?debug in the URL.
-  if (new URLSearchParams(location.search).has('debug')) (window as any).__tbg = app;
+  if (new URLSearchParams(location.search).has('debug')) { (window as any).__tbg = app; (window as any).__tbgInput = input; }
   app.router.go('home');
   // Keep the wallet fresh when returning to the app.
   document.addEventListener('visibilitychange', () => { if (!document.hidden) api.wallet().then((w) => { state.wallet = w.wallet; state.nextServerSeedHash = w.nextServerSeedHash; state.offline = false; state.emit(); }).catch(() => {}); });

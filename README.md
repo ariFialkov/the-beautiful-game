@@ -100,9 +100,9 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Through balls:** fully weighted for you. The game searches 5–14 m into the space ahead of the runner for the spot he'll win the race to, and the ball reaches it just before him, still rolling at 5 m/s or more (never a crawler), so he runs onto it in his stride. Hold through ball for power and release to play it: with two runners the same way, the power picks between them, a short hold for the nearer man and a long hold for the one further on (the same rule as crosses).
   - **Crosses and lofted passes:** they land on the team-mate in the general direction you aim (the stick nudges the exact spot by a metre or two). With two team-mates that way, the power picks between them: a harder cross finds the further man. The hold also sets the ball's shape: a tap floats it in high, a long hold drives it in flat and hard. The pace for that shape is found by simulating the flight (drag and spin included), and the receiver is led using the real flight time.
   - **Finishing crosses is up to you:** the player you control only heads or volleys a cross at goal if you press shoot (held for power) as it comes; pass heads it on to a team-mate; with nothing pressed he cushions it down or traps it. This goes for every ball in the air from your own side (crosses, passes, a weak or finesse shot that's lost its pace) and for any high ball in the attacking third: control switches to whichever team-mate is meeting it, and nobody heads or volleys it at goal for you. A press you made for the intended receiver carries over to him. Headers jump as high as the ball needs, timed to meet it.
-  - **Driven pass:** RB/R1 + pass (R + Space; Finesse + Pass on touch) fizzes it along the floor at 13-18 m/s, quicker to cut through but a touch less accurate. Over longer distances (beyond about 26 m) it's struck low and hard, landing about 60% of the way and skidding on with topspin: 40 m in about 1.3 s, never above about a metre. Ground passes are firmer by default (6-13.5 m/s at the receiver).
+  - **Driven pass:** RB/R1 + pass (O + K on a keyboard; on touch, slide your thumb on Pass) fizzes it along the floor at 13-18 m/s, quicker to cut through but a touch less accurate. Over longer distances (beyond about 26 m) it's struck low and hard, landing about 60% of the way and skidding on with topspin: 40 m in about 1.3 s, never above about a metre. Ground passes are firmer by default (6-13.5 m/s at the receiver).
   - **Bounce pass:** double-tap pass for a pass clipped low with topspin that hops over legs and skips on to its man; double-tap through ball for the same into a runner's path. (The second tap converts the pass before it's struck, so a single pass isn't delayed.)
-  - **Lofted through ball:** LB/L1 + through ball (Q + C; Loft + Through on touch) floats it over the defence into the runner's path.
+  - **Lofted through ball:** LB/L1 + through ball (U + I on a keyboard; on touch, slide Through up) floats it over the defence into the runner's path.
   - **In flight:** nothing. The ball flies with pure physics: the pass is solved up front for the receiver's run (from his current velocity), and if he changes direction he comes back to the ball rather than the ball bending to him. A badly hit pass can still go astray, and teammates let a pass meant for someone else run through.
   - **First time:** press pass, through ball, cross or shoot while a pass is still on its way and it's queued: the receiver plays it first time the moment the ball arrives (quick one-twos, one-touch passing moves and one-timers), with the target picked from where everyone is at that moment.
   - **Receiving:** the receiver is helped onto the ball while the stick is neutral, still held the way you passed, or pointing roughly where it's going. Push the stick a new way to take over.
@@ -140,12 +140,19 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Layer 3 (three directions):** a side, forward, then the other side for an elastico (out with the outside of the foot, snapped back in with the inside); back, round, then forward for a rainbow flick over his own head.
   - **How they move:** each move is keyframed in the player's frame: the body's path and turn, both feet, the lean and crouch, and the ball's path until the touch that releases it. The body and ball follow those paths with real velocities, so tackles and everything else see them move, and the animation blends in and out of the run so moves flow into each other and back into the dribble. Moves chain: hold the stick to keep rolling it.
   - **Bots:** skilful dribblers closed down now and then try a feint, stepover, roulette or drag back on the defender.
+- **Touch (phones and tablets):** a floating joystick and four buttons, nothing else.
+  - **Left thumb:** the joystick appears wherever you touch on the left (a faint ring shows where it lives). Push past it into the outer ring to sprint.
+  - **Right thumb:** Shoot, Pass, Through and Cross in an arc around the corner. Defending, they become Tackle, Press (hold to contain), Switch and Slide.
+  - **Modifiers by sliding:** instead of extra buttons, slide your thumb on a button while you hold it. Shoot slid up is a chip, slid sideways a finesse shot; Through slid up is lofted; Pass slid any way is driven. A label above the button shows which. Double-tap Pass or Through for the bounce versions.
+  - **Skills and free kicks:** swipe on the open right side of the screen for skill moves. At free kicks, two curl buttons appear and the minimap steps aside.
+  - **The guide:** a short guide to all this shows at the start of your first match on touch.
+  - **The screen:** the HUD stays out of the way: a slim scoreboard and pause button, no stake tag or desktop hints. On short (phone) screens every menu fits or scrolls: the home screen's four modes sit in a grid, setup puts the stake and Play right under the matchup (the payout table folds away behind "Pays"), and the pause and results cards are compact.
 - **Keyboard (two-handed, like a controller):** your left hand moves and your right hand plays.
   - **Left hand:** WASD move, Shift sprint, and hold Space to turn WASD into the skill stick; your player keeps running the way he was going while you flick, and the arrow keys work as a skill stick too.
   - **Right hand:** the face buttons sit on I J K L in the same diamond as a pad: K pass (A), L shoot (B), I through ball (Y), J cross (X). U and O are the bumpers above them: U switch player, held as the loft modifier (LB); O finesse and driven (RB, `;` also works). H shields (LT).
   - **Where to see it:** a diagram of the layout is in Settings and the pause menu, and it's shown at kick-off in your first match on a keyboard. Keys are read by physical position, so the layout is the same on any keyboard language.
 - **Finishing (assisted shooting):** the stick says which side of the keeper; the shot is drawn toward that corner (strongly in front of goal, less from range, less on Semi). In front of goal (inside about 20 m) a shot roughly toward goal is kept on target. With the stick centred it goes for the corner with the most room past the keeper from where it's struck.
-- **Chip shot:** LB/L1 + shoot (Q + Z; Loft + Shoot on touch) scoops it up over the keeper with backspin to drop under the bar; more power carries it further.
+- **Chip shot:** LB/L1 + shoot (U + L on a keyboard; on touch, slide Shoot up) scoops it up over the keeper with backspin to drop under the bar; more power carries it further.
 - **Free kicks:** taken FIFA style, not automatically. The camera cuts to just behind the ball, over the taker's shoulder, and stays on the strike for a moment before blending back to the match camera.
   - **The wall:** sized by the danger. Close in and central (inside about 21 m) there's a full wall of five, then four, three and two further out, fewer at an angle, and a short wall of two in crossing positions. A free kick that can only be passed has no wall. The wall forms at the full distance (9.15 m; 5 m in futsal) with its end man covering the near post, holds its line, and jumps together when the ball is struck. The keeper sets on the line, shaded to the side the wall doesn't cover, and the attacking side's forwards gather in the box for the rebound.
   - **Taking it:** in shooting range, the stick moves an aim marker on the goal; LB / RB (U / O on keyboard, the Curl buttons on touch) set how much it bends, shown on the curl meter; hold shoot for power and release to strike. The ball is struck at the aim with that pace and curl through the real ball physics, so you bend it round the wall or dip it over. Overhit it and it rises over the bar, and errors grow with power and curl. Pass, through ball and cross play it short instead. Further out, the stick turns the direction you're facing to play it. There's no rush: auto-pilot doesn't step in for 20 seconds.
@@ -166,19 +173,19 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 
 | Action | Keyboard | PS5 / Xbox | Touch |
 | --- | --- | --- | --- |
-| Move | WASD | Left stick / D-pad | Left joystick |
-| Sprint | Shift | R2 / RT | Sprint |
-| Skill moves | Hold Space + WASD (or Arrows) | Right stick | Swipe right side |
+| Move | WASD | Left stick / D-pad | Joystick (anywhere on the left) |
+| Sprint | Shift | R2 / RT | Push the joystick into its outer ring |
+| Skill moves | Hold Space + WASD (or Arrows) | Right stick | Swipe the open right side |
 | Pass · Contain (defending) | K | ✕ / A | Pass |
-| Driven pass | O + K | R1 + ✕ / RB + A | Finesse, then Pass |
+| Driven pass | O + K | R1 + ✕ / RB + A | Slide your thumb on Pass |
 | Power shot (hold for power) · Standing tackle at the ball | L | ○ / B | Shoot |
 | Low driven shot: tap, then hold | L, L | ○, ○ / B, B | Shoot, Shoot |
-| Finesse shot: hold with shoot (curls in, against your run) | O + L | R1 + ○ / RB + B | Finesse (tap to arm) |
-| Chip shot | U + L | L1 + ○ / LB + B | Loft, then Shoot |
-| Through ball (lofted: U + I) | I | △ / Y | Through |
+| Finesse shot: hold with shoot (curls in, against your run) | O + L | R1 + ○ / RB + B | Slide Shoot sideways |
+| Chip shot | U + L | L1 + ○ / LB + B | Slide Shoot up |
+| Through ball (lofted: U + I) | I | △ / Y | Through (slide up: lofted) |
 | Cross / lofted pass · Slide tackle (defending) | J | □ / X | Cross · Slide |
 | Shield (hold) | H | L2 / LT | — |
-| Switch player | U | L1 / LB | Switch |
+| Switch player | U | L1 / LB | Switch (Through's place, defending) |
 | Free-kick aim / curl | WASD · U / O | Left stick · L1 / R1 | Drag · curl buttons |
 | Pause | Esc / P | Options / Menu | ⏸ |
 | Menus | Arrows · Enter · Esc | D-pad · ✕/A · ○/B | Tap |

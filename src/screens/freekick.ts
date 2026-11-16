@@ -41,7 +41,7 @@ export class FreeKickScreen implements Screen {
     teams.appendChild(teamPicker(state.homeTeamId, (id) => { state.homeTeamId = id; if (state.awayTeamId === id) state.awayTeamId = TEAMS.find((t) => t.id !== id)!.id; state.saveTeams(); this.updateShowcase(); }));
     const sidePane = el('div', 'side-pane');
     const info = el('div', 'panel col');
-    info.innerHTML = `<div class="label">How it works</div><p class="small muted">A random free-kick situation is set up. You shoot first; a rival from <b>${TEAM_BY_ID[state.awayTeamId].name}</b> answers. Score when they miss and you win the duel. Both score or both miss and it goes again.</p><p class="small muted">Aim with the stick / arrows / drag · hold Shoot for power · Curl with Q/E, L1/R1 or the curl buttons.</p>`;
+    info.innerHTML = `<div class="label">How it works</div><p class="small muted">A random free-kick situation is set up. You shoot first; a rival from <b>${TEAM_BY_ID[state.awayTeamId].name}</b> answers. Score when they miss and you win the duel. Both score or both miss and it goes again.</p><p class="small muted">Aim with WASD, the stick or a drag · hold Shoot (L, ○ or the Shoot button) for power · curl with U / O, L1 / R1 or the curl buttons.</p>`;
     sidePane.appendChild(info);
     const bet = betPanel('freekick', async (stake) => {
       bet.setError(''); bet.setBusy(true);
@@ -75,7 +75,7 @@ export class FreeKickScreen implements Screen {
       <div class="reticle"></div><div class="banner"></div><div class="toast"></div><div class="power"><i></i></div><div class="controls-hint"></div>
       <div class="aimpad"></div>
       <div class="curl"><button class="tbtn" data-c="-1">Curl ◀</button><button class="tbtn" data-c="1">Curl ▶</button></div>
-      <button class="tbtn shootbtn" style="width:92px;height:92px;font-size:14px">Shoot</button>
+      <button class="tbtn shootbtn">Shoot</button>
       <div class="pausebtn"></div>`;
     hud.querySelector('.pausebtn')!.appendChild(button('✕', 'small', () => this.finish(true)));
     this.root.appendChild(hud);

@@ -84,7 +84,7 @@ export class InputManager {
   setTouchMove(x: number, y: number) { this.touchState.move.x = x; this.touchState.move.y = y; this.touchState.active = true; this.lastSource = 'touch'; }
   /** The touch skill stick: a swipe on the right of the screen. */
   setTouchAim(x: number, y: number) { this.touchState.aim.x = x; this.touchState.aim.y = y; this.touchState.active = true; this.lastSource = 'touch'; }
-  setTouchButton(name: string, down: boolean) { this.touchState.buttons[name] = down; this.lastSource = 'touch'; }
+  setTouchButton(name: string, down: boolean) { this.touchState.buttons[name] = down; this.touchState.active = true; this.lastSource = 'touch'; } // (a button counts as touch input on its own: no need to have touched the stick first)
 
   /** Poll inputs once per frame. */
   update() {

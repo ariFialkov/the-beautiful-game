@@ -1,93 +1,126 @@
 import { input } from './input';
 
-/** On-screen joystick + action buttons for phones and tablets. */
+/** Touch controls for phones and tablets: a floating joystick and four buttons, nothing else.
+ *
+ *  - Left thumb: the joystick appears where you touch (a faint ring shows where it lives). Push past the inner ring into
+ *    the outer one to sprint.
+ *  - Right thumb: Shoot, Pass, Through and Cross in an arc around the corner. Defending, they become Tackle, Press (hold
+ *    to contain), Switch and Slide.
+ *  - The modifiers are a slide of the thumb on the button rather than more buttons: Shoot slid up is a chip, slid
+ *    sideways a finesse shot; Through slid up is lofted; Pass slid any way is driven. Double-tap Pass or Through for the
+ *    bounce versions, as on a pad.
+ *  - Skill moves: swipe anywhere on the open right side of the screen (the right stick, from where the swipe starts).
+ *  - Free kicks: two curl buttons appear. */
 export class TouchControls {
   el: HTMLElement;
   private joy: HTMLElement; private knob: HTMLElement; private zone: HTMLElement;
   private joyId: number | null = null; private origin = { x: 0, y: 0 };
   private buttons: Record<string, HTMLElement> = {};
-  private labelsAttack = { pass: 'Pass', shoot: 'Shoot', through: 'Through', lob: 'Cross' };
-  private labelsDefend = { pass: 'Press', shoot: 'Tackle', through: 'Rush', lob: 'Slide' };
+  private static readonly R = 46;      // the stick's travel (px)
+  private static readonly SPRINT = 66;  // past this, sprint (the outer ring)
+  private static readonly SLIDE = 26;   // a slide this far on a button is a modifier
+  private labels = {
+    attack: { shoot: 'Shoot', pass: 'Pass', through: 'Through', lob: 'Cross' },
+    defend: { shoot: 'Tackle', pass: 'Press', through: 'Switch', lob: 'Slide' },
+  };
 
-  constructor(parent: HTMLElement) {
+  constructor(private parent: HTMLElement) {
     this.el = document.createElement('div');
     this.el.className = 'touch';
     this.el.innerHTML = `
-      <div class="joy-zone"><div class="joy"><i></i></div></div>
+      <div class="joy-zone"><div class="joy-rest"></div><div class="joy"><b></b><i></i></div></div>
       <div class="skill-zone"></div>
-      <button class="tbtn sprint" data-b="sprint">Sprint</button>
-      <button class="tbtn switch" data-b="switch">Switch</button>
-      <div class="buttons">
-        <button class="tbtn pass" data-b="pass">Pass</button>
-        <button class="tbtn shoot" data-b="shoot">Shoot</button>
-        <button class="tbtn through" data-b="lob">Cross</button>
-        <button class="tbtn lob" data-b="through">Through</button>
-        <button class="tfin" type="button">Finesse</button>
-        <button class="tloft" type="button">Loft</button>
+      <div class="tpad">
+        <button class="tb shoot" data-b="shoot"><span>Shoot</span><em></em></button>
+        <button class="tb pass" data-b="pass"><span>Pass</span><em></em></button>
+        <button class="tb through" data-b="through"><span>Through</span><em></em></button>
+        <button class="tb lob" data-b="lob"><span>Cross</span><em></em></button>
       </div>
       <div class="tcurl"><button type="button" data-c="-1">◀ Curl</button><button type="button" data-c="1">Curl ▶</button></div>`;
     parent.appendChild(this.el);
+    // the joystick (floating), with sprint by pushing into the outer ring
     this.zone = this.el.querySelector('.joy-zone')!; this.joy = this.el.querySelector('.joy')!; this.knob = this.joy.querySelector('i')!;
-    this.zone.addEventListener('pointerdown', (e) => { if (this.joyId !== null) return; this.joyId = e.pointerId; this.origin = { x: e.clientX, y: e.clientY }; this.joy.style.display = 'block'; this.joy.style.left = `${e.clientX}px`; this.joy.style.top = `${e.clientY}px`; this.zone.setPointerCapture(e.pointerId); input.setTouchMove(0, 0); });
-    this.zone.addEventListener('pointermove', (e) => { if (e.pointerId !== this.joyId) return; let dx = e.clientX - this.origin.x, dy = e.clientY - this.origin.y; const r = 50; const l = Math.hypot(dx, dy); if (l > r) { dx = dx / l * r; dy = dy / l * r; } this.knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`; input.setTouchMove(dx / r, -dy / r); });
-    const end = (e: PointerEvent) => { if (e.pointerId !== this.joyId) return; this.joyId = null; this.joy.style.display = 'none'; this.knob.style.transform = 'translate(-50%, -50%)'; input.setTouchMove(0, 0); };
+    this.zone.addEventListener('pointerdown', (e) => {
+      if (this.joyId !== null) return; this.joyId = e.pointerId; this.origin = { x: e.clientX, y: e.clientY };
+      this.joy.style.left = `${e.clientX}px`; this.joy.style.top = `${e.clientY}px`; this.joy.classList.add('on'); this.zone.classList.add('active');
+      try { this.zone.setPointerCapture(e.pointerId); } catch { /* (not every pointer can be captured) */ } input.setTouchMove(0, 0);
+    });
+    this.zone.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.joyId) return;
+      let dx = e.clientX - this.origin.x, dy = e.clientY - this.origin.y; const l = Math.hypot(dx, dy);
+      const sprint = l > TouchControls.SPRINT; input.setTouchButton('sprint', sprint); this.joy.classList.toggle('sprint', sprint);
+      const R = TouchControls.R; const shown = Math.min(l, sprint ? TouchControls.SPRINT : R);
+      const ux = l > 0 ? dx / l : 0, uy = l > 0 ? dy / l : 0;
+      this.knob.style.transform = `translate(calc(-50% + ${ux * shown}px), calc(-50% + ${uy * shown}px))`;
+      if (l > R) { dx = ux * R; dy = uy * R; }
+      input.setTouchMove(dx / R, -dy / R);
+    });
+    const end = (e: PointerEvent) => {
+      if (e.pointerId !== this.joyId) return; this.joyId = null;
+      this.joy.classList.remove('on', 'sprint'); this.zone.classList.remove('active'); this.knob.style.transform = 'translate(-50%, -50%)';
+      input.setTouchMove(0, 0); input.setTouchButton('sprint', false);
+    };
     this.zone.addEventListener('pointerup', end); this.zone.addEventListener('pointercancel', end);
-    // Finesse on touch: tap to arm it for the next shot (one thumb can't hold two buttons); it disarms after the shot.
-    this.fin = this.el.querySelector('.tfin')!;
-    this.fin.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setFinesse(!this.finesseOn); });
-    this.fin.addEventListener('contextmenu', (e) => e.preventDefault());
-    // Loft (the LB modifier) on touch: tap to arm, then Through = lofted through ball, Shoot = chip shot
-    this.loftEl = this.el.querySelector('.tloft')!;
-    this.loftEl.addEventListener('pointerdown', (e) => { e.preventDefault(); this.setLoft(!this.loftOn); });
-    this.loftEl.addEventListener('contextmenu', (e) => e.preventDefault());
-    // Skill moves: swipe on the right of the screen (the swipe is the right stick, from where it started)
+    // skill moves: a swipe on the open right side
     const sz = this.el.querySelector('.skill-zone') as HTMLElement; let sid: number | null = null; let so = { x: 0, y: 0 };
-    sz.addEventListener('pointerdown', (e) => { if (sid !== null) return; sid = e.pointerId; so = { x: e.clientX, y: e.clientY }; sz.setPointerCapture(e.pointerId); });
+    sz.addEventListener('pointerdown', (e) => { if (sid !== null) return; sid = e.pointerId; so = { x: e.clientX, y: e.clientY }; try { sz.setPointerCapture(e.pointerId); } catch { /* */ } });
     sz.addEventListener('pointermove', (e) => { if (e.pointerId !== sid) return; const dx = e.clientX - so.x, dy = e.clientY - so.y; const l = Math.hypot(dx, dy); const k = Math.min(1, l / 45) / Math.max(1, l); input.setTouchAim(dx * k, -dy * k); });
     const sEnd = (e: PointerEvent) => { if (e.pointerId !== sid) return; sid = null; input.setTouchAim(0, 0); };
     sz.addEventListener('pointerup', sEnd); sz.addEventListener('pointercancel', sEnd);
-    // Free kicks: hold a curl button to bend it
+    // free kicks: hold a curl button to bend it
     this.curlEl = this.el.querySelector('.tcurl')!;
     for (const c of Array.from(this.curlEl.querySelectorAll<HTMLElement>('button'))) {
       const v = Number(c.dataset.c);
-      c.addEventListener('pointerdown', (e) => { e.preventDefault(); c.classList.add('pressed'); input.touchCurl = v; this.lastSourceTouch(); });
+      c.addEventListener('pointerdown', (e) => { e.preventDefault(); c.classList.add('pressed'); input.touchCurl = v; input.lastSource = 'touch'; });
       const up = () => { c.classList.remove('pressed'); if (input.touchCurl === v) input.touchCurl = 0; };
       c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up); c.addEventListener('pointerleave', up);
       c.addEventListener('contextmenu', (e) => e.preventDefault());
     }
-    for (const b of Array.from(this.el.querySelectorAll<HTMLElement>('.tbtn'))) {
+    // the four buttons, with the slide-for-a-modifier gesture
+    for (const b of Array.from(this.el.querySelectorAll<HTMLElement>('.tb'))) {
       const name = b.dataset.b!; this.buttons[name] = b;
-      // FIFA layout: the left face button crosses when attacking and slides when defending
-      const down = (e: PointerEvent) => { e.preventDefault(); b.classList.add('pressed'); input.setTouchButton(name === 'lob' && this.defending ? 'slide' : name, true); };
-      const up = () => {
-        b.classList.remove('pressed'); input.setTouchButton(name, false); input.setTouchButton('slide', false);
-        if ((name === 'shoot' || name === 'pass') && this.finesseOn) { clearTimeout(this.finTimer); this.finTimer = window.setTimeout(() => this.setFinesse(false), 600); }
-        if ((name === 'shoot' || name === 'through') && this.loftOn) { clearTimeout(this.loftTimer); this.loftTimer = window.setTimeout(() => this.setLoft(false), 600); }
+      let pid: number | null = null; let o = { x: 0, y: 0 }; let sent = name;
+      const down = (e: PointerEvent) => {
+        e.preventDefault(); if (pid !== null) return; pid = e.pointerId; o = { x: e.clientX, y: e.clientY }; try { b.setPointerCapture(e.pointerId); } catch { /* */ }
+        sent = this.defending ? (name === 'lob' ? 'slide' : name === 'through' ? 'switch' : name) : name;
+        clearTimeout(this.modTimer); this.setMods(false, false);
+        b.classList.add('pressed'); input.setTouchButton(sent, true);
       };
-      b.addEventListener('pointerdown', down); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
+      const move = (e: PointerEvent) => {
+        if (e.pointerId !== pid || this.defending) return;
+        const dx = e.clientX - o.x, dy = e.clientY - o.y; const S = TouchControls.SLIDE;
+        const up = -dy > S && -dy > Math.abs(dx), side = Math.abs(dx) > S && Math.abs(dx) >= -dy;
+        const loft = (name === 'shoot' || name === 'through') && up;
+        const fin = (name === 'shoot' && side) || (name === 'pass' && Math.hypot(dx, dy) > S);
+        this.setMods(loft, fin);
+        (b.querySelector('em') as HTMLElement).textContent = loft ? (name === 'shoot' ? 'Chip' : 'Lofted') : fin ? (name === 'shoot' ? 'Finesse' : 'Driven') : '';
+        b.classList.toggle('mod', loft || fin);
+      };
+      const up = (e: PointerEvent) => {
+        if (e.pointerId !== pid) return; pid = null;
+        b.classList.remove('pressed', 'mod'); (b.querySelector('em') as HTMLElement).textContent = '';
+        input.setTouchButton(sent, false);
+        // (the modifier stays a moment, so the release that plays the ball still sees it)
+        clearTimeout(this.modTimer); this.modTimer = window.setTimeout(() => this.setMods(false, false), 250);
+      };
+      b.addEventListener('pointerdown', down); b.addEventListener('pointermove', move); b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up);
       b.addEventListener('contextmenu', (e) => e.preventDefault());
     }
   }
   private defending = false;
-  private curlEl!: HTMLElement; private fkOn = false;
-  private lastSourceTouch() { input.lastSource = 'touch'; }
-  /** Free-kick mode: show the curl buttons (finesse is not used). */
+  private curlEl!: HTMLElement; private fkOn = false; private modTimer = 0;
+  private setMods(loft: boolean, finesse: boolean) { input.setTouchButton('loft', loft); input.setTouchButton('finesse', finesse); }
+  /** Free-kick mode: the curl buttons appear (and the minimap steps aside for them). */
   setFreeKick(on: boolean) {
     if (on === this.fkOn) return; this.fkOn = on;
-    this.curlEl.classList.toggle('on', on); if (on) this.setFinesse(false); this.fin.style.visibility = on ? 'hidden' : '';
+    this.curlEl.classList.toggle('on', on); this.parent.classList.toggle('fk-on', on);
     if (!on) input.touchCurl = 0;
   }
-  private fin!: HTMLElement; private finesseOn = false; private finTimer = 0;
-  private loftEl!: HTMLElement; private loftOn = false; private loftTimer = 0;
-  private setLoft(on: boolean) { this.loftOn = on; this.loftEl.classList.toggle('on', on); input.setTouchButton('loft', on); }
-  private setFinesse(on: boolean) { this.finesseOn = on; this.fin.classList.toggle('on', on); input.setTouchButton('finesse', on); }
   setDefending(d: boolean) {
-    if (d === this.defending) return; this.defending = d;
-    this.fin.style.display = d ? 'none' : ''; if (d) this.setFinesse(false);
-    this.loftEl.style.display = d ? 'none' : ''; if (d) this.setLoft(false);
-    const labels = d ? this.labelsDefend : this.labelsAttack;
-    for (const [k, v] of Object.entries(labels)) if (this.buttons[k]) this.buttons[k].textContent = v;
+    if (d === this.defending) return; this.defending = d; this.el.classList.toggle('defending', d);
+    const labels = d ? this.labels.defend : this.labels.attack;
+    for (const [k, v] of Object.entries(labels)) { const s = this.buttons[k]?.querySelector('span'); if (s) s.textContent = v; }
   }
-  show(on: boolean) { this.el.classList.toggle('on', on); }
-  destroy() { this.el.remove(); }
+  show(on: boolean) { this.el.classList.toggle('on', on); this.parent.classList.toggle('touch-ui', on); }
+  destroy() { this.parent.classList.remove('touch-ui', 'fk-on'); this.el.remove(); }
 }
