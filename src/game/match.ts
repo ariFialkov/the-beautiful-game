@@ -1,6 +1,6 @@
 import type { MatchScript, PlayerCard } from '@shared/types';
 import type { Kit, Team } from '@shared/teams';
-import { Ball, BallBody, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictLanding, predictPath, predictRest, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
+import { Ball, BallBody, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictLanding, predictPath, predictRest, rollOut, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
 import { Agent } from './player';
 import { FORMATION_433, FORMATION_FUTSAL, v2, type PitchSpec, type V2 } from './pitch';
 import { fitSlots, formationById, normalizeTactics, type Tactics } from './tactics';
@@ -493,7 +493,7 @@ export class Match {
   private freeKickInput(input: InputManager, dt: number) {
     const fk = this.freeKick!; const me = fk.taker; const b = this.ball; const { goalWidth: gw, goalHeight: gh } = this.pitch;
     me.intent.move = { x: 0, z: 0 }; me.intent.sprint = false; me.intent.jockey = false;
-    if (input.switch.down || input.touchCurl < 0) fk.curl = Math.max(-1, fk.curl - dt * 1.8);
+    if (input.loft?.down || input.switch.down || input.touchCurl < 0) fk.curl = Math.max(-1, fk.curl - dt * 1.8);
     else if (input.finesse.down || input.slide.down || input.touchCurl > 0) fk.curl = Math.min(1, fk.curl + dt * 1.8);
     const st = input.move; const held = Math.hypot(st.x, st.y) > 0.2;
     if (fk.direct) {
@@ -899,7 +899,7 @@ export class Match {
   private handleHuman(input: InputManager, dt: number) {
     const me = this.controlled!; const team = this.teams[this.humanTeam!];
     const move = this.stickToWorld(input.move.x, input.move.y);
-    const active = v2.len(move) > 0.1 || input.sprint.down || input.pass.down || input.shoot.down || input.through.down || input.lob.down || input.switch.down || input.slide.down;
+    const active = v2.len(move) > 0.1 || input.sprint.down || input.pass.down || input.shoot.down || input.through.down || input.lob.down || input.switch.down || !!input.loft?.down || input.slide.down;
     this.idleTime = active ? 0 : this.idleTime + dt;
     this.autopilot = this.idleTime > (this.freeKick?.taker === me ? 20 : 2.0); // a free kick can be lined up at leisure
     if (this.autopilot) { this.charge = null; this.shotTap = null; return; }
@@ -931,7 +931,7 @@ export class Match {
       // stick points well away from it
       const held = v2.len(move) > 0.2 && !stillAiming;
       const runDir = pa && pa.receiver === me && pa.run ? pa.run : null;
-      const rp = pa?.lofted ? (() => { const p = interceptPoint(this, me, 2.3); return { p, t: 0 }; })() : receivePoint(this, me, 1.5, held ? move : runDir);
+      const rp = receivePoint(this, me, pa?.lofted ? 2.3 : 1.5, held ? move : runDir);
       const onLine = held && v2.dist(rp.p, me.pos) > 0.5 && v2.dot(v2.norm(v2.sub(rp.p, me.pos)), v2.norm(move)) > 0.35;
       if (v2.len(move) < 0.2 || stillAiming || onLine) {
         // a through ball is run onto (to the spot it was played into); anything else is met
@@ -949,8 +949,9 @@ export class Match {
         let meet = dying ? interceptPoint(this, me, pa?.lofted ? 2.3 : 1.5) : toSpot ? (atSpot ? v2.add(me.pos, v2.scale(pa!.run!, 3)) : spot!) : rp.p;
         { const lx = this.pitch.length / 2 - 1, lz = this.pitch.width / 2 - 1; meet = { x: Math.max(-lx, Math.min(lx, meet.x)), z: Math.max(-lz, Math.min(lz, meet.z)) }; } // (never runs off the pitch for it)
         const to = v2.sub(meet, me.pos); const tl = v2.len(to);
-        const attack = !!pa?.lofted; // a cross is attacked, not waited for
-        const ease = dying ? 1 : toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : attack ? 1 : Math.max(0.25, Math.min(1, tl / Math.max(0.15, rp.t - 0.12) / me.maxSpeed));
+        // a ball in the air: timed to get there a beat early and attack it (waiting under a good one, hurrying to a loose one)
+        const air = !!pa?.lofted && !toSpot;
+        const ease = dying ? 1 : toSpot ? (atSpot ? 0.45 : Math.max(0.45, Math.min(1, tl / 2.5))) : Math.max(air ? 0.3 : 0.25, Math.min(1, tl / Math.max(0.15, rp.t - (air ? 0.3 : 0.12)) / me.maxSpeed));
         if (tl > 0.3) { me.intent.move = v2.scale(v2.norm(to), ease); me.intent.sprint = dying ? tl > 2 : toSpot ? tl > 3 : ease > 0.68; if (tl < 2.5) me.intent.face = me.heading; } else { me.intent.move = { x: 0, z: 0 }; me.intent.face = pa?.run ?? null; }
         this.receiveAssisting = true;
       }
@@ -1057,10 +1058,12 @@ export class Match {
     }
     if (input.shoot.justPressed) this.tackle(me, 'tackle');
     if (input.lob.justPressed || input.slide.justPressed) this.tackle(me, 'slide'); // cross button slides when defending
-    if (input.switch.justPressed) this.setControlled(this.closestToBall(team.index, me));
+    const ourPass = !b.owner && b.lastTouchTeam === team.index && (this.passAssist !== null || this.time - b.lastTouchTime < 1.5); // our own pass on its way
+    // switch player: LB on a pad; on a keyboard the pass key does it when defending (held, the new man contains)
+    const kbSwitch = !!input.passKey && input.pass.justPressed && (opponentHasIt || (!b.owner && !ourPass));
+    if (input.switch.justPressed || kbSwitch) this.setControlled(this.closestToBall(team.index, me));
     // Auto switching: to whoever is clearly closer to the ball (Auto), only for balls in the air (Air balls), or never (Manual).
     const sw = this.controls.switching;
-    const ourPass = !b.owner && b.lastTouchTeam === team.index && (this.passAssist !== null || this.time - b.lastTouchTime < 1.5); // our own pass on its way
     if (sw !== 'manual' && !ourPass && this.time - this.lastSwitch > 0.7 && (!b.owner || b.owner.team !== team.index) && !me.busy() && (sw === 'auto' || (!b.owner && b.y > 1.5))) {
       const c = this.closestToBall(team.index);
       if (c !== me && v2.dist(c.pos, bp) + 3 < dBall) this.setControlled(c);
@@ -1313,8 +1316,10 @@ export class Match {
       const inBox = Math.abs(m.pos.x - t.attackDir * L / 2) < this.pitch.boxDepth && Math.abs(m.pos.z) < this.pitch.boxWidth / 2;
       // the power bar says how far: it picks between team-mates at similar angles
       // the power bar says how far: it picks between team-mates at similar angles (a harder cross finds the further man)
+      // (a lofted ball: the direction says who, power only breaks ties between men on the same line - a long
+      // diagonal or a back-post cross finds the free man out there, not the covered one in between)
       const depth = power === undefined ? 0 : through ? Math.abs(dist - (8 + 36 * power)) * 0.035 : lofted ? Math.abs(dist - (10 + 45 * power)) * 0.04 : Math.abs(dist - (4 + 34 * power)) * 0.025;
-      const s = -ang * (semi ? 8 : 4.5) - depth - dist * (lofted ? 0.006 : through ? 0.01 : 0.02) - (through ? Math.max(0, dist - 32) * 0.06 : 0) + Math.min(marked, 6) * 0.06 + lane * 0.4
+      const s = -ang * (semi ? 8 : 4.5) - depth - dist * (lofted ? 0.002 : through ? 0.01 : 0.02) - (through ? Math.max(0, dist - 32) * 0.06 : 0) + Math.min(marked, 6) * (lofted ? 0.1 : 0.06) - (lofted && marked < 1.8 && !a.isGK ? 0.35 : 0) + lane * 0.4
         + (through ? Math.max(0, fwd) * 0.02 : 0) + (lofted && inBox ? 0.5 : 0) - (m.isGK ? (ang < 0.35 && !lofted && !through ? 0.1 : 2) : 0); // (the keeper: the 12th man, when you aim at him)
       if (s > bs) { bs = s; best = m; }
     }
@@ -1324,25 +1329,39 @@ export class Match {
   /** Through ball into a runner's path. Candidate spots ahead of him (a fan of angles around his line to goal, bent
    *  toward the aim, at several lead lengths) are scored on who gets there first, whether the lane is open, and how
    *  kindly the ball arrives; the ball is then weighted to reach the best spot as he does. */
-  throughPlan(a: Agent, m: Agent, aim: V2): { spot: V2; speed: number; time: number; run: V2 } {
+  throughPlan(a: Agent, m: Agent, aim: V2): { spot: V2; speed: number; time: number; run: V2; vMax: number } {
     const team = this.teams[a.team]; const fwd = { x: team.attackDir, z: 0 };
     let base = v2.norm(v2.add(fwd, v2.scale(aim, 0.5)));
     if (m.speed() > 3 && v2.dot(v2.norm(m.vel), fwd) > 0.2) base = v2.norm(v2.add(base, v2.norm(m.vel)));
-    const from = { x: this.ball.x, z: this.ball.z }; const vs = m.maxSpeed * 0.95; // a runner chasing a through ball sprints
+    if (m.speed() > 5 && v2.dot(v2.norm(m.vel), fwd) > 0.5) base = v2.norm(m.vel); // (at full tilt: straight down the line he's running)
+    const from = { x: this.ball.x, z: this.ball.z }; const vs = Math.max(m.maxSpeed * 0.95, m.speed() * 1.02); // a runner chasing a through ball sprints (as fast as he's already going)
     const lim = { x: this.pitch.length / 2 - 2, z: this.pitch.width / 2 - 2 };
     const opp = this.opponentsOf(a.team).agents;
     const baseAng = Math.atan2(base.z, base.x);
-    let best: { spot: V2; speed: number; time: number; run: V2; score: number } | null = null;
+    let best: { spot: V2; speed: number; time: number; run: V2; vMax: number; score: number } | null = null;
+    const inside = (p: V2) => Math.abs(p.x) < this.pitch.length / 2 - 0.7 && Math.abs(p.z) < this.pitch.width / 2 - 0.7;
     for (const da of [0, -0.3, 0.3, -0.6, 0.6]) {
       const run = { x: Math.cos(baseAng + da), z: Math.sin(baseAng + da) };
-      for (const L of [5, 8, 11, 14]) {
+      for (const L of m.speed() > 5 ? [5, 8, 11, 14, 18, 22] : [5, 8, 11, 14]) { // (a runner at full tilt can be led further)
         const p = v2.add(m.pos, v2.scale(run, L)); const spot = { x: Math.max(-lim.x, Math.min(lim.x, p.x)), z: Math.max(-lim.z, Math.min(lim.z, p.z)) };
         const along = v2.dot(m.vel, v2.norm(v2.sub(spot, m.pos))); // already running that way: no reaction or wind-up
         const tRun = (along > 4 ? 0.1 : 0.4) + v2.dist(m.pos, spot) / vs + Math.max(0, 6 - Math.max(0, along)) * 0.08;
         // the ball gets there a moment before him (played into space, he runs onto it), still rolling
         const D = v2.dist(spot, from); let plan = passForTime(D, Math.max(0.35, tRun - 0.4), this.surface);
-        // never a crawler: still rolling firmly at the spot (if that's quicker than his run, it's there early and rolls on into his path)
-        if (plan.arrive < 5) plan = { v0: passSpeedFor(D, this.surface, 5), time: passTimeFor(D, this.surface, 5), arrive: 5 };
+        // whatever it has left after the spot it rolls on. Where that would take it off the pitch (a ball slid down the
+        // line), it isn't played to wait for him: it's weighted to meet him in his stride as he gets there, not early
+        const dirB = v2.scale(v2.sub(spot, from), 1 / Math.max(0.1, D));
+        const restIn = (arrive: number) => inside(v2.add(spot, v2.scale(dirB, rollOut(arrive, this.surface))));
+        let vMax = Infinity; let stays = true;
+        if (plan.arrive < 5) plan = { v0: passSpeedFor(D, this.surface, 5), time: passTimeFor(D, this.surface, 5), arrive: 5 }; // (never a crawler)
+        if (!restIn(plan.arrive)) {
+          plan = passForTime(D, Math.max(0.35, tRun - 0.12), this.surface);
+          if (plan.arrive > 11) plan = { v0: passSpeedFor(D, this.surface, 11), time: passTimeFor(D, this.surface, 11), arrive: 11 };
+          if (plan.arrive < 3) plan = { v0: passSpeedFor(D, this.surface, 3), time: passTimeFor(D, this.surface, 3), arrive: 3 };
+          vMax = passForTime(D, Math.max(0.35, tRun - 0.35), this.surface).v0; // (struck harder, it would beat him to it and run out)
+          stays = plan.time >= tRun - 0.4 || restIn(plan.arrive);
+        }
+        const aMax = 6;
         const tArrive = Math.max(tRun, plan.time);
         // the race: can any defender get to the spot, or across the ball's line, first?
         let margin = 3; const u = v2.scale(v2.sub(spot, from), 1 / Math.max(0.1, D)); const avg = D / Math.max(0.3, plan.time);
@@ -1353,8 +1372,8 @@ export class Match {
           if (along > 1 && along < D - 1) { const perp = Math.abs(r.x * u.z - r.z * u.x); margin = Math.min(margin, Math.max(0, perp - 0.8) / os + 0.3 - along / avg); }
         }
         // (well into his path: a longer lead is preferred when the race allows it)
-        const score = Math.min(margin, 1.5) * 2 - Math.abs(plan.arrive - 6) * 0.15 - Math.max(0, D - 32) * 0.08 + L * 0.03 - Math.abs(da) * 0.8 + v2.dot(v2.sub(spot, m.pos), fwd) * 0.03 - (spot.x !== p.x || spot.z !== p.z ? 1 : 0);
-        if (!best || score > best.score) best = { spot, speed: plan.v0, time: plan.time, run, score };
+        const score = Math.min(margin, 1.5) * 2 - Math.max(0, Math.abs(plan.arrive - aMax) - (vMax < Infinity ? 3 : 0)) * 0.15 - Math.max(0, tArrive - tRun - 0.6) * 0.5 - Math.max(0, D - 32) * 0.08 + L * 0.03 - Math.abs(da) * (m.speed() > 5 ? 1.6 : 0.8) + v2.dot(v2.sub(spot, m.pos), fwd) * 0.03 - (v2.dist(spot, p) > 0.6 ? 1 : 0) - (stays ? 0 : 3);
+        if (!best || score > best.score) best = { spot, speed: plan.v0, time: plan.time, run, vMax, score };
       }
     }
     return best!;
@@ -1382,7 +1401,10 @@ export class Match {
     // ...or he's running on and it will never catch him: at the pace he's going, the ball stays behind him for its
     // whole predicted roll and ends up slower than him (a through ball that's lost its legs). He sees it and checks back.
     const rs = v2.len(r.vel);
-    if (rs > 2 && b.y < 1.2) {
+    // (a through ball that still reaches the spot it was played to isn't lost: he eases onto it there)
+    const reachesSpot = !!pa?.spot && pa.receiver === r && (!pa.run || v2.dot(v2.sub(r.pos, pa.spot), pa.run) < 1.5) // (until he's gone past it)
+      && this.predicted().some((q) => q.y < 1.2 && Math.hypot(q.x - pa.spot!.x, q.z - pa.spot!.z) < 2.5 && q.t > 0.05);
+    if (rs > 2 && b.y < 1.2 && !reachesSpot) {
       const u = v2.scale(r.vel, 1 / rs); let catches = false;
       for (const q of this.predicted()) { const lead = (q.x - r.pos.x - r.vel.x * q.t) * u.x + (q.z - r.pos.z - r.vel.z * q.t) * u.z; if (lead > -0.8) { catches = true; break; } }
       const last = this.predicted().at(-1);
@@ -1520,7 +1542,8 @@ export class Match {
       // (firm by default; a driven pass - RB - fizzes in at 13-18 m/s)
       const arrive = human && !through && !lofted && (d.targetAgent || !d.clear) ? Math.round(((semi ? 1 + 12 * d.power : d.driven ? 15 + 5 * d.power : 7.5 + 7.5 * d.power)) * 2) / 2 : 8.5;
       let throughSpeed = 0;
-      if (target && through) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = loftThrough ? 0 : tp.speed; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
+      let throughMax = Infinity;
+      if (target && through) { const tp = this.throughPlan(a, target, dir0); aim = tp.spot; tFlight = tp.time; throughSpeed = loftThrough ? 0 : tp.speed; throughMax = tp.vMax; d.spot = tp.spot; d.run = tp.run; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
       else if (target) {
         // lead the receiver: iterate the meeting point against the ball's travel time
         aim = target.pos;
@@ -1554,17 +1577,29 @@ export class Match {
         let sol = solve(aim);
         if (target && !throwIn && !loftThrough) {
           // re-lead the receiver with the real flight time of this trajectory
-          const lead = d.deliver ?? v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 2.2) * (target.speed() > 2.5 ? 1 : 0.75)));
+          // aimed where he is, with a little allowance for where he's going (his run then adjusts to it: he waits for a
+          // good ball and comes to a loose one) - not thrown far ahead of a runner who may check his stride
+          let mom = v2.scale(target.vel, Math.min(sol.time, d.punt || d.keeperThrow ? 2.2 : 1.6) * (d.punt || d.keeperThrow ? 0.85 : 0.5)); const ml = v2.len(mom); if (ml > (d.punt ? 12 : 5)) mom = v2.scale(mom, (d.punt ? 12 : 5) / ml);
+          const lead = d.deliver ?? v2.add(target.pos, mom);
           aim = nudge({ x: Math.max(-lim.x, Math.min(lim.x, lead.x)), z: Math.max(-lim.z, Math.min(lim.z, lead.z)) });
           sol = solve(aim); tFlight = sol.time; target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
-        } else if (loftThrough && target) { tFlight = sol.time; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
+        } else if (loftThrough && target) {
+          // over the top: dropped into his path where he'll be when it comes down (led by the ball's real hang time)
+          const run = (d.run as V2 | undefined) ?? (target.speed() > 2 ? v2.norm(target.vel) : { x: team.attackDir, z: 0 });
+          const vs = Math.max(target.maxSpeed * 0.92, target.speed());
+          for (let k = 0; k < 3; k++) {
+            const lead = v2.add(target.pos, v2.scale(run, vs * (sol.time + 0.15)));
+            aim = { x: Math.max(-lim.x + 3, Math.min(lim.x - 3, lead.x)), z: Math.max(-lim.z + 3, Math.min(lim.z - 3, lead.z)) }; sol = solve(aim);
+          }
+          d.spot = aim; tFlight = sol.time; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4);
+        }
         v = sol.v; w = sol.w;
       } else {
         // Human passes: the power bar sets the pace (a soft pass still reaches its man, a full one fizzes across the pitch).
         const needed = passSpeedFor(dist * (through ? 1.1 : 1), this.surface, arrive);
         // Passes to a team-mate are weighted for him (the bar sets the arrival pace, above). Into space the pace is the
         // power bar alone.
-        const speed = throughSpeed > 0 ? throughSpeed * (human ? 0.97 + 0.1 * d.power : 1) : human
+        const speed = throughSpeed > 0 ? Math.min(throughMax, throughSpeed * (human ? 0.97 + 0.1 * d.power : 1)) : human
           ? (target ? Math.max(6, Math.min(31, needed)) : 6 + d.power * 25)
           : Math.max(6, Math.min(30, needed * (0.92 + d.power * 0.16)));
         const yaw = Math.atan2(aim.z - from.z, aim.x - from.x);

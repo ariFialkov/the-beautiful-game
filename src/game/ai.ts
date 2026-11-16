@@ -392,7 +392,7 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     let t: V2 = shape; let sprint = false; let fixed = false; a.ai.mode = 'shape';
     if (dead) { targets.set(a, { t: shape, sprint: false, fixed: false }); continue; }
     let arrive: number | undefined;
-    if (a === chaser && chaserPlan) { t = chaserPlan.p; sprint = true; fixed = true; a.ai.mode = a.ai.expectBall > now ? 'receive' : 'chase'; if (a.ai.mode === 'receive' && !lofted) arrive = chaserPlan.t; } // balls in the air are attacked, not waited for
+    if (a === chaser && chaserPlan) { t = chaserPlan.p; sprint = true; fixed = true; a.ai.mode = a.ai.expectBall > now ? 'receive' : 'chase'; if (a.ai.mode === 'receive') arrive = lofted ? Math.max(0.2, chaserPlan.t - 0.2) : chaserPlan.t; } // (a ball in the air: there a beat early, to attack it)
     else if (a === presser && carrier && sp) { t = m.clearOfSetPiece(v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), 1)), 0.8); fixed = true; a.ai.mode = 'shape'; }
     else if (a === presser && carrier && dropOff(m, team, carrier)) {
       // dropping off: the nearest man shows him the way, a few yards off and goal-side, rather than diving in

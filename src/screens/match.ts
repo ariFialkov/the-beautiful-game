@@ -18,6 +18,7 @@ import { CLOCK_MINUTES } from '@shared/script';
 import { pickKits, type MatchParams } from './setup';
 import { focus } from '../ui/focus';
 import { Minimap } from '../ui/minimap';
+import * as THREE from 'three';
 
 export function futsalFive(xi: PlayerCard[]): PlayerCard[] { return [xi[0], xi[2], xi[8], xi[10], xi[9]]; }
 
@@ -161,6 +162,7 @@ export class MatchScreen implements Screen {
     { const narrow = window.innerWidth < 640; const P = m.pitch; const long = Math.min(P.futsal ? 150 : 176, (window.innerHeight * 0.22 * P.length) / P.width); const H = this.minimap.draw(this.view.mapBasis, narrow ? Math.min(112, long) : long, window.innerHeight * (narrow ? 0.3 : 0.34));
       this.minimap.el.classList.toggle('top', narrow); const lift = narrow ? 0 : H + 6;
       if (lift !== this.mapH) { this.mapH = lift; this.hud.style.setProperty('--map-h', `${lift}px`); } }
+    this.fadeMinimap(dt);
     if (this.cardTimer > 0) { this.cardTimer -= dt; if (this.cardTimer <= 0) this.hud.querySelector('.card-pop')!.classList.remove('show'); }
     const c = m.clockText(); const clock = sb.querySelector('.clock')!; clock.textContent = c.text; clock.classList.toggle('stoppage', c.stoppage);
     { const ad = sb.querySelector('.added') as HTMLElement; const t = c.board !== undefined ? `+${c.board}` : ''; if (ad.textContent !== t) { ad.textContent = t; ad.classList.toggle('show', !!t); } }
@@ -192,6 +194,25 @@ export class MatchScreen implements Screen {
     const hint = this.hud.querySelector('.controls-hint')!; const txt = m.autopilot ? 'AUTO-PILOT · touch the controls to take over' : fk ? freeKickHint(fk.direct) : controllerHint(); if (hint.textContent !== txt) hint.textContent = txt;
     if (this.bannerTimer > 0) { this.bannerTimer -= dt; if (this.bannerTimer <= 0) this.banner.classList.remove('show'); }
     if (this.toastTimer > 0) { this.toastTimer -= dt; if (this.toastTimer <= 0) this.toast.classList.remove('show'); }
+  }
+  /** The radar steps back (to 10%) while the play is under it: the ball, or a player near it, on screen behind it. */
+  private mapOpacity = 1; private mapRect: DOMRect | null = null; private mapRectAge = 0; private proj = new THREE.Vector3();
+  private fadeMinimap(dt: number) {
+    const m = this.match; const el2 = this.minimap.el;
+    if ((this.mapRectAge -= dt) <= 0 || !this.mapRect) { this.mapRect = el2.getBoundingClientRect(); this.mapRectAge = 0.25; }
+    const r = this.mapRect; const cam = app.stage.camera; const W = window.innerWidth, H = window.innerHeight; const pad = 14;
+    const under = (x: number, y: number, z: number) => {
+      const v = this.proj.set(x, y, z).project(cam); if (v.z > 1) return false;
+      const sx = (v.x + 1) / 2 * W, sy = (1 - v.y) / 2 * H;
+      return sx > r.left - pad && sx < r.right + pad && sy > r.top - pad && sy < r.bottom + pad;
+    };
+    const b = m.ball; let hidden = under(b.x, b.y, b.z);
+    if (!hidden) for (const a of m.agents) {
+      if (a !== m.controlled && Math.hypot(a.pos.x - b.x, a.pos.z - b.z) > 16) continue;
+      if (under(a.pos.x, 0.9, a.pos.z) || under(a.pos.x, 0, a.pos.z)) { hidden = true; break; }
+    }
+    const want = hidden ? 0.1 : 1; this.mapOpacity += (want - this.mapOpacity) * (1 - Math.exp(-dt / (hidden ? 0.12 : 0.35)));
+    const o = this.mapOpacity.toFixed(2); if (el2.style.opacity !== o) el2.style.opacity = o;
   }
   private showBanner(html: string, secs: number) { this.banner.innerHTML = html; this.banner.classList.add('show'); this.bannerTimer = secs; }
   private cardTimer = 0;

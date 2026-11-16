@@ -9,7 +9,7 @@ import { PITCH_11 } from '../game/pitch';
 import { Stadium } from '../render/stadium';
 import { makeLighting, type Stage } from '../render/scene';
 import { Humanoid } from '../render/humanoid';
-import { makeBallMesh } from '../render/matchView';
+import { makeBallMesh, spinBall } from '../render/matchView';
 import { keeperKit } from '../render/kits';
 import type { InputManager } from '../input/input';
 
@@ -245,7 +245,7 @@ export class FreeKickGame {
       case 'aim': {
         const sp = 3.2 * dt;
         this.aim.z = Math.max(-6, Math.min(6, this.aim.z + input.move.x * sp)); this.aim.y = Math.max(0.3, Math.min(3.6, this.aim.y + input.move.y * sp));
-        if (input.switch.down || input.touchCurl < 0) this.curl = Math.max(-1, this.curl - dt * 2.2);
+        if (input.loft?.down || input.switch?.down || input.touchCurl < 0) this.curl = Math.max(-1, this.curl - dt * 2.2);
         else if (input.finesse.down || input.touchCurl > 0) this.curl = Math.min(1, this.curl + dt * 2.2);
         else this.curl *= Math.exp(-2 * dt);
         const btn = input.shoot.down || input.pass.down;
@@ -359,7 +359,7 @@ export class FreeKickGame {
   private render(dt: number, time: number, input: InputManager) {
     const L = this.pitch.length; const b = this.ball;
     this.ballMesh.position.set(b.x, b.y, b.z);
-    this.ballMesh.rotation.x += Math.hypot(b.vx, b.vz) / b.radius * dt * 0.2;
+    { const wl = Math.hypot(b.wx, b.wy, b.wz); if (wl > 0.01) spinBall(this.ballMesh, new THREE.Vector3(b.wx / wl, b.wy / wl, b.wz / wl), wl, dt); else spinBall(this.ballMesh, new THREE.Vector3(1, 0, 0), 0, dt); } // (its real spin: the curl you put on it)
     this.ballShadow.position.set(b.x, 0.015, b.z); const sh = Math.max(0.3, 1 - (b.y - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
     const kicker = this.kickWho === 'player' ? this.kicker : this.botKicker;
     const idle = this.kickWho === 'player' ? this.botKicker : this.kicker;

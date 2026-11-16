@@ -1,70 +1,74 @@
 import * as THREE from 'three';
 
-/** Rollerz advertising: the wordmark drawn on a canvas for the LED boards, the stand banners and the camera carpets.
- *  (Drawn here, so there are no image files to load; a supplied logo can replace `drawWordmark`.) */
-export type AdStyle = 'led' | 'ledAlt' | 'banner' | 'carpet';
+/** Rollerz advertising on the LED perimeter boards: the Rollerz logo (the pink "R" mark and the wordmark), drawn as
+ *  vectors on a canvas so it stays sharp at any size, in a few colour schemes. */
+export type AdScheme = 'dark' | 'pink' | 'light';
 
-const PINK = '#ff2e7e', AMBER = '#ffb020', INK = '#0b0718';
+export const ROLLERZ = { pink: '#db3b7c', ink: '#1b1b1f', paper: '#dfdfd7' };
+const SCHEMES: Record<AdScheme, { bg: string; mark: string; text: string }> = {
+  dark: { bg: ROLLERZ.ink, mark: ROLLERZ.pink, text: ROLLERZ.paper },
+  pink: { bg: ROLLERZ.pink, mark: ROLLERZ.ink, text: '#ffffff' },
+  light: { bg: ROLLERZ.paper, mark: ROLLERZ.pink, text: ROLLERZ.ink },
+};
 
-function canvas(w: number, h: number) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
-function texture(c: HTMLCanvasElement, repeatX = 1): THREE.CanvasTexture {
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.minFilter = THREE.LinearMipmapLinearFilter;
-  t.wrapS = THREE.RepeatWrapping; t.repeat.x = repeatX; return t;
+/** The "R" mark in a unit square: a solid bowl over a hollow, slanted counter, with the leg kicking out bottom right. */
+function markPath(g: CanvasRenderingContext2D, x: number, y: number, s: number) {
+  const P = (u: number, v: number): [number, number] => [x + u * s, y + v * s];
+  g.beginPath();
+  g.moveTo(...P(0, 0)); g.lineTo(...P(0.55, 0));
+  // the bowl: round at the right, meeting the leg underneath
+  g.arc(x + 0.55 * s, y + 0.295 * s, 0.295 * s, -Math.PI / 2, (80 * Math.PI) / 180);
+  g.lineTo(...P(1, 1)); g.lineTo(...P(0.346, 1)); g.lineTo(...P(0, 0.654)); g.closePath();
+  // the counter (cut out)
+  g.moveTo(...P(0.082, 0.21)); g.lineTo(...P(0.79, 0.913)); g.lineTo(...P(0.38, 0.913)); g.lineTo(...P(0.082, 0.62)); g.closePath();
 }
-function grad(g: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, stops: Array<[number, string]>, fallback: string): CanvasGradient | string {
-  try { const gr = g.createLinearGradient?.(x0, y0, x1, y1); if (!gr) return fallback; for (const [o, c] of stops) gr.addColorStop(o, c); return gr; } catch { return fallback; }
-}
 
-/** The ROLLERZ wordmark: heavy italic caps in a pink-to-amber blaze, the two O's drawn as wheels, centred at (cx, cy). */
-export function drawWordmark(g: CanvasRenderingContext2D, cx: number, cy: number, size: number, mono?: string) {
-  g.save(); g.translate(cx, cy); g.transform(1, 0, -0.22, 1, 0, 0); // (an italic lean)
-  g.font = `900 ${size}px "Arial Black", Arial, sans-serif`; g.textBaseline = 'middle'; g.textAlign = 'left';
-  const parts = ['R', 'O', 'LLERZ']; const ow = size * 0.78;
-  const widths = parts.map((p) => (p === 'O' ? ow : g.measureText?.(p)?.width ?? size * 0.7 * p.length));
-  const total = widths.reduce((a, b) => a + b, 0) + size * 0.04 * 2;
-  let x = -total / 2;
-  const fill = mono ?? grad(g, -total / 2, 0, total / 2, 0, [[0, PINK], [1, AMBER]], PINK);
-  g.fillStyle = fill; g.strokeStyle = fill;
-  parts.forEach((p, i) => {
-    if (p === 'O') {
-      // a wheel: a thick ring with a hub and spokes
-      const r = size * 0.36, c = x + ow / 2; g.lineWidth = size * 0.15;
-      g.beginPath(); g.arc(c, 0, r - g.lineWidth / 2, 0, Math.PI * 2); g.stroke();
-      g.beginPath(); g.arc(c, 0, size * 0.07, 0, Math.PI * 2); g.fill();
-      g.lineWidth = size * 0.035; for (let k = 0; k < 5; k++) { const a = (k / 5) * Math.PI * 2 + 0.3; g.beginPath(); g.moveTo(c, 0); g.lineTo(c + Math.cos(a) * r * 0.75, Math.sin(a) * r * 0.75); g.stroke(); }
-    } else g.fillText(p, x, size * 0.03);
-    x += widths[i] + (i < parts.length - 1 ? size * 0.04 : 0);
+/** The wordmark's letters, drawn as strokes in cap-height units (0 = cap line, 1 = baseline): a squared, slightly
+ *  rounded face like the logo's. [advance, strokes] per letter; each stroke is a polyline. */
+const GLYPHS: Array<[number, Array<Array<[number, number]>>]> = [
+  [0.8, [[[0.1, 1], [0.1, 0.1], [0.6, 0.1], [0.7, 0.2], [0.7, 0.41], [0.6, 0.51], [0.1, 0.51]], [[0.56, 0.51], [0.7, 0.62], [0.7, 1]]]], // R
+  [0.7, [[[0.19, 0.38], [0.51, 0.38], [0.6, 0.47], [0.6, 0.81], [0.51, 0.9], [0.19, 0.9], [0.1, 0.81], [0.1, 0.47], [0.19, 0.38]]]], // o
+  [0.22, [[[0.11, 0], [0.11, 1]]]], // l
+  [0.22, [[[0.11, 0], [0.11, 1]]]], // l
+  [0.74, [[[0.64, 0.64], [0.64, 0.47], [0.55, 0.38], [0.19, 0.38], [0.1, 0.47], [0.1, 0.81], [0.19, 0.9], [0.64, 0.9]], [[0.1, 0.64], [0.64, 0.64]]]], // e
+  [0.55, [[[0.1, 1], [0.1, 0.47], [0.19, 0.38], [0.55, 0.38]]]], // r
+  [0.63, [[[0.02, 0.38], [0.6, 0.38], [0.06, 0.9], [0.63, 0.9]]]], // z
+];
+const GAPS = [0.16, 0.16, 0.18, 0.16, 0.15, 0.04];
+
+/** The logo with its left edge at x, centred on cy, `h` tall (the mark's height). Returns its width. */
+export function drawLogo(g: CanvasRenderingContext2D, x: number, cy: number, h: number, scheme: AdScheme = 'dark'): number {
+  const c = SCHEMES[scheme];
+  g.save();
+  g.fillStyle = c.mark; markPath(g, x, cy - h / 2, h);
+  try { g.fill('evenodd'); } catch { g.fill(); }
+  // the wordmark: cap height about half the mark's, its middle level with the mark's
+  const cap = h * 0.52; const top = cy - cap * 0.56; let tx = x + h * 1.42;
+  g.strokeStyle = c.text; g.lineWidth = cap * 0.185; g.lineJoin = 'round'; g.lineCap = 'butt';
+  GLYPHS.forEach(([adv, strokes], i) => {
+    for (const st of strokes) { g.beginPath(); st.forEach(([u, v], k) => { const px = tx + u * cap, py = top + (v === 0 ? 0 : v === 1 ? cap : v * cap); if (k) g.lineTo(px, py); else g.moveTo(px, py); }); g.stroke(); }
+    tx += (adv + (GAPS[i] ?? 0)) * cap;
   });
   g.restore();
+  return tx - x;
 }
+/** The logo's width for a mark `h` tall. */
+export const logoWidth = (h: number) => h * 1.42 + h * 0.52 * (GLYPHS.reduce((a, [w]) => a + w, 0) + GAPS.reduce((a, b) => a + b, 0));
 
 const cache = new Map<string, THREE.CanvasTexture>();
-/** A Rollerz texture. `len` is the board's length in metres (the art repeats along long boards). */
-export function rollerzTexture(style: AdStyle, len = 12, height = 0.9): THREE.CanvasTexture {
-  const key = `${style}:${len.toFixed(1)}:${height}`; const hit = cache.get(key); if (hit) return hit;
-  const H = 128, W = 1024; const c = canvas(W, H); const g = c.getContext('2d');
-  // one tile covers this many metres of board (about 8 m: two wordmarks per 16 m segment)
-  const tileM = style === 'banner' ? 9 : style === 'carpet' ? len : (W / H) * height;
-  const t = texture(c, Math.max(1, Math.round(len / tileM))); // (whole wordmarks only)
-  if (!g) { cache.set(key, t); return t; }
-  if (style === 'led' || style === 'ledAlt') {
-    g.fillStyle = style === 'led' ? grad(g, 0, 0, 0, H, [[0, '#14082a'], [1, INK]], INK) : grad(g, 0, 0, W, 0, [[0, PINK], [1, AMBER]], PINK);
-    g.fillRect(0, 0, W, H);
-    if (style === 'led') {
-      // a speed streak behind the wordmark, and the line under it
-      g.fillStyle = 'rgba(255, 46, 126, 0.18)'; for (let i = 0; i < 6; i++) g.fillRect(40 + i * 26, 36 + i * 9, 220 - i * 30, 5);
-      drawWordmark(g, W / 2, H / 2, 84);
-      g.fillStyle = AMBER; g.font = '700 22px Arial, sans-serif'; g.textAlign = 'right'; g.textBaseline = 'middle'; g.fillText('OFFICIAL PARTNER', W - 28, H / 2);
-    } else drawWordmark(g, W / 2, H / 2, 88, INK);
-  } else if (style === 'banner') {
-    g.fillStyle = INK; g.fillRect(0, 0, W, H);
-    g.fillStyle = grad(g, 0, 0, W, 0, [[0, PINK], [1, AMBER]], PINK); g.fillRect(0, H - 10, W, 10); g.fillRect(0, 0, W, 6);
-    drawWordmark(g, W / 2, H / 2 - 2, 80);
-  } else {
-    // a camera carpet: on the grass beside the goal, angled so it reads from the main camera
-    g.fillStyle = INK; g.fillRect(0, 0, W, H);
-    g.strokeStyle = AMBER; g.lineWidth = 6; g.strokeRect(6, 6, W - 12, H - 12);
-    drawWordmark(g, W / 2, H / 2, 88);
+/** An LED board's Rollerz art: the logo repeated along the board on the scheme's background. Scroll it by moving
+ *  `offset.x`. `len` and `height` are the board's size in metres. */
+export function rollerzBoard(scheme: AdScheme, len: number, height: number): THREE.CanvasTexture {
+  const key = `${scheme}:${len.toFixed(2)}:${height}`; const hit = cache.get(key); if (hit) return hit;
+  const H = 128, W = 1024; const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  const tileM = (W / H) * height; // (the art keeps its proportions on the board)
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.wrapS = THREE.RepeatWrapping; t.repeat.x = Math.max(1, Math.round(len / tileM));
+  if (g) {
+    const s = SCHEMES[scheme];
+    g.fillStyle = s.bg; g.fillRect(0, 0, W, H);
+    // two logos per tile, so it reads as a rolling strip
+    const h = H * 0.72; for (const cx of [W * 0.25, W * 0.75]) drawLogo(g, cx - logoWidth(h) / 2, H / 2, h, scheme);
   }
   t.needsUpdate = true; cache.set(key, t); return t;
 }

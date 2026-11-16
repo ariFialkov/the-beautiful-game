@@ -5,7 +5,7 @@ import { pitchTexture, textTexture } from './kits';
 import type { PitchSpec } from '../game/pitch';
 import type { Match } from '../game/match';
 import { Turf } from './turf';
-import { rollerzTexture } from './ads';
+import { rollerzBoard } from './ads';
 
 export class Stadium {
   group = new THREE.Group();
@@ -92,14 +92,8 @@ export class Stadium {
           seatPositions.push(wx, ly, wz, rotY);
         }
       }
-      // a Rollerz banner along the front of the first tier (facing the pitch)
-      { const bn = new THREE.Mesh(new THREE.PlaneGeometry(len, tierH * 0.8), new THREE.MeshBasicMaterial({ map: rollerzTexture('banner', len, tierH * 0.8) }));
-        bn.position.set(0, tierH * 0.5, -0.03); bn.rotation.y = Math.PI; g.add(bn); }
       // roof
       if (home.stadium.roof) {
-        const fy = tiers * tierH + 6 - 0.9; const fz = tiers * tierD / 2 + 0.5 - (tiers * tierD + 3) / 2 - 0.03;
-        const fas = new THREE.Mesh(new THREE.PlaneGeometry(len + 2, 1.6), new THREE.MeshBasicMaterial({ map: rollerzTexture('banner', len + 2, 1.6) }));
-        fas.position.set(0, fy, fz); fas.rotation.y = Math.PI; g.add(fas);
         const roof = new THREE.Mesh(new THREE.BoxGeometry(len + 2, 0.4, tiers * tierD + 3), new THREE.MeshLambertMaterial({ color: 0x2a3340 }));
         roof.position.set(0, tiers * tierH + 6, tiers * tierD / 2 + 0.5); g.add(roof);
         for (const sx of [-1, 1]) { const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.6, tiers * tierH + 6, 0.6), concrete); pillar.position.set(sx * (len / 2 + 0.5), (tiers * tierH + 6) / 2, tiers * tierD + 1); g.add(pillar); }
@@ -141,7 +135,7 @@ export class Stadium {
     const h = 0.9; let n = 0;
     const board = (len: number, k: number, x: number, z: number, rotY: number) => {
       const own = textTexture(texts[k], colors[k][0], colors[k][1], 1024, 128);
-      const led = rollerzTexture('led', len, h), alt = rollerzTexture('ledAlt', len, h); this.ledScroll.add(led);
+      const led = rollerzBoard((['dark', 'light'] as const)[n % 2], len, h), alt = rollerzBoard('pink', len, h); this.ledScroll.add(led); this.ledScroll.add(alt);
       const mat = new THREE.MeshBasicMaterial({ map: own });
       const m = new THREE.Mesh(new THREE.PlaneGeometry(len, h), mat); m.position.set(x, h / 2 + 0.05, z); m.rotation.y = rotY; this.group.add(m);
       this.leds.push({ mat, own, led, alt, i: n++ });
@@ -150,18 +144,10 @@ export class Stadium {
     for (const side of [-1, 1]) for (let i = 0; i < segs; i++) board(segLen, (i + (side > 0 ? 3 : 0)) % texts.length, -(L + 4) / 2 + segLen * (i + 0.5), side * (W / 2 + 3.5), side > 0 ? Math.PI : 0);
     for (const side of [-1, 1]) for (let i = 0; i < 3; i++) board((W + 4) / 3, (i + 2) % texts.length, side * (L / 2 + 5), -(W + 4) / 2 + (W + 4) / 3 * (i + 0.5), side > 0 ? -Math.PI / 2 : Math.PI / 2);
     this.updateLeds(0);
-    if (!this.spec.futsal) {
-      // camera carpets: Rollerz mats on the grass either side of each goal, tilted up toward the main camera
-      const { goalWidth: gw } = this.spec;
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-        const m = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 1.3), new THREE.MeshBasicMaterial({ map: rollerzTexture('carpet', 6.5, 1.3) }));
-        m.position.set(sx * (L / 2 + 2.4), 0.5, sz * (gw / 2 + 6)); m.lookAt(sx * (L / 2 - 8), 14, -W); this.group.add(m);
-      }
-    }
   }
 
   /** The LED boards' rotation: a 30 s loop - the clubs' own ads with Rollerz on every other board, a full Rollerz
-   *  takeover, the other half, then the whole perimeter flashing to the bright version. The Rollerz art scrolls. */
+   *  takeover, the other half, then the whole perimeter in Rollerz pink. The Rollerz art rolls along the boards. */
   private updateLeds(time: number) {
     for (const t of this.ledScroll) t.offset.x = (time * 0.04) % 1;
     const u = time % 30; const phase = u < 9 ? 0 : u < 15 ? 1 : u < 24 ? 2 : 3;

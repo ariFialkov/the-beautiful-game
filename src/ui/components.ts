@@ -95,7 +95,7 @@ export function controllerHint(): string {
   const l = input.buttonLabels();
   return input.lastSource === 'gamepad' ? `${l.pass} Pass (${l.finesse}+ driven, ×2 bounce) · ${l.shoot} Shoot (${l.switch}+ chip) · ${l.through} Through (${l.switch}+ lofted, ×2 bounce) · ${l.lob} Cross (tap floated, hold driven) · ${l.sprint} Sprint · R-stick skills`
     : input.lastSource === 'touch' ? 'Drag to move · swipe right side for skills · Finesse+Pass driven · Loft+Shoot chip · Loft+Through lofted · double-tap Pass/Through bounce'
-    : 'WASD move · Shift sprint · Space+WASD skills · K pass (O+ driven) · L shoot (U+ chip, O+ finesse) · I through (U+ lofted) · J cross · U switch · H shield';
+    : 'WASD move · Shift sprint · Space+WASD skills · K pass (O+ driven) · L shoot (U+ chip, O+ finesse) · I through (U+ lofted) · J cross · K switch (defending) · H shield';
 }
 
 /** The keyboard layout at a glance: the left hand's keys and the right hand's diamond, each with what it does
@@ -111,8 +111,8 @@ export function keyboardDiagram(compact = false): HTMLElement {
       </div></div>
     <div class="kb-hand"><div class="kb-title">Right hand · play</div>
       <div class="kb-grid right">
-        ${key('U', 'Switch', 'hold: loft', 'u')}${key('I', 'Through', '', 'i')}${key('O', 'Finesse', 'driven pass', 'o')}
-        ${key('H', 'Shield', '', 'h')}${key('J', 'Cross', 'slide tackle', 'j')}${key('K', 'Pass', 'contain', 'k')}${key('L', 'Shoot', 'tackle', 'l')}
+        ${key('U', 'Loft', 'chip · lofted', 'u')}${key('I', 'Through', '', 'i')}${key('O', 'Finesse', 'driven pass', 'o')}
+        ${key('H', 'Shield', '', 'h')}${key('J', 'Cross', 'slide tackle', 'j')}${key('K', 'Pass', 'switch · contain', 'k')}${key('L', 'Shoot', 'tackle', 'l')}
       </div></div>`;
   return wrap;
 }

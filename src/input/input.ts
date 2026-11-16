@@ -24,14 +24,14 @@ export type NavEvent = 'up' | 'down' | 'left' | 'right' | 'accept' | 'back' | 'p
  *  buttons and bumpers - laid out on I J K L in the same diamond as a pad (I = Y top, J = X left, L = B right,
  *  K = A bottom), with U and O as LB and RB above them and H as LT.
  *    Left:  WASD move · Shift sprint (RT) · hold Space: WASD becomes the skill stick (the arrows work too)
- *    Right: K pass / contain · L shoot / tackle · I through · J cross / slide · U switch, hold to loft (LB)
- *           · O finesse / driven (RB) · H shield (LT)
+ *    Right: K pass (defending: switch player, hold to contain) · L shoot / tackle · I through · J cross / slide
+ *           · U loft (LB: chip, lofted through) · O finesse / driven (RB) · H shield (LT)
  *  (Codes are physical key positions, so the layout is the same on any keyboard language.) */
 const KEYS = {
   up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
   skillUp: ['ArrowUp'], skillDown: ['ArrowDown'], skillLeft: ['ArrowLeft'], skillRight: ['ArrowRight'], skillMod: ['Space'],
   sprint: ['ShiftLeft', 'ShiftRight'], pass: ['KeyK'], shoot: ['KeyL'], through: ['KeyI'], lob: ['KeyJ'],
-  switch: ['KeyU'], slide: ['KeyJ'], finesse: ['KeyO', 'Semicolon'], shield: ['KeyH'], pause: ['Escape', 'KeyP'],
+  switch: [] as string[], loft: ['KeyU'], slide: ['KeyJ'], finesse: ['KeyO', 'Semicolon'], shield: ['KeyH'], pause: ['Escape', 'KeyP'],
 };
 type KeyAction = keyof typeof KEYS;
 
@@ -45,6 +45,8 @@ export class InputManager {
   private heldMove: Vec2 = { x: 0, y: 0 };
   /** The LB / L1 modifier for lofted through balls and chip shots (held LB or Q, or the touch Loft toggle). */
   loft = new Button();
+  /** The pass key on a keyboard is down: defending, the same key switches player (and holds to contain). */
+  passKey = false;
   /** Free-kick curl from touch buttons: -1, 0, 1. */
   touchCurl = 0;
   gamepadConnected = false;
@@ -95,6 +97,7 @@ export class InputManager {
     let mx = (this.key('right') ? 1 : 0) - (this.key('left') ? 1 : 0);
     let my = (this.key('up') ? 1 : 0) - (this.key('down') ? 1 : 0);
     let sprint = this.key('sprint'), pass = this.key('pass'), shoot = this.key('shoot'), through = this.key('through'), lob = this.key('lob');
+    this.passKey = this.key('pass');
     let sw = this.key('switch'), slide = this.key('slide'), finesse = this.key('finesse'), shield = this.key('shield'), pause = this.keys.has('Escape');
     let ax = (this.key('skillRight') ? 1 : 0) - (this.key('skillLeft') ? 1 : 0), ay = (this.key('skillUp') ? 1 : 0) - (this.key('skillDown') ? 1 : 0);
     // Space held: WASD flicks the skill stick, and he keeps running the way he was going
@@ -141,7 +144,7 @@ export class InputManager {
     if (len > 1) { mx /= len; my /= len; }
     this.move.x = mx; this.move.y = my; this.aim.x = ax; this.aim.y = ay;
     this.sprint.update(sprint, dt); this.pass.update(pass, dt); this.shoot.update(shoot, dt); this.through.update(through, dt); this.lob.update(lob, dt);
-    this.loft.update(sw || !!this.touchState.buttons.loft, dt);
+    this.loft.update(sw || this.key('loft') || !!this.touchState.buttons.loft, dt);
     this.switch.update(sw, dt); this.slide.update(slide, dt); this.finesse.update(finesse, dt); this.shield.update(shield, dt); this.pause.update(pause, dt);
   }
 

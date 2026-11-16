@@ -15,13 +15,16 @@ export class Stage {
   private frame: ((dt: number, time: number) => void) | null = null;
   preFrame: (() => void) | null = null;
   time = 0;
+  /** Dynamic resolution (phones and tablets): the pixel ratio climbs while the frame rate holds, and steps back down
+   *  (and stays under the level that was too much) if it dips. */
+  private dyn = { ratio: 1.25, ceil: 2, avg: 1 / 60, t: 0 };
 
   constructor(parent: HTMLElement) {
     this.canvas = document.createElement('canvas'); this.canvas.id = 'stage';
     parent.appendChild(this.canvas);
     this.quality = this.resolveQuality();
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: this.quality === 'high', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.quality === 'high' ? 2 : 1.25));
+    this.renderer.setPixelRatio(this.baseRatio());
     this.renderer.shadowMap.enabled = this.quality === 'high';
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -41,8 +44,23 @@ export class Stage {
     const q = this.resolveQuality();
     if (q === this.quality) return;
     this.quality = q;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q === 'high' ? 2 : 1.25));
+    this.renderer.setPixelRatio(this.baseRatio());
     this.renderer.shadowMap.enabled = q === 'high';
+  }
+  private baseRatio() {
+    const dpr = window.devicePixelRatio || 1;
+    if (this.quality === 'high') return Math.min(dpr, 2);
+    this.dyn = { ratio: Math.min(dpr, 1.25), ceil: Math.min(dpr, 2), avg: 1 / 60, t: 0 };
+    return this.dyn.ratio;
+  }
+  private adaptResolution(dt: number) {
+    if (this.quality !== 'low' || !this.scene) return;
+    const d = this.dyn; d.avg += (dt - d.avg) * 0.05; d.t += dt;
+    if (d.t < 2) return; // (settle after each change)
+    if (d.avg > 1 / 50 && d.ratio > 1) { d.ceil = Math.max(1, d.ratio - 0.25); d.ratio = Math.max(1, d.ratio - 0.25); }
+    else if (d.avg < 1 / 57 && d.ratio < d.ceil) d.ratio = Math.min(d.ceil, d.ratio + 0.25);
+    else return;
+    d.t = 0; this.renderer.setPixelRatio(d.ratio); this.resize();
   }
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -54,7 +72,7 @@ export class Stage {
     this.camera.updateProjectionMatrix();
   }
   setScene(scene: THREE.Scene | null, frame: ((dt: number, time: number) => void) | null) {
-    this.scene = scene; this.frame = frame;
+    this.scene = scene; this.frame = frame; this.dyn.t = -3; // (a new scene: let loading hitches pass before judging)
     const base = this.camera.userData.baseFov as number | undefined; // undo any match-camera zoom
     if (base && this.camera.fov !== base) { this.camera.fov = base; this.camera.updateProjectionMatrix(); }
   }
@@ -63,7 +81,7 @@ export class Stage {
     this.raf = requestAnimationFrame(this.loop);
     const now = performance.now();
     const dt = Math.min(0.05, (now - this.last) / 1000);
-    this.last = now; this.time += dt;
+    this.last = now; this.time += dt; this.adaptResolution(dt);
     try { this.preFrame?.(); this.frame?.(dt, this.time); } catch (e) { console.error(e); }
     if (this.scene) this.renderer.render(this.scene, this.camera);
   };

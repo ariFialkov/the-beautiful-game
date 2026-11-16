@@ -11,21 +11,48 @@ import { WeatherFx } from './weather';
 import { state } from '../app/state';
 
 let ballTex: THREE.CanvasTexture | null = null;
+/** A classic panelled ball, mapped the way the sphere is: 12 black pentagons spread evenly over it (on the vertices of
+ *  an icosahedron) with the seams between the panels, so its rotation reads from every side. */
 export function ballTexture(): THREE.CanvasTexture {
   if (ballTex) return ballTex;
-  const c = document.createElement('canvas'); c.width = 256; c.height = 128;
+  const W = 512, H = 256; const c = document.createElement('canvas'); c.width = W; c.height = H;
   const ctx = c.getContext('2d')!;
-  ctx.fillStyle = '#f8f8f8'; ctx.fillRect(0, 0, 256, 128);
-  ctx.fillStyle = '#111';
-  for (let i = 0; i < 12; i++) { const x = (i % 6) * 42 + (i >= 6 ? 21 : 0) + 10, y = i >= 6 ? 90 : 36; ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2); ctx.fill(); }
-  ctx.strokeStyle = '#222'; ctx.lineWidth = 2;
-  for (let i = 0; i < 12; i++) { const x = (i % 6) * 42 + (i >= 6 ? 21 : 0) + 10, y = i >= 6 ? 90 : 36; for (let k = 0; k < 5; k++) { const a = k * Math.PI * 2 / 5; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * 24, y + Math.sin(a) * 24); ctx.stroke(); } }
-  ballTex = new THREE.CanvasTexture(c); ballTex.colorSpace = THREE.SRGBColorSpace; return ballTex;
+  ctx.fillStyle = '#f6f6f2'; ctx.fillRect(0, 0, W, H);
+  const img = typeof ctx.createImageData === 'function' ? ctx.createImageData(W, H) : null;
+  if (img?.data) {
+    const px = img.data;
+    const f = (1 + Math.sqrt(5)) / 2; const raw = [[0, 1, f], [0, 1, -f], [0, -1, f], [0, -1, -f], [1, f, 0], [1, -f, 0], [-1, f, 0], [-1, -f, 0], [f, 0, 1], [f, 0, -1], [-f, 0, 1], [-f, 0, -1]];
+    const V = raw.map(([x, y, z]) => { const l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; });
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      // (three.js SphereGeometry: u around, v from the top)
+      const u = (i + 0.5) / W, v = (j + 0.5) / H; const st = Math.sin(Math.PI * v);
+      const dx = -Math.cos(2 * Math.PI * u) * st, dy = Math.cos(Math.PI * v), dz = Math.sin(2 * Math.PI * u) * st;
+      let a1 = 9, a2 = 9; for (const q of V) { const ang = Math.acos(Math.max(-1, Math.min(1, dx * q[0] + dy * q[1] + dz * q[2]))); if (ang < a1) { a2 = a1; a1 = ang; } else if (ang < a2) a2 = ang; }
+      let col = 246; // white leather
+      if (a1 < 0.31) col = 22; // a pentagon
+      else if (Math.abs(a1 - 0.31) < 0.012 || (a2 - a1 < 0.02 && a1 > 0.31)) col = 150; // its outline, and the seams between panels
+      else col = 246 - Math.round(Math.max(0, a1 - 0.45) * 14); // (a touch of shading toward the panel centres)
+      const k = (j * W + i) * 4; px[k] = col; px[k + 1] = col; px[k + 2] = Math.min(255, col + (col > 200 ? -4 : 0)); px[k + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  ballTex = new THREE.CanvasTexture(c); ballTex.colorSpace = THREE.SRGBColorSpace; ballTex.anisotropy = 4; return ballTex;
 }
 
 export function makeBallMesh(radius = 0.11): THREE.Mesh {
-  const m = new THREE.Mesh(new THREE.SphereGeometry(radius, 16, 12), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.55, metalness: 0 }));
-  m.castShadow = true; return m;
+  const m = new THREE.Mesh(new THREE.SphereGeometry(radius, 20, 14), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.55, metalness: 0, emissive: 0x000000 }));
+  m.castShadow = true;
+  return m;
+}
+
+/** Turn the ball by its spin for one frame. Above about a quarter of a turn per frame the eye can't follow it (it would
+ *  strobe, or seem to stop or turn backwards), so the turn shown is capped there and the panels blur to grey instead,
+ *  the way they do on camera. */
+export function spinBall(mesh: THREE.Object3D, axis: THREE.Vector3, rate: number, dt: number) {
+  const step = rate * dt; const shown = Math.min(step, 0.42);
+  if (shown > 1e-4) mesh.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, shown));
+  const mat = (mesh as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+  if (mat?.emissive) { const o = Math.max(0, Math.min(0.2, (step - 0.3) * 0.35)); mat.emissive.setScalar(o); }
 }
 
 /** Landing marker texture: a thin ring with four short ticks and a small centre dot, no outline (drawn once, large,
@@ -185,6 +212,7 @@ export class MatchView {
   }
 
   /** The match camera's ground basis (not the free-kick or celebration close-ups): what the minimap turns with. */
+  private spinAxis = new THREE.Vector3();
   mapBasis: { right: { x: number; z: number }; forward: { x: number; z: number } } = { right: { x: 1, z: 0 }, forward: { x: 0, z: 1 } };
   get replaying() { return !!this.replay; }
 
@@ -278,7 +306,7 @@ export class MatchView {
     this.ball.position.set(bx, by, bz);
     // Spin the ball with its real angular velocity.
     const wl = Math.hypot(b.wx, b.wy, b.wz);
-    if (wl > 0.01) { const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(b.wx / wl, b.wy / wl, b.wz / wl), wl * dt); this.ball.quaternion.premultiply(q); }
+    spinBall(this.ball, this.spinAxis.set(wl > 0.01 ? b.wx / wl : 1, wl > 0.01 ? b.wy / wl : 0, wl > 0.01 ? b.wz / wl : 0), wl > 0.01 ? wl : 0, dt);
     this.ballShadow.position.set(bx, 0.034, bz);
     const sh = Math.max(0.3, 1 - (by - b.radius) * 0.25); this.ballShadow.scale.set(sh, sh, 1);
     (this.ballShadow.material as THREE.MeshBasicMaterial).opacity = 0.35 * sh;
@@ -348,7 +376,7 @@ export class MatchView {
     });
     const bx = A.ball[0] + (B.ball[0] - A.ball[0]) * k, by = A.ball[1] + (B.ball[1] - A.ball[1]) * k, bz = A.ball[2] + (B.ball[2] - A.ball[2]) * k;
     const sp = Math.hypot(B.ball[0] - A.ball[0], B.ball[1] - A.ball[1], B.ball[2] - A.ball[2]) / Math.max(1e-3, B.t - A.t);
-    if (sp > 0.3) this.ball.rotateOnWorldAxis(new THREE.Vector3(B.ball[2] - A.ball[2], 0, -(B.ball[0] - A.ball[0])).normalize(), (sp * dt * rate) / m.ball.radius);
+    if (sp > 0.3) spinBall(this.ball, this.spinAxis.set(B.ball[2] - A.ball[2], 0, -(B.ball[0] - A.ball[0])).normalize(), (sp * rate) / m.ball.radius, dt);
     this.ball.position.set(bx, by, bz); this.ballShadow.position.set(bx, 0.034, bz);
     this.reticle.visible = false; this.aimMark.visible = false;
     // cameras: side-on and low, following the ball; then behind the goal for the finish

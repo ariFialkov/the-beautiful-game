@@ -257,6 +257,14 @@ function passLookup(dist: number, surface: Surface, arrive: number) {
   for (let i = 1; i < tab.length; i++) if (tab[i].dist >= dist) { const a = tab[i - 1], c = tab[i]; const k = (dist - a.dist) / Math.max(1e-6, c.dist - a.dist); return { v0: a.v0 + (c.v0 - a.v0) * k, time: a.time + (c.time - a.time) * k }; }
   const last = tab[tab.length - 1]; return { v0: last.v0, time: last.time * dist / Math.max(1, last.dist) };
 }
+/** How far a ball rolling at `speed` m/s runs on before it stops, on this surface. */
+export function rollOut(speed: number, surface: Surface = SURFACES.dry): number {
+  if (speed <= 0.45) return 0;
+  const tab = passTable(surface, 0.4);
+  if (speed <= tab[0].v0) return tab[0].dist * speed / tab[0].v0;
+  for (let i = 1; i < tab.length; i++) if (tab[i].v0 >= speed) { const a = tab[i - 1], c = tab[i]; return a.dist + (c.dist - a.dist) * (speed - a.v0) / (c.v0 - a.v0); }
+  return tab[tab.length - 1].dist;
+}
 /** Launch speed for a ground pass that arrives `dist` metres away still rolling at `arrive` m/s, on this surface. */
 export function passSpeedFor(dist: number, surface: Surface = SURFACES.dry, arrive = ARRIVE): number { return passLookup(dist, surface, arrive).v0; }
 export function passTimeFor(dist: number, surface: Surface = SURFACES.dry, arrive = ARRIVE): number { return passLookup(dist, surface, arrive).time; }

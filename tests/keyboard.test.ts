@@ -28,12 +28,12 @@ function onTheBall() {
 }
 const run = (m: Match, i: InstanceType<typeof InputManager>, frames: number) => { for (let k = 0; k < frames; k++) { i.update(); m.update(1 / 60, i); } };
 
-test('keyboard: the right hand plays - K pass, L shoot, I through, J cross; U and O are the bumpers; H shields', () => {
+test('keyboard: the right hand plays - K pass, L shoot, I through, J cross; U loft and O finesse are the bumpers; H shields', () => {
   const i = kb();
   const press = (code: string) => { fire('keydown', code); i.update(); const s = { pass: i.pass.down, shoot: i.shoot.down, through: i.through.down, lob: i.lob.down, slide: i.slide.down, sw: i.switch.down, loft: i.loft.down, fin: i.finesse.down, shield: i.shield.down }; fire('keyup', code); i.update(); return s; };
   assert.ok(press('KeyK').pass); assert.ok(press('KeyL').shoot); assert.ok(press('KeyI').through);
   const j = press('KeyJ'); assert.ok(j.lob && j.slide, 'J: cross, and slide tackle when defending');
-  const u = press('KeyU'); assert.ok(u.sw && u.loft, 'U: switch player, and the loft modifier');
+  const u = press('KeyU'); assert.ok(u.loft && !u.sw, 'U: the loft modifier (switching is on K now)');
   assert.ok(press('KeyO').fin); assert.ok(press('Semicolon').fin); assert.ok(press('KeyH').shield);
   // the old left-hand action keys are free again (no accidental shots while moving)
   for (const old of ['KeyZ', 'KeyX', 'KeyC', 'KeyQ', 'KeyE', 'KeyR', 'KeyF']) { const s = press(old); assert.ok(!Object.values(s).some(Boolean), `${old} does nothing now`); }
@@ -60,4 +60,20 @@ test('keyboard in a match: K plays a pass, Space + a flick does a skill move, L 
   { const { m, i, events } = { ...onTheBall(), i: kb() };
     fire('keydown', 'KeyL'); run(m, i, 20); fire('keyup', 'KeyL'); run(m, i, 40);
     assert.ok(events.some((e) => e.type === 'kick' && e.kind === 'shoot'), 'L shot'); }
+});
+
+test('keyboard: K switches player when defending (and the new man contains while it is held), but passes on the ball', () => {
+  const { m, p } = onTheBall(); const i = kb();
+  // the opponents have it, far from our man
+  const opp = m.teams[1].agents[9]; opp.pos = { x: 30, z: 10 }; opp.prevPos = { ...opp.pos }; m.ball.reset(30.4, 10); m.ball.owner = opp;
+  const near = m.teams[0].agents[3]; near.pos = { x: 27, z: 9 }; near.prevPos = { ...near.pos };
+  run(m, i, 2); const before = m.controlled;
+  fire('keydown', 'KeyK'); run(m, i, 3);
+  assert.notEqual(m.controlled, before, 'K switched'); assert.equal(m.controlled, near, 'to the man nearest the ball');
+  fire('keyup', 'KeyK'); run(m, i, 2);
+  // on the ball, K is a pass, never a switch
+  const r = onTheBall(); const j = kb(); const me = r.m.controlled;
+  fire('keydown', 'KeyK'); run(r.m, j, 6); fire('keyup', 'KeyK'); run(r.m, j, 30);
+  assert.ok(r.events.some((e) => e.type === 'kick' && e.kind === 'pass' && e.agent === me), 'K passed');
+  void p;
 });
