@@ -2,8 +2,9 @@ import { input } from './input';
 
 /** Touch controls for phones and tablets: a floating joystick and four buttons, nothing else.
  *
- *  - Left thumb: the joystick appears where you touch (a faint ring shows where it lives). Push past the inner ring into
- *    the outer one to sprint.
+ *  - Left thumb: a fixed joystick in the bottom-left corner (it stays put, so it's always where your thumb expects it).
+ *    A touch anywhere on the left drives it, measured from its centre. Push past the inner ring into the outer one to
+ *    sprint.
  *  - Right thumb: Shoot, Pass, Through and Cross in an arc around the corner. Defending, they become Tackle, Press (hold
  *    to contain), Switch and Slide.
  *  - The modifiers are a slide of the thumb on the button rather than more buttons: Shoot slid up is a chip, slid
@@ -28,7 +29,7 @@ export class TouchControls {
     this.el = document.createElement('div');
     this.el.className = 'touch';
     this.el.innerHTML = `
-      <div class="joy-zone"><div class="joy-rest"></div><div class="joy"><b></b><i></i></div></div>
+      <div class="joy-zone"><div class="joy"><b></b><i></i></div></div>
       <div class="skill-zone"></div>
       <div class="tpad">
         <button class="tb shoot" data-b="shoot"><span>Shoot</span><em></em></button>
@@ -38,15 +39,9 @@ export class TouchControls {
       </div>
       <div class="tcurl"><button type="button" data-c="-1">◀ Curl</button><button type="button" data-c="1">Curl ▶</button></div>`;
     parent.appendChild(this.el);
-    // the joystick (floating), with sprint by pushing into the outer ring
+    // the joystick (fixed in the corner), with sprint by pushing into the outer ring
     this.zone = this.el.querySelector('.joy-zone')!; this.joy = this.el.querySelector('.joy')!; this.knob = this.joy.querySelector('i')!;
-    this.zone.addEventListener('pointerdown', (e) => {
-      if (this.joyId !== null) return; this.joyId = e.pointerId; this.origin = { x: e.clientX, y: e.clientY };
-      this.joy.style.left = `${e.clientX}px`; this.joy.style.top = `${e.clientY}px`; this.joy.classList.add('on'); this.zone.classList.add('active');
-      try { this.zone.setPointerCapture(e.pointerId); } catch { /* (not every pointer can be captured) */ } input.setTouchMove(0, 0);
-    });
-    this.zone.addEventListener('pointermove', (e) => {
-      if (e.pointerId !== this.joyId) return;
+    const drive = (e: PointerEvent) => {
       let dx = e.clientX - this.origin.x, dy = e.clientY - this.origin.y; const l = Math.hypot(dx, dy);
       const sprint = l > TouchControls.SPRINT; input.setTouchButton('sprint', sprint); this.joy.classList.toggle('sprint', sprint);
       const R = TouchControls.R; const shown = Math.min(l, sprint ? TouchControls.SPRINT : R);
@@ -54,10 +49,17 @@ export class TouchControls {
       this.knob.style.transform = `translate(calc(-50% + ${ux * shown}px), calc(-50% + ${uy * shown}px))`;
       if (l > R) { dx = ux * R; dy = uy * R; }
       input.setTouchMove(dx / R, -dy / R);
+    };
+    this.zone.addEventListener('pointerdown', (e) => {
+      if (this.joyId !== null) return; this.joyId = e.pointerId;
+      const r = this.joy.getBoundingClientRect(); this.origin = { x: r.left + r.width / 2, y: r.top + r.height / 2 }; // (its centre, wherever the thumb lands)
+      this.joy.classList.add('on'); try { this.zone.setPointerCapture(e.pointerId); } catch { /* (not every pointer can be captured) */ }
+      drive(e);
     });
+    this.zone.addEventListener('pointermove', (e) => { if (e.pointerId === this.joyId) drive(e); });
     const end = (e: PointerEvent) => {
       if (e.pointerId !== this.joyId) return; this.joyId = null;
-      this.joy.classList.remove('on', 'sprint'); this.zone.classList.remove('active'); this.knob.style.transform = 'translate(-50%, -50%)';
+      this.joy.classList.remove('on', 'sprint'); this.knob.style.transform = 'translate(-50%, -50%)';
       input.setTouchMove(0, 0); input.setTouchButton('sprint', false);
     };
     this.zone.addEventListener('pointerup', end); this.zone.addEventListener('pointercancel', end);

@@ -118,6 +118,17 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Loose ball:** only the player who will reach it first (or the intended receiver) goes for it.
   - **Defending:** one player presses the carrier, one covers goal-side, and the rest mark only opponents who come into their zone.
   - **Attacking:** the two nearest teammates offer diagonal angles, and teammates' positions push apart so nobody stacks up on the same patch.
+- **Formations and tactics:** pick your shape and team instructions on the Tactics tab of the team setup, or from the pause menu mid-match (they apply at once, and are remembered).
+  - **Formations:** 4-3-3, 4-4-2, 4-2-3-1, 4-1-2-1-2 (narrow diamond), 3-5-2, 3-4-3 and 5-3-2 for 11-a-side; 1-2-1 diamond, 2-2 square and 3-1 for futsal. Each player is fitted to the slot nearest his own that suits his position (a winger to a wide slot on his flank, a centre-back to the back line), with a small diagram of the shape.
+  - **Mentality** (ultra defensive to ultra attacking): how high the whole block sits, how far forward the full-backs and wing-backs push with the ball, and how readily players shoot from range.
+  - **Pressing:** *drop off* holds a deeper line and doesn't engage a carrier in his own half (the nearest man shows him the way, a few yards off); *high press* squeezes the line up behind the ball, sprints to the carrier, covers tighter and picks men up further from its shape.
+  - **Width:** how far the team spreads across the pitch with the ball (and a touch without it).
+  - **Build-up:** *short passing* keeps it on the floor to feet, recycles it and avoids long balls; *direct* looks forward early, with more through balls in behind and no penalty on long passes.
+  - **Opponents:** every bot club has its own fixed way of playing, shown under its name on the setup screen (stronger sides tend to keep the ball and press, weaker ones sit deeper and go direct). Late on, a bot side chasing the game throws men forward and one protecting a lead sits in. Tactics only shape how the game is played: the result is still the one drawn before kick-off.
+- **Corners:** set up the way they're played, with a cut to it as the players take their places.
+  - **Attacking:** the big men go up (both centre-backs and the striker among them): one each to the near post, the middle, the far post, the penalty spot and deep at the back post, with one on the edge of the box for the knock-down and one offering a short option; the full-backs and a couple more stay back. As the taker winds up (or when you start charging the cross), they attack their zones.
+  - **Defending:** a man on the near post and two along the six-yard line, a marker goal-side of every runner, one on the edge of the box, one closing the short option at 9.15 m and one left up for the break. Defending one yourself, you start on the man marking their main runner.
+  - **Bot deliveries:** after a pause over the ball, whipped into one of the runners' zones (near post, middle and far post most often, the better headers more often), now and then played short. In futsal it's usually rolled back to a shooter at the top of the area.
 - **Set pieces:** opponents must clear the ball by the full distance before a restart can be taken: 9.15 m for free kicks and corners (5 m in futsal), out of the box and 12 m away for goal kicks, and 3 m for throws. They jog out, the restart waits until they have, and anyone still in the way after about three seconds is moved. Teammates give the taker room, and the taker or keeper picks a free teammate with a clear lane.
 - **Throw-ins:** the taker holds the ball in both hands behind his head from the moment he picks it up; it stays in his hands through a full wind-up (leaning back, arms cocked) and the two-armed heave, and only leaves them at the release.
 - **Penalties:** taken FIFA style. The camera goes behind the taker and an aim marker sits on the goal: the stick moves it, and it springs back to the middle when you let go (elastic). Hold shoot for power and release to start the run-up, then press shoot again just as he's about to strike the ball; the timing bar shows the green window. Green is struck true, early or late adds error, and too much power lifts it. Defending one, you control the keeper: hold the stick where you want him to dive (up/down for high or low), or leave it centred to stay up the middle; he goes as the ball is struck.
@@ -140,8 +151,8 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
   - **Layer 3 (three directions):** a side, forward, then the other side for an elastico (out with the outside of the foot, snapped back in with the inside); back, round, then forward for a rainbow flick over his own head.
   - **How they move:** each move is keyframed in the player's frame: the body's path and turn, both feet, the lean and crouch, and the ball's path until the touch that releases it. The body and ball follow those paths with real velocities, so tackles and everything else see them move, and the animation blends in and out of the run so moves flow into each other and back into the dribble. Moves chain: hold the stick to keep rolling it.
   - **Bots:** skilful dribblers closed down now and then try a feint, stepover, roulette or drag back on the defender.
-- **Touch (phones and tablets):** a floating joystick and four buttons, nothing else.
-  - **Left thumb:** the joystick appears wherever you touch on the left (a faint ring shows where it lives). Push past it into the outer ring to sprint.
+- **Touch (phones and tablets):** a joystick and four buttons, nothing else.
+  - **Left thumb:** the joystick stays put in the bottom-left corner, always where your thumb expects it. A touch anywhere on the left drives it, measured from its centre; push past the inner ring into the outer one to sprint.
   - **Right thumb:** Shoot, Pass, Through and Cross in an arc around the corner. Defending, they become Tackle, Press (hold to contain), Switch and Slide.
   - **Modifiers by sliding:** instead of extra buttons, slide your thumb on a button while you hold it. Shoot slid up is a chip, slid sideways a finesse shot; Through slid up is lofted; Pass slid any way is driven. A label above the button shows which. Double-tap Pass or Through for the bounce versions.
   - **Skills and free kicks:** swipe on the open right side of the screen for skill moves. At free kicks, two curl buttons appear and the minimap steps aside.
@@ -173,7 +184,7 @@ Settling (`POST /api/round/settle`) only pays out the pre-computed amount; leavi
 
 | Action | Keyboard | PS5 / Xbox | Touch |
 | --- | --- | --- | --- |
-| Move | WASD | Left stick / D-pad | Joystick (anywhere on the left) |
+| Move | WASD | Left stick / D-pad | Joystick (fixed bottom-left; a touch anywhere on the left drives it) |
 | Sprint | Shift | R2 / RT | Push the joystick into its outer ring |
 | Skill moves | Hold Space + WASD (or Arrows) | Right stick | Swipe the open right side |
 | Pass · Contain (defending) | K | ✕ / A | Pass |
@@ -215,7 +226,7 @@ tests/         unit tests + headless simulation tests
 public/        PWA manifest, service worker, icons
 ```
 
-Everything visual is procedural (no external assets): kits are canvas textures, crests are SVG, stadiums are built from team colours, and players are articulated low-poly humanoids animated in code. The home screen plays an AI-vs-AI "league highlights" match with cinematic camera cuts under a broadcast filter.
+Everything visual is procedural (no external assets): kits are canvas textures, crests are SVG, stadiums are built from team colours (with Rollerz advertising: LED perimeter boards that rotate between the clubs' own ads and Rollerz, with a full-perimeter Rollerz takeover every 30 seconds, banners along the stand fronts and roof fascias, and camera carpets beside each goal; the wordmark is drawn in `src/render/ads.ts`), and players are articulated low-poly humanoids animated in code. The home screen plays an AI-vs-AI "league highlights" match with cinematic camera cuts under a broadcast filter.
 
 ## Deploying
 

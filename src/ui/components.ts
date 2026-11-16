@@ -3,6 +3,7 @@ import { TEAMS, LEAGUES, TEAM_BY_ID, type Team } from '@shared/teams';
 import { crestSvg } from './crest';
 import { state, fmt } from '../app/state';
 import { input } from '../input/input';
+import { formationById, formationsFor, TACTIC_OPTIONS, TACTIC_HINTS, type Tactics } from '../game/tactics';
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag); if (cls) e.className = cls; if (html) e.innerHTML = html; return e;
@@ -139,3 +140,32 @@ export const CONTROL_OPTIONS = {
   shot: [{ id: 'assisted', label: 'Assisted' }, { id: 'semi', label: 'Semi' }] as Array<{ id: 'assisted' | 'semi'; label: string }>,
   switching: [{ id: 'auto', label: 'Auto' }, { id: 'air', label: 'Air balls' }, { id: 'manual', label: 'Manual' }] as Array<{ id: 'auto' | 'air' | 'manual'; label: string }>,
 };
+
+/** A formation drawn small: the pitch from above, your goal at the bottom, a dot per player with his role. */
+export function formationSvg(id: string, futsal: boolean, w = 132, h = 104): string {
+  const f = formationById(id, futsal); const pad = 7;
+  const P = (x: number, z: number) => [pad + ((z + 1) / 2) * (w - pad * 2), pad + ((1 - x) / 2) * (h - pad * 2)];
+  const dots = f.slots.map((s) => { const [cx, cy] = P(s.x, s.z); return `<g><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${s.role === 'GK' ? 4 : 4.6}" class="${s.role === 'GK' ? 'gk' : ''}"/><text x="${cx.toFixed(1)}" y="${(cy - 6.5).toFixed(1)}">${s.role}</text></g>`; }).join('');
+  return `<svg class="formation-svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-label="${f.label}"><rect x="1" y="1" width="${w - 2}" height="${h - 2}" rx="5"/><line x1="1" y1="${h / 2}" x2="${w - 1}" y2="${h / 2}"/><circle cx="${w / 2}" cy="${h / 2}" r="${futsal ? 6 : 9}" class="ring"/><rect x="${w * 0.3}" y="${h - 14}" width="${w * 0.4}" height="13" class="box"/><rect x="${w * 0.3}" y="1" width="${w * 0.4}" height="13" class="box"/>${dots}</svg>`;
+}
+
+/** Formation and team instructions: formation chips with a diagram, then mentality, pressing, width and build-up. */
+export function tacticsPanel(futsal: boolean, get: () => Tactics, set: (t: Partial<Tactics>) => void, compact = false): HTMLElement {
+  const p = el('div', `tactics${compact ? ' compact' : ''}`);
+  const top = el('div', 'tactics-top'); const pic = el('div', 'tactics-pic'); const chips = el('div', 'league-tabs formations');
+  const render = () => {
+    chips.innerHTML = '';
+    for (const f of formationsFor(futsal)) { const b = el('button', `chip${get().formation === f.id ? ' active' : ''}`, f.label); b.setAttribute('data-focus', ''); b.addEventListener('click', () => { set({ formation: f.id }); render(); }); chips.appendChild(b); }
+    pic.innerHTML = formationSvg(get().formation, futsal);
+  };
+  render(); top.append(pic, chips); p.appendChild(top);
+  const opts = el('div', 'tactics-opts'); const hint = el('div', 'small muted tactics-hint', 'Applies straight away, mid-match too.');
+  const row = <K extends keyof typeof TACTIC_OPTIONS>(key: K, label: string) => {
+    const b = cycleToggle(label, TACTIC_OPTIONS[key] as Array<{ id: string; label: string }>, () => String(get()[key]), (v) => { set({ [key]: key === 'mentality' ? Number(v) : v } as Partial<Tactics>); hint.textContent = TACTIC_HINTS[key]; });
+    b.addEventListener('focus', () => { hint.textContent = TACTIC_HINTS[key]; });
+    opts.appendChild(b);
+  };
+  row('mentality', 'Mentality'); row('pressing', 'Pressing'); row('width', 'Width'); row('buildUp', 'Build-up');
+  p.append(opts, hint);
+  return p;
+}

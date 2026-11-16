@@ -11,17 +11,36 @@ export function shapeTarget(m: Match, team: TeamState, a: Agent): V2 {
   const { length: L, width: W, futsal } = m.pitch;
   const dir = team.attackDir; const ball = m.ball;
   const inPoss = m.possessionTeam === team.index;
+  const tac = team.tactics; const ment = mentalityOf(m, team);
   const ownGoal = -dir * L / 2;
   const ballAdv = (ball.x - ownGoal) * dir;                       // how far up the pitch the ball is, from our goal
-  const block = (inPoss ? (futsal ? 0.5 : 0.46) : (futsal ? 0.38 : 0.32)) * L;
-  const behind = (inPoss ? (futsal ? 0.4 : 0.42) : (futsal ? 0.22 : 0.27)) * L;
-  const line = Math.max(0.1 * L, Math.min(0.56 * L, ballAdv - behind)); // the back line's distance from our goal
+  // mentality: the whole block sits higher (and longer, more bodies forward) or deeper; pressing sets the line out of
+  // possession (a high press squeezes up behind the ball, dropping off sits off it)
+  const pressK = tac.pressing === 'high' ? -1 : tac.pressing === 'low' ? 1 : 0;
+  const block = ((inPoss ? (futsal ? 0.5 : 0.46) : (futsal ? 0.38 : 0.32)) + (inPoss ? ment * 0.025 : 0)) * L;
+  const behind = (inPoss ? (futsal ? 0.4 : 0.42) - ment * 0.03 : (futsal ? 0.22 : 0.27) + pressK * 0.045 - ment * 0.015) * L;
+  const top = (inPoss ? 0.56 : tac.pressing === 'low' ? 0.42 : tac.pressing === 'high' ? 0.6 : 0.56) * L;
+  const line = Math.max(0.1 * L, Math.min(top, ballAdv - behind)); // the back line's distance from our goal
   const back = futsal ? -0.45 : -0.62, front = futsal ? 0.4 : 0.4;
-  const rel = Math.max(0, Math.min(1, (a.home.x - back) / (front - back)));
+  let rel = Math.max(0, Math.min(1, (a.home.x - back) / (front - back)));
+  // full-backs and wing-backs bomb on with the ball in an attacking side (and stay home in a defensive one)
+  if (inPoss && ['RB', 'LB', 'RWB', 'LWB'].includes(a.role)) rel = Math.max(0, Math.min(1.05, rel + (a.role.endsWith('WB') ? 0.08 : 0) + ment * 0.07));
   const x = ownGoal + dir * (line + rel * block);
-  const z = a.home.z * (W / 2) * (inPoss ? 0.86 : 0.6) + ball.z * (inPoss ? 0.2 : 0.38);
+  const spread = inPoss ? (tac.width === 'wide' ? 0.97 : tac.width === 'narrow' ? 0.72 : 0.86) : (tac.width === 'wide' ? 0.64 : tac.width === 'narrow' ? 0.54 : 0.6);
+  const z = a.home.z * (W / 2) * spread + ball.z * (inPoss ? 0.2 : 0.38);
   const lim = L / 2 - 2;
   return { x: Math.max(-lim, Math.min(lim, x)), z: Math.max(-W / 2 + 1.5, Math.min(W / 2 - 1.5, z)) };
+}
+
+/** A side's mentality right now: as set, but a bot side chasing the game late on throws men forward, and one
+ *  protecting a lead late on sits in. */
+export function mentalityOf(m: Match, team: TeamState): number {
+  let k: number = team.tactics.mentality;
+  if (m.humanTeam !== team.index) {
+    const diff = team.score - m.opponentsOf(team.index).score; const f = m.frac;
+    if (diff < 0 && f > 0.62) k += f > 0.82 ? 2 : 1; else if (diff > 0 && f > 0.75) k -= 1;
+  }
+  return Math.max(-2, Math.min(2, k));
 }
 
 /** Where a receiver should take a pass: the reachable point on the ball's path that costs least, counting the time
@@ -131,6 +150,24 @@ function setPieceDecision(m: Match, team: TeamState, a: Agent, skill: number): b
       break;
     }
     case 'corner': {
+      const c = m.corner;
+      if (c && c.taker === a) {
+        if (m.time < c.aiAt) return true; // (the box is set; a moment to pick his man)
+        // now and then it's played short; otherwise whipped in to one of the runs: the near post, the middle and the far
+        // post most often, the penalty spot or the back post now and then - the better in the air, the likelier
+        if (m.pitch.futsal && c.edge && rnd() < 0.7) { m.startKick(a, 'pass', 0.9, v2.norm(v2.sub(c.edge.pos, a.pos)), { targetAgent: c.edge, botSkill: skill }); return true; } // (futsal: rolled back for a strike)
+        if (c.short && rnd() < 0.12) { m.startKick(a, 'pass', 0.45, v2.norm(v2.sub(c.short.pos, a.pos)), { targetAgent: c.short, botSkill: skill }); return true; }
+        const w = [0.32, 0.3, 0.24, 0.09, 0.05]; const runs = [...c.runs.entries()];
+        let tot = 0; const ws = runs.map(([r], i) => { const x = (w[i] ?? 0.05) * (0.5 + r.card.attrs.physical / 99); tot += x; return x; });
+        let u = rnd() * tot; let pick = runs[0];
+        for (let i = 0; i < runs.length; i++) { u -= ws[i]; if (u <= 0) { pick = runs[i]; break; } }
+        if (pick) {
+          const [r, run] = pick; const miss = (1 - skill) * 2.2; // (a worse delivery lands further from the zone)
+          const to = { x: run.to.x + (rnd() - 0.5) * miss, z: run.to.z + (rnd() - 0.5) * miss * 1.4 };
+          m.startKick(a, m.pitch.futsal ? 'pass' : 'lob', m.pitch.futsal ? 0.5 : 0.35 + rnd() * 0.35, v2.norm(v2.sub(to, a.pos)), { targetAgent: r, botSkill: skill, deliver: to });
+          return true;
+        }
+      }
       const target = bestTeammate(m, team, a, (t) => !t.isGK && Math.abs(t.pos.x - goal.x) < boxDepth + 3, (t) => t.card.attrs.physical + rnd() * 30);
       if (target && rnd() < 0.8) { m.startKick(a, m.pitch.futsal ? 'pass' : 'lob', 0.75, v2.norm(v2.sub(target.pos, a.pos)), { targetAgent: target, botSkill: skill }); return true; }
       break;
@@ -182,7 +219,7 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
   // Pushing for a goal, the attack is built quickly and cleanly (forward passes, runners, players going at the
   // defence) and finished from a good position, not hit hopefully from distance.
   // (a side pushing for a goal works it into a good position rather than hitting it from range)
-  const range = push > 0 ? (mods.forced ? (futsal ? 15 : 25) : futsal ? 13 : 21) : futsal ? 15 : 27; // (overdue: a strike from the edge of the box too)
+  const range = push > 0 ? (mods.forced ? (futsal ? 15 : 25) : futsal ? 13 : 21) : (futsal ? 15 : 27) + mentalityOf(m, team) * (futsal ? 0.6 : 1.5); // (overdue: a strike from the edge of the box too; an attacking side shoots on sight)
   let shoot = 0; let takeItOn = false;
   if (dGoal < range && (m.mods.goalAllowed[team.index] || dGoal > (futsal ? 7 : 11))) { // (no close-range shots that couldn't count)
     const angle = Math.abs(Math.atan2(a.pos.z, Math.abs(goal.x - a.pos.x) + 0.1));
@@ -195,6 +232,7 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
     // pushing for a goal and in a real shooting position (in or around the box, a sight of goal): he takes it on
     if (push > 0.3 && dGoal < (futsal ? 11 : 17) && angle < 0.9 && lane > 0.3) { shoot = Math.max(shoot, 1.3 + push); takeItOn = true; }
   }
+  const build = team.tactics.buildUp;
   let bestPass: { agent: Agent; score: number; kind: 'pass' | 'through' | 'lob' } | null = null;
   for (const t of team.agents) {
     if (t === a || t.isGK) continue;
@@ -205,16 +243,19 @@ function onBall(m: Match, team: TeamState, a: Agent, skill: number) {
     const lane = laneOpen(a.pos, t.pos, opp, 1.8);
     const tOpp = nearestOpponent(m, t).dist;
     const openness = Math.min(1, tOpp / 6);
-    let score = 0.25 + forward * 0.5 + lane * 0.45 + openness * 0.35 - (d > 25 ? 0.2 : 0) - (forward < -0.3 ? 0.3 : 0) - (lane < 0.35 ? 0.5 : 0);
+    // build-up: short passing keeps it on the floor to feet and recycles it; direct looks forward and long early
+    const fw = build === 'short' ? 0.38 : build === 'direct' ? 0.68 : 0.5;
+    const long = build === 'short' ? 0.35 : build === 'direct' ? 0.02 : 0.2;
+    let score = 0.25 + forward * fw + lane * 0.45 + openness * 0.35 - (d > 25 ? long : 0) - (forward < -0.3 ? (build === 'short' ? 0.15 : 0.3) : 0) - (lane < 0.35 ? 0.5 : 0) + (build === 'short' && d < 15 ? 0.08 : 0);
     let kind: 'pass' | 'through' | 'lob' = 'pass';
     const tGoal = v2.dist(t.pos, goal);
-    if (forward > 0.6 && tOpp > 3 && tGoal < dGoal - 6) { kind = rnd() < 0.5 ? 'through' : 'pass'; score += 0.15 + push * 0.4; }
+    if (forward > (build === 'direct' ? 0.5 : 0.6) && tOpp > 3 && tGoal < dGoal - 6) { kind = rnd() < (build === 'direct' ? 0.7 : build === 'short' ? 0.3 : 0.5) ? 'through' : 'pass'; score += 0.15 + push * 0.4 + (build === 'direct' ? 0.1 : 0); }
     // pushing for a goal: the ball is moved quickly into a team-mate in a shooting position (a cut-back, a ball into
     // the box, a through ball in behind) rather than carried there
     if (push > 0 && tGoal < (futsal ? 10 : 18) && tGoal < dGoal - 4 && tOpp > 2.2 && lane > 0.5) score += 0.35 + push * 0.5;
     // ...and only into a clear lane, to a man with a yard of space: the passing is clean, nothing is forced through
     if (push > 0) score -= push * ((1 - lane) * 0.9 + (tOpp < 2.5 ? 0.6 : 0));
-    if (lane < 0.3 && d > 14 && !futsal) { kind = 'lob'; score += 0.15; }
+    if (lane < (build === 'short' ? 0.2 : 0.3) && d > 14 && !futsal) { kind = 'lob'; score += 0.15; }
     // crosses from wide areas into the box (futsal is played on the floor)
     if (!futsal && Math.abs(a.pos.z) > m.pitch.width * 0.25 && Math.abs(a.pos.x - goal.x) < (futsal ? 10 : 25) && Math.abs(t.pos.x - goal.x) < m.pitch.boxDepth + 2 && Math.abs(t.pos.z) < m.pitch.boxWidth / 2) { kind = 'lob'; score += 0.25 + push * 0.3; }
     score *= 0.6 + skill * 0.5;
@@ -284,6 +325,13 @@ function press(m: Match, team: TeamState, a: Agent, carrier: Agent, skill: numbe
   return spot;
 }
 
+/** A side set to drop off doesn't engage a carrier in his own half: it holds its shape and waits. */
+function dropOff(m: Match, team: TeamState, carrier: Agent): boolean {
+  if (team.tactics.pressing !== 'low' || m.setPiece) return false;
+  const fromOurGoal = (carrier.pos.x + team.attackDir * m.pitch.length / 2) * team.attackDir;
+  return fromOurGoal > m.pitch.length * 0.55;
+}
+
 export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   const ball = m.ball; const now = m.time;
   if (m.phase === 'kickoff' || m.phase === 'halftime' || m.phase === 'fulltime') return;
@@ -328,7 +376,7 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   // ---- zonal marking: each opponent picked up by at most one player, only within that player's zone ----
   const marks = new Map<Agent, Agent>();
   if (!inPoss && !loose && !dead) {
-    const zone = futsal ? 6 : 11;
+    const zone = (futsal ? 6 : 11) * (team.tactics.pressing === 'high' ? 1.25 : team.tactics.pressing === 'low' ? 0.85 : 1); // (a pressing side picks men up tighter, further from its shape)
     const pairs: Array<[number, Agent, Agent]> = [];
     for (const a of outfield) { if (a === presser || a === cover) continue; const sh = shapeTarget(m, team, a); for (const o of opp.agents) { if (o.isGK || o === carrier) continue; const d = v2.dist(o.pos, sh); if (d < zone) pairs.push([d, a, o]); } }
     pairs.sort((p, q) => p[0] - q[0]); const taken = new Set<Agent>();
@@ -336,7 +384,7 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
   }
 
   // ---- targets ----
-  const targets = new Map<Agent, { t: V2; sprint: boolean; fixed: boolean; arrive?: number }>();
+  const targets = new Map<Agent, { t: V2; sprint: boolean; fixed: boolean; arrive?: number; corner?: boolean }>();
   for (const a of ai) {
     if (a.busy()) continue;
     if (carrier === a && !ball.held) continue;
@@ -346,8 +394,12 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     let arrive: number | undefined;
     if (a === chaser && chaserPlan) { t = chaserPlan.p; sprint = true; fixed = true; a.ai.mode = a.ai.expectBall > now ? 'receive' : 'chase'; if (a.ai.mode === 'receive' && !lofted) arrive = chaserPlan.t; } // balls in the air are attacked, not waited for
     else if (a === presser && carrier && sp) { t = m.clearOfSetPiece(v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), 1)), 0.8); fixed = true; a.ai.mode = 'shape'; }
-    else if (a === presser && carrier) { t = press(m, team, a, carrier, skill, dt); sprint = a.intent.sprint; fixed = true; a.ai.mode = 'press'; }
-    else if (a === cover && carrier) { const gs = v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), futsal ? 4 : 7)); t = v2.lerp(gs, { x: gs.x, z: gs.z * 0.7 }, 0.5); sprint = v2.dist(a.pos, t) > 8; fixed = true; a.ai.mode = 'cover'; }
+    else if (a === presser && carrier && dropOff(m, team, carrier)) {
+      // dropping off: the nearest man shows him the way, a few yards off and goal-side, rather than diving in
+      t = v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), futsal ? 3.5 : 6)); fixed = true; a.ai.mode = 'press'; a.intent.face = v2.sub(ballPos, a.pos);
+    }
+    else if (a === presser && carrier) { t = press(m, team, a, carrier, skill, dt); sprint = a.intent.sprint || team.tactics.pressing === 'high'; fixed = true; a.ai.mode = 'press'; }
+    else if (a === cover && carrier) { const gs = v2.add(ballPos, v2.scale(v2.norm(v2.sub(ownGoal, ballPos)), (futsal ? 4 : 7) * (team.tactics.pressing === 'high' ? 0.7 : 1))); t = v2.lerp(gs, { x: gs.x, z: gs.z * 0.7 }, 0.5); sprint = v2.dist(a.pos, t) > 8; fixed = true; a.ai.mode = 'cover'; }
     else if (marks.has(a)) {
       const o = marks.get(a)!; const spot = v2.add(o.pos, v2.scale(v2.norm(v2.sub(ownGoal, o.pos)), futsal ? 1.2 : 1.8));
       t = v2.lerp(shape, spot, 0.75); const off = v2.sub(t, shape); const lim = (futsal ? 6 : 11) * 0.8; if (v2.len(off) > lim) t = v2.add(shape, v2.scale(v2.norm(off), lim)); a.ai.mode = 'mark';
@@ -358,10 +410,12 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
       t = v2.lerp(shape, angled, 0.65); sprint = v2.dist(a.pos, t) > 10; a.ai.mode = 'support';
     }
     if (inPoss && m.mods.pushTeam === team.index && m.mods.pushLevel > 0.4 && ['ST', 'LW', 'RW', 'CAM', 'LM', 'RM'].includes(a.role) && !fixed) { t = { x: t.x + team.attackDir * 8, z: t.z }; sprint = true; }
-    if (m.setPiece?.kind === 'corner' && m.setPiece.team === team.index && a !== m.setPiece.taker && a.home.x > -0.3) { const gx = team.attackDir * (m.pitch.length / 2 - (futsal ? 4 : 8)); t = { x: gx, z: a.home.z * 6 }; }
+    // a corner: everyone to his part in it (the box, the posts, his man), until the box breaks up after the delivery
+    let corner = false;
+    if (a !== chaser) { const cs = m.cornerSpot(a); if (cs) { t = cs.t; sprint = cs.sprint; fixed = true; corner = true; a.ai.mode = m.corner?.marks.has(a) ? 'mark' : 'shape'; } }
     // a shooting free kick: the forwards and midfielders gather on the edge of the six-yard box for the rebound
     if (m.freeKick?.direct && m.freeKick.team === team.index && a !== m.freeKick.taker && a.home.x > -0.3) { const gx = team.attackDir * (m.pitch.length / 2 - (futsal ? 4 : 9)); t = { x: gx, z: a.home.z * (futsal ? 3 : 7) }; }
-    targets.set(a, { t, sprint, fixed, arrive });
+    targets.set(a, { t, sprint, fixed, arrive, corner });
   }
   // ---- spacing: teammates' spots push apart so nobody stacks up on the same patch ----
   const minSpace = futsal ? 4.5 : 9;
@@ -379,6 +433,7 @@ export function updateTeamAI(m: Match, team: TeamState, dt: number) {
     const own = sp.team === team.index;
     const clear = sp.kind === 'throw' ? (futsal ? 3 : 4) : futsal ? 4 : 9;
     for (const [a, v] of targets) {
+      if (v.corner) continue; // (placed for the corner already)
       if (own) { const d = v2.sub(v.t, ballPos); const dl = v2.len(d); if (dl < clear && sp.kind !== 'corner') v.t = v2.add(ballPos, v2.scale(dl > 0.1 ? v2.norm(d) : { x: team.attackDir, z: 0 }, clear)); }
       else v.t = m.clearOfSetPiece(v.t, 1.5);
       v.sprint = v.sprint && !own; void a;

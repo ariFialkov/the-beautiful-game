@@ -296,13 +296,12 @@ input[type=text], input[type=number], input[type=password], select { font: inher
 .touch { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 2; }
 .touch.on { display: block; }
 .touch .joy-zone { position: absolute; left: 0; top: calc(56px + var(--safe-t)); bottom: 0; width: 46%; pointer-events: auto; touch-action: none; }
-.touch .joy-rest { position: absolute; left: calc(26px + var(--safe-l)); bottom: calc(26px + var(--safe-b)); width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.16); background: radial-gradient(circle, rgba(255,255,255,0.1) 0 22%, transparent 23%); transition: opacity 0.2s; }
-.touch .joy-zone.active .joy-rest { opacity: 0; }
-.touch .joy { position: absolute; width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.32); background: rgba(255,255,255,0.05); transform: translate(-50%, -50%); display: none; }
-.touch .joy.on { display: block; }
-.touch .joy b { position: absolute; left: 50%; top: 50%; width: 132px; height: 132px; border-radius: 50%; border: 1px dashed rgba(255,255,255,0.18); transform: translate(-50%, -50%); transition: border-color 0.12s, background 0.12s; }
+.touch .joy { position: absolute; left: calc(78px + var(--safe-l)); bottom: calc(78px + var(--safe-b)); width: 92px; height: 92px; margin: 0 0 -46px -46px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.28); background: rgba(8, 16, 32, 0.25); }
+.touch .joy.on { border-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.06); }
+.touch .joy b { position: absolute; left: 50%; top: 50%; width: 132px; height: 132px; border-radius: 50%; border: 1px dashed rgba(255,255,255,0.14); transform: translate(-50%, -50%); transition: border-color 0.12s, background 0.12s; pointer-events: none; }
 .touch .joy.sprint b { border: 2px solid var(--accent); background: rgba(25, 245, 164, 0.08); }
-.touch .joy i { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.75); transform: translate(-50%, -50%); }
+.touch .joy i { position: absolute; left: 50%; top: 50%; width: 42px; height: 42px; border-radius: 50%; background: rgba(255,255,255,0.6); transform: translate(-50%, -50%); pointer-events: none; }
+.touch .joy.on i { background: rgba(255,255,255,0.8); }
 .touch .joy.sprint i { background: var(--accent); }
 .touch .skill-zone { position: absolute; right: 0; top: calc(56px + var(--safe-t)); bottom: 0; width: 54%; pointer-events: auto; touch-action: none; }
 .touch .tpad { position: absolute; right: calc(10px + var(--safe-r)); bottom: calc(10px + var(--safe-b)); width: 170px; height: 160px; pointer-events: none; }
@@ -328,6 +327,23 @@ input[type=text], input[type=number], input[type=password], select { font: inher
 .touch-ui .hud .power { width: 120px; }
 
 /* ---------- phones in landscape (and other short screens): compact, contained, scrollable ---------- */
+
+/* tactics: formation diagram + chips, then the four instructions */
+.tactics { display: flex; flex-direction: column; gap: 10px; }
+.tactics-top { display: flex; gap: 12px; align-items: center; }
+.tactics-top .formations { flex: 1; }
+.tactics .formations .chip { font-family: var(--font-display); }
+.tactics-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.tactics-hint { min-height: 2.6em; }
+.formation-svg { display: block; flex: none; }
+.formation-svg > rect:first-child { fill: rgba(25, 245, 164, 0.06); stroke: rgba(255,255,255,0.25); }
+.formation-svg line, .formation-svg .ring, .formation-svg .box { fill: none; stroke: rgba(255,255,255,0.18); }
+.formation-svg circle:not(.ring) { fill: var(--accent); stroke: rgba(0,0,0,0.5); }
+.formation-svg circle.gk { fill: #f7c948; }
+.formation-svg text { font: 700 6px var(--font-display, sans-serif); fill: rgba(255,255,255,0.8); text-anchor: middle; }
+.opp-tactics { font-size: 11px; }
+@media (max-width: 560px) { .tactics-opts { grid-template-columns: 1fr; } }
+
 @media (max-height: 520px) {
   .screen { padding: calc(6px + var(--safe-t)) calc(12px + var(--safe-r)) calc(6px + var(--safe-b)) calc(12px + var(--safe-l)); overflow-y: auto; touch-action: pan-y; }
   .topbar { height: 40px; gap: 8px; }
@@ -379,6 +395,8 @@ input[type=text], input[type=number], input[type=password], select { font: inher
   /* pause and results: compact cards that fit */
   .modal .card { width: min(560px, calc(100% - 24px)); max-height: calc(100% - 16px); padding: 12px 14px; touch-action: pan-y; }
   .modal.pause .card h2 { font-size: 18px; }
+  .tactics { gap: 6px; } .tactics-hint { min-height: 0; } .formation-svg { width: 84px; height: 66px; }
+  .tactics .formations { flex-wrap: wrap; overflow: visible; gap: 4px; } .tactics .formations .chip { padding: 4px 9px; font-size: 11px; }
   .modal.pause .pause-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
   .result-hero { padding: 2px 0 6px; }
   .result-hero h2 { font-size: 22px; } .result-hero .score { font-size: 18px; } .result-hero .big { font-size: 30px; }

@@ -4,7 +4,8 @@ import type { GameMode } from '@shared/types';
 import { app } from '../main';
 import { state } from '../app/state';
 import { api } from '../app/api';
-import { el, button, topbar, teamPicker, betPanel } from '../ui/components';
+import { el, button, topbar, teamPicker, betPanel, tacticsPanel } from '../ui/components';
+import { teamTactics, TACTIC_OPTIONS, formationById } from '../game/tactics';
 import { crestSvg } from '../ui/crest';
 import { Showcase } from '../render/showcase';
 import { TEAM_BY_ID, rosterOf, startingXI, type Team, type Kit } from '@shared/teams';
@@ -53,15 +54,17 @@ export class SetupScreen implements Screen {
     const layout = el('div', 'setup-layout');
     const teamsPane = el('div', 'teams-pane col');
     const side = el('div', 'side-pane');
-    let picking: 'home' | 'away' = 'home';
+    let picking: 'home' | 'away' | 'tactics' = 'home';
+    const futsal = this.mode === 'futsal';
     const tabs = el('div', 'tabs');
     const renderTabs = () => {
       tabs.innerHTML = '';
-      for (const [k, label] of [['home', 'Your team'], ['away', 'Opponent']] as const) { const b = el('button', `chip${picking === k ? ' active' : ''}`, label); b.setAttribute('data-focus', ''); b.addEventListener('click', () => { picking = k; renderTabs(); renderPicker(); }); tabs.appendChild(b); }
+      for (const [k, label] of [['home', 'Your team'], ['away', 'Opponent'], ['tactics', 'Tactics']] as const) { const b = el('button', `chip${picking === k ? ' active' : ''}`, label); b.setAttribute('data-focus', ''); b.addEventListener('click', () => { picking = k; renderTabs(); renderPicker(); }); tabs.appendChild(b); }
     };
     const pickerHolder = el('div');
     const renderPicker = () => {
       pickerHolder.innerHTML = '';
+      if (picking === 'tactics') { const pn = el('div', 'panel'); pn.appendChild(tacticsPanel(futsal, () => state.tacticsFor(futsal), (t) => state.saveTactics(futsal, t))); pickerHolder.appendChild(pn); return; }
       const sel = picking === 'home' ? state.homeTeamId : state.awayTeamId;
       pickerHolder.appendChild(teamPicker(sel, (id) => { if (picking === 'home') state.homeTeamId = id; else state.awayTeamId = id; if (state.homeTeamId === state.awayTeamId) state.awayTeamId = Object.keys(TEAM_BY_ID).find((k) => k !== id)!; state.saveTeams(); renderVersus(); this.updateShowcase(); }, picking === 'home' ? state.awayTeamId : state.homeTeamId));
     };
@@ -70,8 +73,9 @@ export class SetupScreen implements Screen {
     const versus = el('div', 'panel versus');
     const renderVersus = () => {
       const h = TEAM_BY_ID[state.homeTeamId], a = TEAM_BY_ID[state.awayTeamId];
-      versus.innerHTML = `<div class="slot">${crestSvg(h, 64)}<div class="name">${h.name}</div><div class="muted small">${h.stadium.name}</div><span class="rating">${h.rating}</span></div><div class="vs">VS</div><div class="slot">${crestSvg(a, 64)}<div class="name">${a.name}</div><div class="muted small">${a.league}</div><span class="rating">${a.rating}</span></div>`;
+      versus.innerHTML = `<div class="slot">${crestSvg(h, 64)}<div class="name">${h.name}</div><div class="muted small">${h.stadium.name}</div><span class="rating">${h.rating}</span></div><div class="vs">VS</div><div class="slot">${crestSvg(a, 64)}<div class="name">${a.name}</div><div class="muted small">${a.league}</div><div class="muted small opp-tactics">${oppTactics(a)}</div><span class="rating">${a.rating}</span></div>`;
     };
+    const oppTactics = (a: Team) => { const t = teamTactics(a.id, a.rating, futsal); const lab = (k: keyof typeof TACTIC_OPTIONS, v: string) => TACTIC_OPTIONS[k].find((o) => o.id === v)?.label ?? v; return `${formationById(t.formation, futsal).label} · ${lab('pressing', t.pressing)} · ${lab('buildUp', t.buildUp)}`; };
     renderVersus();
     const bet = betPanel(this.mode, async (stake) => {
       bet.setError(''); bet.setBusy(true);

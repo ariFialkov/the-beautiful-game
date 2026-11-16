@@ -179,6 +179,8 @@ export class MatchView {
     match.on((e) => {
       if (e.type === 'goal') this.stadium.cheer(1); if (e.type === 'post' || e.type === 'save') this.stadium.cheer(0.5);
       if (e.type === 'foul' && e.card) this.showCard(e.by, e.card);
+      // a corner: the players are placed in the box straight away, so cut to it (as a broadcast does)
+      if (e.type === 'setpiece' && e.kind === 'corner' && !this.replay) { const b = match.ball; this.rig.snapBroadcast(new THREE.Vector3(b.x * 0.9, 0.1, b.z * 0.55)); }
     });
   }
 

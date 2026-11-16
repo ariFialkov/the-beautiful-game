@@ -4,7 +4,8 @@ import { app } from '../main';
 import { state, fmt, isTouchDevice } from '../app/state';
 import { api } from '../app/api';
 import { audio } from '../app/audio';
-import { el, button, controllerHint, freeKickHint, cycleToggle, CONTROL_OPTIONS, keyboardDiagram } from '../ui/components';
+import { el, button, controllerHint, freeKickHint, cycleToggle, CONTROL_OPTIONS, keyboardDiagram, tacticsPanel } from '../ui/components';
+import { teamTactics } from '../game/tactics';
 import { CAM_STYLES } from '../render/camera';
 import { crestSvg } from '../ui/crest';
 import { Match } from '../game/match';
@@ -46,8 +47,8 @@ export class MatchScreen implements Screen {
     const match = new Match({
       pitch: futsal ? PITCH_FUTSAL : PITCH_11, mode: p.mode as any, humanTeam: 0, script, surface: p.surface ?? (futsal ? 'court' : 'dry'), durationSec: script.durationSec, clockMinutes: CLOCK_MINUTES[p.mode as 'kickoff' | 'futsal' | 'fut'],
       teams: [
-        { team: home, players: futsal ? futsalFive(hxi) : hxi, kit: hk as Kit, kitKey: `${home.id}:${hk === home.home ? 'h' : 'a'}`, name: p.clubName ?? home.name, short: p.clubName ? p.clubName.slice(0, 3).toUpperCase() : home.short },
-        { team: away, players: futsal ? futsalFive(axi) : axi, kit: ak as Kit, kitKey: `${away.id}:${ak === away.home ? 'h' : 'a'}`, name: p.mode === 'fut' ? 'Rival UT' : away.name, short: p.mode === 'fut' ? 'RIV' : away.short },
+        { team: home, players: futsal ? futsalFive(hxi) : hxi, kit: hk as Kit, kitKey: `${home.id}:${hk === home.home ? 'h' : 'a'}`, name: p.clubName ?? home.name, short: p.clubName ? p.clubName.slice(0, 3).toUpperCase() : home.short, tactics: state.tacticsFor(futsal) },
+        { team: away, players: futsal ? futsalFive(axi) : axi, kit: ak as Kit, kitKey: `${away.id}:${ak === away.home ? 'h' : 'a'}`, name: p.mode === 'fut' ? 'Rival UT' : away.name, short: p.mode === 'fut' ? 'RIV' : away.short, tactics: teamTactics(away.id, away.rating, futsal) },
       ],
     });
     this.match = match;
@@ -219,6 +220,13 @@ export class MatchScreen implements Screen {
     opts.appendChild(cycleToggle('Shooting', CONTROL_OPTIONS.shot, () => state.settings.controls.shot, (v) => { state.saveSettings({ controls: { ...state.settings.controls, shot: v } }); this.match.controls = { ...state.settings.controls }; }));
     opts.appendChild(cycleToggle('Player switching', CONTROL_OPTIONS.switching, () => state.settings.controls.switching, (v) => { state.saveSettings({ controls: { ...state.settings.controls, switching: v } }); this.match.controls = { ...state.settings.controls }; }));
     card.appendChild(opts);
+    // tactics: a page of their own (formation and instructions), applied the moment they change
+    card.appendChild(button('Tactics', '', () => {
+      card.innerHTML = `<h2>Tactics</h2>`;
+      card.appendChild(tacticsPanel(futsal, () => this.match.teams[0].tactics, (t) => { this.match.setTactics(0, t); state.saveTactics(futsal, t); }, true));
+      const back = button('Back', 'primary', () => { this.togglePause(); this.togglePause(); }); card.appendChild(back);
+      focus.setRoot(card); focus.onBack = () => { this.togglePause(); this.togglePause(); };
+    }));
     card.appendChild(button('Settle & leave', 'danger', () => { this.togglePause(); this.onFullTime(true); }));
     if (!isTouchDevice()) card.appendChild(keyboardDiagram(true)); // (the keyboard layout, under the buttons)
     modal.appendChild(card); this.root.appendChild(modal);

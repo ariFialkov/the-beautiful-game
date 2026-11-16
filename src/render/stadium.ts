@@ -5,6 +5,7 @@ import { pitchTexture, textTexture } from './kits';
 import type { PitchSpec } from '../game/pitch';
 import type { Match } from '../game/match';
 import { Turf } from './turf';
+import { rollerzTexture } from './ads';
 
 export class Stadium {
   group = new THREE.Group();
@@ -16,6 +17,10 @@ export class Stadium {
   pitchMaterial!: THREE.MeshLambertMaterial;
   /** Natural grass (11-a-side; futsal is played on a court). */
   turf: Turf | null = null;
+  /** The LED perimeter boards: each cycles between its own ad and Rollerz (all together now and then, as a takeover). */
+  private leds: Array<{ mat: THREE.MeshBasicMaterial; own: THREE.Texture; led: THREE.Texture; alt: THREE.Texture; i: number }> = [];
+  private ledScroll = new Set<THREE.Texture>();
+  private ledPhase = -1;
 
   constructor(public spec: PitchSpec, home: Team, away: Team, public night: boolean, lowDetail: boolean, weather = 'none') {
     const { length: L, width: W } = spec;
@@ -87,8 +92,14 @@ export class Stadium {
           seatPositions.push(wx, ly, wz, rotY);
         }
       }
+      // a Rollerz banner along the front of the first tier (facing the pitch)
+      { const bn = new THREE.Mesh(new THREE.PlaneGeometry(len, tierH * 0.8), new THREE.MeshBasicMaterial({ map: rollerzTexture('banner', len, tierH * 0.8) }));
+        bn.position.set(0, tierH * 0.5, -0.03); bn.rotation.y = Math.PI; g.add(bn); }
       // roof
       if (home.stadium.roof) {
+        const fy = tiers * tierH + 6 - 0.9; const fz = tiers * tierD / 2 + 0.5 - (tiers * tierD + 3) / 2 - 0.03;
+        const fas = new THREE.Mesh(new THREE.PlaneGeometry(len + 2, 1.6), new THREE.MeshBasicMaterial({ map: rollerzTexture('banner', len + 2, 1.6) }));
+        fas.position.set(0, fy, fz); fas.rotation.y = Math.PI; g.add(fas);
         const roof = new THREE.Mesh(new THREE.BoxGeometry(len + 2, 0.4, tiers * tierD + 3), new THREE.MeshLambertMaterial({ color: 0x2a3340 }));
         roof.position.set(0, tiers * tierH + 6, tiers * tierD / 2 + 0.5); g.add(roof);
         for (const sx of [-1, 1]) { const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.6, tiers * tierH + 6, 0.6), concrete); pillar.position.set(sx * (len / 2 + 0.5), (tiers * tierH + 6) / 2, tiers * tierD + 1); g.add(pillar); }
@@ -127,22 +138,37 @@ export class Stadium {
     const { length: L, width: W } = this.spec;
     const texts = [`${home.name.toUpperCase()}`, 'THE BEAUTIFUL GAME', `${away.name.toUpperCase()}`, home.league.toUpperCase(), 'PLAY · WIN · REPEAT', `${home.stadium.name.toUpperCase()}`];
     const colors = [[home.home.primary, home.home.secondary], ['#07101f', '#19f5a4'], [away.home.primary, away.home.secondary], ['#ffffff', '#111111'], ['#f7c948', '#2a1d00'], [home.home.secondary, home.home.primary]];
-    const segs = 6; const segLen = (L + 4) / segs; const h = 0.9;
-    for (const side of [-1, 1]) for (let i = 0; i < segs; i++) {
-      const k = (i + (side > 0 ? 3 : 0)) % texts.length;
-      const t = textTexture(texts[k], colors[k][0], colors[k][1], 1024, 128);
-      const board = new THREE.Mesh(new THREE.PlaneGeometry(segLen, h), new THREE.MeshBasicMaterial({ map: t }));
-      board.position.set(-(L + 4) / 2 + segLen * (i + 0.5), h / 2 + 0.05, side * (W / 2 + 3.5));
-      board.rotation.y = side > 0 ? Math.PI : 0;
-      this.group.add(board);
+    const h = 0.9; let n = 0;
+    const board = (len: number, k: number, x: number, z: number, rotY: number) => {
+      const own = textTexture(texts[k], colors[k][0], colors[k][1], 1024, 128);
+      const led = rollerzTexture('led', len, h), alt = rollerzTexture('ledAlt', len, h); this.ledScroll.add(led);
+      const mat = new THREE.MeshBasicMaterial({ map: own });
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(len, h), mat); m.position.set(x, h / 2 + 0.05, z); m.rotation.y = rotY; this.group.add(m);
+      this.leds.push({ mat, own, led, alt, i: n++ });
+    };
+    const segs = 6; const segLen = (L + 4) / segs;
+    for (const side of [-1, 1]) for (let i = 0; i < segs; i++) board(segLen, (i + (side > 0 ? 3 : 0)) % texts.length, -(L + 4) / 2 + segLen * (i + 0.5), side * (W / 2 + 3.5), side > 0 ? Math.PI : 0);
+    for (const side of [-1, 1]) for (let i = 0; i < 3; i++) board((W + 4) / 3, (i + 2) % texts.length, side * (L / 2 + 5), -(W + 4) / 2 + (W + 4) / 3 * (i + 0.5), side > 0 ? -Math.PI / 2 : Math.PI / 2);
+    this.updateLeds(0);
+    if (!this.spec.futsal) {
+      // camera carpets: Rollerz mats on the grass either side of each goal, tilted up toward the main camera
+      const { goalWidth: gw } = this.spec;
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 1.3), new THREE.MeshBasicMaterial({ map: rollerzTexture('carpet', 6.5, 1.3) }));
+        m.position.set(sx * (L / 2 + 2.4), 0.5, sz * (gw / 2 + 6)); m.lookAt(sx * (L / 2 - 8), 14, -W); this.group.add(m);
+      }
     }
-    for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
-      const k = (i + 2) % texts.length;
-      const t = textTexture(texts[k], colors[k][0], colors[k][1], 1024, 128);
-      const board = new THREE.Mesh(new THREE.PlaneGeometry((W + 4) / 3, h), new THREE.MeshBasicMaterial({ map: t }));
-      board.position.set(side * (L / 2 + 5), h / 2 + 0.05, -(W + 4) / 2 + (W + 4) / 3 * (i + 0.5));
-      board.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
-      this.group.add(board);
+  }
+
+  /** The LED boards' rotation: a 30 s loop - the clubs' own ads with Rollerz on every other board, a full Rollerz
+   *  takeover, the other half, then the whole perimeter flashing to the bright version. The Rollerz art scrolls. */
+  private updateLeds(time: number) {
+    for (const t of this.ledScroll) t.offset.x = (time * 0.04) % 1;
+    const u = time % 30; const phase = u < 9 ? 0 : u < 15 ? 1 : u < 24 ? 2 : 3;
+    if (phase === this.ledPhase) return; this.ledPhase = phase;
+    for (const b of this.leds) {
+      const map = phase === 1 ? b.led : phase === 3 ? b.alt : (b.i % 2 === (phase === 0 ? 0 : 1)) ? b.led : b.own;
+      if (b.mat.map !== map) { b.mat.map = map; b.mat.needsUpdate = true; }
     }
   }
 
@@ -162,6 +188,7 @@ export class Stadium {
   /** Crowd bounce: excitement 0..1 ramps up after goals. The turf's wind, blades and trails too. */
   update(dt: number, time: number, camera?: THREE.Camera, match?: Match) {
     if (this.turf && camera) this.turf.update(dt, time, camera, match);
+    this.updateLeds(time);
     if (!this.crowd || !this.crowdBase || !this.crowdPhase) return;
     this.excitement = Math.max(0, this.excitement - dt * 0.35);
     if (this.excitement < 0.02) return;

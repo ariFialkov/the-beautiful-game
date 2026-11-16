@@ -3,6 +3,7 @@ import type { Kit, Team } from '@shared/teams';
 import { Ball, BallBody, BALL_R, G, passForTime, passSpeedFor, passTimeFor, predictLanding, predictPath, predictRest, solveKick, spinVector, type GoalFrame, type PathPoint, type V3 } from './ball';
 import { Agent } from './player';
 import { FORMATION_433, FORMATION_FUTSAL, v2, type PitchSpec, type V2 } from './pitch';
+import { fitSlots, formationById, normalizeTactics, type Tactics } from './tactics';
 import { Director, FREE_PLAY, OVERRUN_LIMIT, type Modifiers } from './director';
 import { updateTeamAI, interceptPoint, receivePoint } from './ai';
 import { SURFACES, type Surface, type SurfaceId } from './surface';
@@ -11,7 +12,7 @@ import { SKILLS, SkillStick, skillExit, skillFrame, type SkillMove } from './ski
 import { pointSegment, segmentSegment, type Capsule, type Side } from './skeleton';
 import type { InputManager } from '../input/input';
 
-export interface TeamSetup { team: Team; players: PlayerCard[]; kit: Kit; kitKey: string; name: string; short: string; }
+export interface TeamSetup { team: Team; players: PlayerCard[]; kit: Kit; kitKey: string; name: string; short: string; tactics?: Partial<Tactics>; }
 export interface MatchOptions {
   pitch: PitchSpec;
   mode: 'kickoff' | 'futsal' | 'fut';
@@ -49,6 +50,16 @@ export interface FreeKick {
   /** When a bot taker strikes it. */
   aiAt: number;
 }
+/** Who stands where at a corner. `runs` are the attackers' starting spots and the zones they attack when it's
+ *  delivered; `marks` pairs each defender with the man he picks up (or a zone: a post, the six-yard line). */
+export interface CornerPlan {
+  team: number; near: number; taker: Agent;
+  runs: Map<Agent, { from: V2; to: V2 }>; zonal: Map<Agent, V2>; marks: Map<Agent, Agent>;
+  /** The short option, if one goes out to the taker. */
+  short: Agent | null; edge: Agent | null;
+  /** When a bot takes it; when the runs start; until when the box holds its shape after the delivery. */
+  aiAt: number; runAt: number; until: number;
+}
 export type MatchEvent =
   | { type: 'goal'; team: number; scorer: Agent | null; forced?: boolean; ownGoal?: Agent }
   | { type: 'post'; bar: boolean } | { type: 'save'; keeper: Agent; caught: boolean } | { type: 'kickoff'; half: number } | { type: 'halftime' } | { type: 'fulltime' } | { type: 'overtime'; size: number }
@@ -62,7 +73,9 @@ export class TeamState {
   score = 0; agents: Agent[] = []; kickoffs = 0;
   /** Players sent off. */
   reds = 0;
-  constructor(public index: number, public attackDir: 1 | -1, public setup: TeamSetup) {}
+  /** Formation and team instructions (see tactics.ts). */
+  tactics: Tactics;
+  constructor(public index: number, public attackDir: 1 | -1, public setup: TeamSetup, futsal = false) { this.tactics = normalizeTactics(setup.tactics, futsal); }
 }
 
 /** Fixed simulation step. Rendering interpolates between steps (see `alpha`). */
@@ -79,6 +92,8 @@ export class Match {
   clock = 0;
   phase: Phase = 'kickoff';
   phaseTimer = 0;
+  /** A corner, set up FIFA style: attackers in the box, defenders marking them and on the near post. */
+  corner: CornerPlan | null = null;
   /** The human's last pass and its intended receiver, who is helped to the ball (the ball itself flies untouched). */
   passAssist: { passer: Agent; receiver: Agent; aim: V2; until: number; lofted: boolean; spot: V2 | null; run: V2 | null } | null = null;
   /** The controlled player is being steered by the receive assist this step (his first touch then takes it on, or settles it). */
@@ -143,7 +158,7 @@ export class Match {
     this.ball.surface = this.surface;
     const { length: L, goalWidth, goalHeight, futsal } = this.pitch;
     this.goals = [1, -1].map((s) => ({ lineX: (s * L) / 2, side: s as 1 | -1, halfW: goalWidth / 2, height: goalHeight, depth: futsal ? 1.0 : 2.2 }));
-    this.teams = [new TeamState(0, 1, opts.teams[0]), new TeamState(1, -1, opts.teams[1])];
+    this.teams = [new TeamState(0, 1, opts.teams[0], futsal), new TeamState(1, -1, opts.teams[1], futsal)];
     const formation = futsal ? FORMATION_FUTSAL : FORMATION_433;
     for (const t of this.teams) {
       t.setup.players.slice(0, formation.length).forEach((card, i) => {
@@ -152,10 +167,25 @@ export class Match {
         a.motion = new Motion(a);
         t.agents.push(a); this.agents.push(a);
       });
+      this.applyFormation(t);
     }
     if (opts.script) { this.director = new Director(opts.script, this); this.mods = this.director.mods; }
     this.firstKickoff = Math.random() < 0.5 ? 0 : 1;
     this.kickoff(this.firstKickoff, true);
+  }
+
+  /** Change a side's tactics (live: the players drift to their new spots). */
+  setTactics(teamIdx: number, t: Partial<Tactics>) {
+    const team = this.teams[teamIdx]; const prev = team.tactics.formation;
+    team.tactics = normalizeTactics({ ...team.tactics, ...t }, this.pitch.futsal);
+    if (team.tactics.formation !== prev) this.applyFormation(team);
+  }
+  /** Put a side's players in its formation's slots (each to the slot nearest his old one that suits his position). */
+  private applyFormation(team: TeamState) {
+    const f = formationById(team.tactics.formation, this.pitch.futsal);
+    const ags = team.agents; if (ags.length !== f.slots.length) return;
+    const fit = fitSlots(ags.map((a) => a.home), ags.map((a) => (a.isGK ? 'GK' : a.role)), f.slots);
+    ags.forEach((a, i) => { const sl = f.slots[fit[i]]; if (!sl) return; a.home = { x: sl.x, z: sl.z }; a.role = sl.role; });
   }
 
   on(fn: (e: MatchEvent) => void) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -201,7 +231,7 @@ export class Match {
 
   /* ------------------------------ set pieces ------------------------------ */
   kickoff(teamIdx: number, initial = false) {
-    const t = this.teams[teamIdx]; this.celebration = null;
+    const t = this.teams[teamIdx]; this.celebration = null; this.corner = null;
     const { length: L, width: W } = this.pitch;
     this.ball.reset(0, 0);
     for (const team of this.teams) for (const a of team.agents) {
@@ -254,6 +284,7 @@ export class Match {
       }
     }
     this.setPiece = { kind, team: teamIdx, taker, pos };
+    this.corner = null;
     if (kind === 'freekick') this.setupFreeKick(teamIdx, pos, taker);
     this.penalty = null;
     if (kind === 'penalty') {
@@ -265,7 +296,78 @@ export class Match {
     this.possessionTeam = teamIdx;
     if (this.humanTeam === teamIdx && (!taker.isGK || kind === 'goalkick')) this.setControlled(taker); // (goal kicks too: you take them with the keeper)
     else if (this.humanTeam !== null && this.humanTeam !== teamIdx) this.setControlled(this.closestToBall(this.humanTeam));
+    if (kind === 'corner') this.setupCorner(teamIdx, pos, taker);
     this.emit({ type: 'setpiece', kind, team: teamIdx });
+  }
+
+  /* ------------------------------ corners ------------------------------ */
+  /** Set a corner up the way it's played: the big men go up into the box (near post, the middle, far post, the penalty
+   *  spot, one deep at the back post), one waits on the edge for the knock-down, one goes short; a couple stay back.
+   *  The defenders put a man on the near post and two along the six-yard line, mark the rest man for man (goal-side),
+   *  pick up the edge, and leave one up for the break. Everyone is placed straight away (the camera cuts to it). */
+  private setupCorner(teamIdx: number, pos: V2, taker: Agent) {
+    const t = this.teams[teamIdx]; const opp = this.opponentsOf(teamIdx); const futsal = this.pitch.futsal;
+    const { length: L, width: W, goalWidth: gw } = this.pitch; const dir = t.attackDir; const gx = dir * L / 2;
+    const s = Math.sign(pos.z) || 1;
+    const at = (back: number, z: number): V2 => ({ x: gx - dir * back, z });
+    const DEF = ['CB', 'RB', 'LB', 'RWB', 'LWB'];
+    const aerial = (a: Agent) => a.card.attrs.physical + (a.role === 'CB' ? 14 : a.role === 'ST' ? 10 : 0) - (a.role === 'RW' || a.role === 'LW' ? 6 : 0);
+    const pool = t.agents.filter((a) => !a.isGK && a !== taker && !a.sentOff).sort((p, q) => aerial(q) - aerial(p));
+    const runs = new Map<Agent, { from: V2; to: V2 }>();
+    // runners: [start spot, the zone attacked] - near post, the middle, far post, the penalty spot, the back post
+    const lanes: Array<[V2, V2]> = futsal
+      ? [[at(5, s * 2.5), at(2.2, s * 1.2)], [at(5.5, -s * 2.2), at(2.6, -s * 1.0)]]
+      : [[at(11, s * 4), at(5.5, s * 2.6)], [at(12.5, -s * 1), at(7.5, s * 0.3)], [at(9, -s * 7), at(5.8, -s * 3.2)], [at(15, -s * 3), at(11, -s * 0.8)], [at(12, -s * 11), at(8.5, -s * 6.5)]];
+    let defUp = 0;
+    for (const a of pool) {
+      if (runs.size >= lanes.length) break;
+      if (DEF.includes(a.role) && a.role !== 'CB') continue; // (the full-backs stay back)
+      if (a.role === 'CB' && ++defUp > (futsal ? 0 : 2)) continue;
+      const [from, to] = lanes[runs.size]; runs.set(a, { from, to });
+    }
+    const rest = pool.filter((a) => !runs.has(a));
+    const edge = (futsal ? rest : rest.filter((a) => !DEF.includes(a.role))).sort((p, q) => q.skill.shoot - p.skill.shoot)[0] ?? null; // (futsal: the shooter at the top of the area, for the ball rolled back)
+    const shortMan = futsal ? null : rest.filter((a) => a !== edge && !DEF.includes(a.role)).sort((p, q) => v2.dist(p.pos, pos) - v2.dist(q.pos, pos))[0] ?? null;
+    const place = (a: Agent, p: V2, face: V2) => { a.pos = { ...p }; a.prevPos = { ...p }; a.vel = { x: 0, z: 0 }; a.heading = v2.norm(v2.sub(face, p)); a.action = null; a.intent = { move: { x: 0, z: 0 }, sprint: false }; };
+    const ball = { x: pos.x, z: pos.z };
+    for (const [a, r] of runs) place(a, r.from, ball);
+    if (edge) place(edge, at(futsal ? 8.5 : 20, futsal ? -s * 1 : s * 2), ball);
+    if (shortMan) place(shortMan, { x: gx - dir * 9, z: s * (W / 2 - 7) }, ball);
+    // the defenders: posts and zones first, then a marker per runner, then the edge, then one up front
+    const zonal = new Map<Agent, V2>(); const marks = new Map<Agent, Agent>();
+    const dpool = opp.agents.filter((a) => !a.isGK && !a.sentOff);
+    const take = (p: V2, pick: (a: Agent) => number) => { const c = dpool.filter((a) => !zonal.has(a) && ![...marks.keys()].includes(a)).sort((p2, q) => pick(q) - pick(p2))[0]; return c; };
+    const zones: V2[] = futsal ? [at(0.5, s * (gw / 2 - 0.3))] : [at(0.9, s * (gw / 2 + 0.5)), at(5.5, s * 1.8), at(5.5, -s * 1.8)];
+    for (const z of zones) { const d = take(z, (a) => a.card.attrs.physical * 0.5 + a.card.attrs.defending * 0.5 - v2.dist(a.home, { x: -1, z: 0 })); if (d) { zonal.set(d, z); place(d, z, ball); } }
+    for (const [r, run] of runs) {
+      const d = take(run.from, (a) => a.card.attrs.defending + a.card.attrs.physical * 0.6); if (!d) break;
+      marks.set(d, r); place(d, v2.add(run.from, v2.scale(v2.norm(v2.sub({ x: gx, z: 0 }, run.from)), 1.0)), ball);
+    }
+    if (edge) { const d = take(edge.pos, (a) => a.card.attrs.pace + a.card.attrs.defending * 0.5); if (d) { marks.set(d, edge); place(d, v2.add(edge.pos, v2.scale(v2.norm(v2.sub({ x: gx, z: 0 }, edge.pos)), futsal ? 3.2 : 2)), ball); } }
+    if (shortMan) { const d = take(shortMan.pos, (a) => a.card.attrs.pace); if (d) { const p = v2.add(ball, v2.scale(v2.norm(v2.sub(shortMan.pos, ball)), 9.4)); marks.set(d, shortMan); place(d, p, ball); } }
+    // whoever's left: the outlet for the counter, up near halfway
+    for (const d of dpool) if (!zonal.has(d) && !marks.has(d) && d !== this.controlled) { const p = { x: -dir * (futsal ? 2 : 6), z: (d.home.z || 0.2) * W * 0.25 }; place(d, p, ball); }
+    // the defending keeper on his line, a step toward the near post
+    const k = opp.agents.find((a) => a.isGK); if (k) place(k, at(0.6, s * 0.7), ball);
+    const now = this.time;
+    const human = this.humanTeam === teamIdx;
+    this.corner = { team: teamIdx, near: s, taker, runs, zonal, marks, short: shortMan, edge, aiAt: now + 2.2, runAt: human ? Infinity : now + 1.75, until: Infinity };
+    // defending it yourself: you start on the man marking their most dangerous runner (in the middle)
+    if (this.humanTeam === opp.index) { const mid = [...runs.keys()][1] ?? [...runs.keys()][0]; const mk = [...marks.entries()].find(([, r]) => r === mid)?.[0]; if (mk) this.setControlled(mk); }
+  }
+
+  /** Where a player wants to be while a corner is on (null when it isn't, or he has no part in it). */
+  cornerSpot(a: Agent): { t: V2; sprint: boolean } | null {
+    const c = this.corner; if (!c) return null;
+    if (this.time > c.until || (this.ball.owner && this.ball.owner !== c.taker)) { this.corner = null; return null; }
+    const gx = this.teams[c.team].attackDir * this.pitch.length / 2; const goal = { x: gx, z: 0 };
+    const run = c.runs.get(a);
+    if (run) { const go = this.time >= c.runAt || (!!this.charge && c.taker === this.controlled) || c.taker.pendingKick !== null; return { t: go ? run.to : run.from, sprint: go }; }
+    if (a === c.edge) return { t: a.pos, sprint: false };
+    const z = c.zonal.get(a); if (z) return { t: z, sprint: false };
+    const man = c.marks.get(a);
+    if (man) { const p = v2.add(man.pos, v2.scale(v2.norm(v2.sub(goal, man.pos)), man === c.short ? 0 : 0.9)); return { t: man === c.short ? v2.add(this.setPiece ? { x: this.ball.x, z: this.ball.z } : man.pos, v2.scale(v2.norm(v2.sub(man.pos, { x: this.ball.x, z: this.ball.z })), this.setPiece ? 9.4 : 1.5)) : p, sprint: this.time >= c.runAt }; }
+    return null;
   }
 
   setControlled(a: Agent | null) {
@@ -1094,7 +1196,7 @@ export class Match {
 
   /* ------------------------------ kicking ------------------------------ */
   /** Request a kick. The player takes it as soon as the ball is in reach (approaching it if needed). */
-  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; keeperThrow?: 'roll' | 'overarm'; punt?: boolean; neutral?: boolean; pen?: boolean }) {
+  startKick(a: Agent, kind: KickKind, power: number, dir: V2, opts: { targetAgent?: Agent; finesse?: boolean; low?: boolean; botSkill?: number; target?: { x: number; z: number; y?: number }; clear?: boolean; fk?: { z: number; y: number; curl: number; speed: number }; chip?: boolean; driven?: boolean; lofted?: boolean; bounce?: boolean; keeperThrow?: 'roll' | 'overarm'; punt?: boolean; neutral?: boolean; pen?: boolean; deliver?: V2 }) {
     if (a.busy()) return;
     if (a === this.controlled) this.shotTap = null;
     a.pendingKick = { kind, power, dir, opts, t0: this.time };
@@ -1428,6 +1530,7 @@ export class Match {
           aim = v2.add(target.pos, v2.scale(target.vel, Math.min(tFlight, 2.2) * (through || target.speed() > 2.5 ? 1 : 0.75)));
           if (through) aim = v2.add(aim, { x: team.attackDir * Math.min(8, 3 + dd * 0.15), z: 0 });
         }
+        if (d.deliver) aim = d.deliver; // (a corner: into the zone he's attacking, not where he is now)
         target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
       } else aim = v2.add(a.pos, v2.scale(dir0, d.clear ? 45 : d.punt ? 32 + d.power * 33 : d.keeperThrow === 'overarm' ? 18 + d.power * 16 : human ? (lofted ? 22 + d.power * 18 : d.driven ? 20 + d.power * 30 : 8 + d.power * 40) : 12 + d.power * 16));
       const lim = { x: this.pitch.length / 2 + 2, z: this.pitch.width / 2 + 2 };
@@ -1451,7 +1554,7 @@ export class Match {
         let sol = solve(aim);
         if (target && !throwIn && !loftThrough) {
           // re-lead the receiver with the real flight time of this trajectory
-          const lead = v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 2.2) * (target.speed() > 2.5 ? 1 : 0.75)));
+          const lead = d.deliver ?? v2.add(target.pos, v2.scale(target.vel, Math.min(sol.time, 2.2) * (target.speed() > 2.5 ? 1 : 0.75)));
           aim = nudge({ x: Math.max(-lim.x, Math.min(lim.x, lead.x)), z: Math.max(-lim.z, Math.min(lim.z, lead.z)) });
           sol = solve(aim); tFlight = sol.time; target.ai.expectBall = this.time + Math.min(3.5, tFlight + 0.9);
         } else if (loftThrough && target) { tFlight = sol.time; target.ai.expectBall = this.time + Math.min(4, tFlight + 1.4); }
@@ -1509,6 +1612,8 @@ export class Match {
     // (no offside from a throw-in, goal kick or corner)
     this.markOffside(a, kind, throwIn || (this.setPiece?.taker === a && (this.setPiece.kind === 'goalkick' || this.setPiece.kind === 'corner' || this.setPiece.kind === 'throw')));
     if (this.setPiece?.taker === a) this.setPiece = null;
+    // a corner delivered: the runs go in now, and the box holds its shape a moment for the knock-down
+    if (this.corner && this.corner.taker === a && this.corner.until === Infinity) { this.corner.until = this.time + 2.6; this.corner.runAt = Math.min(this.corner.runAt, this.time); }
     if (this.penalty && this.penalty.taker === a) {
       this.penalty.stage = 'struck'; if (this.penalty.strikeAt < 0) this.penalty.strikeAt = this.time;
       this.lastFreeKick = { at: this.time, team: a.team, direct: true, dir: dir0, pos: { x: from.x, z: from.z } }; // (the camera stays on the kick a moment)
